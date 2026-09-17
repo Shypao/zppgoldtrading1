@@ -18,7 +18,7 @@ async function loadInventoryApi() {
     },
     getElementById() { return null; }
   };
-  const context = vm.createContext({ console, document, appended });
+  const context = vm.createContext({ console, document, appended, setTimeout() { return 0; }, clearTimeout() {} });
   vm.runInContext(`${source}\n;globalThis.inventoryTestApi = {
     activeInventoryRecord,
     cashflowCardMarkup,
@@ -71,6 +71,35 @@ async function loadInventoryApi() {
       appended.length = 0;
       openInventoryEdit(id);
       return appended.at(-1)?.innerHTML || '';
+    },
+    openInventoryRefiningConfirmation(itemIds) {
+      appended.length = 0;
+      inventoryMoveSelection.clear();
+      itemIds.forEach(id => inventoryMoveSelection.add(id));
+      prepareInventoryForRefining();
+      return JSON.parse(JSON.stringify({
+        html: appended.at(-1)?.innerHTML || '',
+        pendingIds: pendingInventoryRefiningIds,
+        stock: db.stock
+      }));
+    },
+    openExtendPool(poolId, itemIds) {
+      appended.length = 0;
+      inventoryMoveSelection.clear();
+      inventoryPoolRowSelection.clear();
+      inventoryPoolRowSelection.add(poolId);
+      itemIds.forEach(id => inventoryMoveSelection.add(id));
+      openManualInventoryPoolModal();
+      return appended.at(-1)?.innerHTML || '';
+    },
+    stageInventoryRefining(itemIds) {
+      const items = itemIds.map(id => db.stock.find(item => item.id === id)).filter(Boolean);
+      const result = stageInventoryForRefining(items);
+      return JSON.parse(JSON.stringify({
+        result,
+        stock: db.stock,
+        selectedIds: Array.from(refiningSelection)
+      }));
     },
     appendToBatch(batchId, itemIds) {
       const batch = db.liquidationBatches.find(record => record.id === batchId);
@@ -126,6 +155,10 @@ async function loadInventoryApi() {
     setState(state) {
       db = state;
       currentUser = { role: 'admin', displayName: 'Admin' };
+      inventoryMoveSelection.clear();
+      inventoryPoolRowSelection.clear();
+      refiningSelection.clear();
+      pendingInventoryRefiningIds = [];
       inventorySelectedDate = 'All';
       inventorySearch = '';
       invFilter = { metal: 'All', karat: 'All', type: 'All', status: 'All' };
@@ -186,6 +219,48 @@ test('legacy For Selling inventory migrates to Available', async () => {
   api.ensureShape();
 
   assert.equal(state.stock[0].status, 'Available');
+});
+
+test('Refine selected asks for confirmation before changing inventory status', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  api.setState(state);
+
+  const preview = api.openInventoryRefiningConfirmation(['stock-on-hand']);
+
+  assert.match(preview.html, /Move 1 item to Refining\?/);
+  assert.match(preview.html, /automatically be classified as <strong>For Refining<\/strong>/);
+  assert.match(preview.html, /Confirm &amp; open Refining/);
+  assert.deepEqual(Array.from(preview.pendingIds), ['stock-on-hand']);
+  assert.equal(state.stock[0].status, 'Available');
+});
+
+test('confirmed refining selection automatically stages checked inventory for Refining', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock[0].status = 'On Hold';
+  api.setState(state);
+
+  const staged = api.stageInventoryRefining(['stock-on-hand']);
+
+  assert.equal(staged.result.metal, 'Gold');
+  assert.deepEqual(Array.from(staged.result.itemIds), ['stock-on-hand']);
+  assert.equal(staged.stock.find(item => item.id === 'stock-on-hand').status, 'For Refining');
+  assert.deepEqual(Array.from(staged.selectedIds), ['stock-on-hand']);
+});
+
+test('Refine selected does not combine different metals into one refining selection', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock.push({ id: 'silver-on-hand', date: '2026-09-11', customerName: 'Silver Seller', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', currentWeight: 5, netWeight: 5, cost: 500, remarks: '' });
+  api.setState(state);
+
+  const preview = api.openInventoryRefiningConfirmation(['stock-on-hand', 'silver-on-hand']);
+
+  assert.equal(preview.html, '');
+  assert.deepEqual(Array.from(preview.pendingIds), []);
+  assert.equal(state.stock[0].status, 'Available');
+  assert.equal(state.stock.at(-1).status, 'Available');
 });
 
 test('For Liquidation records are excluded from Current Inventory', async () => {
@@ -388,6 +463,7 @@ test('inventory displays a pool as one available row with combined weight and co
   assert.match(html, />Available</);
   assert.match(html, /Liquidate Pool/);
   assert.match(html, /openInventoryPoolEdit\('POOL-0003'\)[^>]*>Edit</);
+  assert.match(html, /toggleInventoryPoolSelection\('POOL-0003',this\.checked\)/);
   assert.doesNotMatch(html, /Put On Hold/);
   assert.doesNotMatch(html, /Seller A|Seller B/);
   assert.doesNotMatch(html, /Inventory Pools/);
@@ -404,6 +480,25 @@ test('inventory displays a pool as one available row with combined weight and co
   assert.match(editModal, /id="edit_pool_weight"/);
   assert.match(editModal, /id="edit_pool_cost"/);
   assert.match(editModal, /id="edit_pool_remarks"/);
+});
+
+test('an existing pool can be checked with matching inventory and remains one pool', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'pool-a', date: '2026-09-17', customerName: 'Seller A', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-0003', netWeight: 1000, currentWeight: 1000, payout: 100000, cost: 100000 },
+    { id: 'new-silver', date: '2026-09-17', customerName: 'Seller B', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', netWeight: 500, currentWeight: 500, payout: 50000, cost: 50000 }
+  ];
+  state.inventoryPools = [{ id: 'POOL-0003', name: 'Silver pool', metal: 'Silver', karat: '925', itemIds: ['pool-a'], originalItems: [], originalWeight: 1000, originalCost: 100000, onHold: false }];
+  api.setState(state);
+
+  const modal = api.openExtendPool('POOL-0003', ['new-silver']);
+
+  assert.match(modal, /Add inventory to POOL-0003/);
+  assert.match(modal, /New records<\/span><strong>1/);
+  assert.match(modal, /1500\.00 g/);
+  assert.match(modal, /PHP 150,000\.00/);
+  assert.match(modal, />Add to Pool</);
 });
 
 test('inventory edit offers a metal-specific karat or purity selector', async () => {
