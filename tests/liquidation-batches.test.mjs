@@ -52,6 +52,22 @@ async function loadInventoryApi() {
       toast = originalToast;
       return JSON.parse(JSON.stringify({ pending: pendingLiquidationBatchSetup, message }));
     },
+    prepareSelectedPools(poolIds) {
+      inventoryMoveSelection.clear();
+      inventoryPoolRowSelection.clear();
+      poolIds.forEach(id => inventoryPoolRowSelection.add(id));
+      pendingInventoryMove = null;
+      pendingLiquidationBatchSetup = null;
+      moveCheckedInventoryToLiquidation();
+      if (pendingInventoryMove) confirmInventoryMoveToLiquidation();
+      return JSON.parse(JSON.stringify(pendingLiquidationBatchSetup));
+    },
+    stagePoolMoves(poolIds) {
+      const batch = { id: 'LB-MULTI-POOL', name: 'Multi pool batch', buyer: 'Buyer', metal: 'Mixed', lines: [] };
+      const moves = poolIds.map(id => prepareEntirePoolMove(db.inventoryPools.find(pool => pool.id === id)));
+      const result = appendPoolMovesToLiquidationBatch(batch, moves);
+      return JSON.parse(JSON.stringify({ result, batch, pools: db.inventoryPools, stock: db.stock }));
+    },
     openSaleModal(id) {
       appended.length = 0;
       openCompleteLiquidationBatch(id);
@@ -376,7 +392,7 @@ test('editing a batch offers available inventory from other metals', async () =>
   assert.match(html, /\+ Add New Item/);
   assert.match(html, /Current batch items/);
   assert.match(html, /New Silver Seller/);
-  assert.match(html, /Available Gold, Silver, or Platinum inventory/);
+  assert.match(html, /Available individual inventory and pooled inventory/);
 });
 
 test('adding Silver to a Gold batch converts it to Mixed and preserves both lines', async () => {
@@ -469,6 +485,51 @@ test('manual pools remain independent when one pool is partially liquidated', as
   assert.equal(poolB.pool.remainingWeight, 1500);
   assert.equal(poolB.pool.remainingCost, 150000);
   assert.equal(poolB.pool.status, 'ACTIVE');
+});
+
+test('two selected pools are prepared together in one liquidation batch', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: '21-a', date: '2026-09-17', customerName: 'Pool 21K', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-21', netWeight: 1, currentWeight: 1, cost: 5000 },
+    { id: '21-b', date: '2026-09-17', customerName: 'Pool 21K', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-21', netWeight: 2, currentWeight: 2, cost: 10000 },
+    { id: '22-a', date: '2026-09-17', customerName: 'Pool 22K', metal: 'Gold', karat: '22K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-22', netWeight: 3, currentWeight: 3, cost: 18000 },
+    { id: '22-b', date: '2026-09-17', customerName: 'Pool 22K', metal: 'Gold', karat: '22K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-22', netWeight: 4, currentWeight: 4, cost: 24000 }
+  ];
+  state.inventoryPools = [
+    { id: 'POOL-21', name: '21K pool', metal: 'Gold', karat: '21K', itemIds: ['21-a', '21-b'], originalWeight: 3, originalCost: 15000, remainingWeight: 3, remainingCost: 15000, onHold: false, status: 'ACTIVE' },
+    { id: 'POOL-22', name: '22K pool', metal: 'Gold', karat: '22K', itemIds: ['22-a', '22-b'], originalWeight: 7, originalCost: 42000, remainingWeight: 7, remainingCost: 42000, onHold: false, status: 'ACTIVE' }
+  ];
+  state.liquidationBatches = [];
+  api.setState(state);
+
+  const pending = api.prepareSelectedPools(['POOL-21', 'POOL-22']);
+  assert.equal(pending.groups.length, 1);
+  assert.equal(pending.groups[0].metal, 'Gold');
+  assert.deepEqual(Array.from(pending.groups[0].poolMoves, move => move.poolId), ['POOL-21', 'POOL-22']);
+
+  const staged = api.stagePoolMoves(['POOL-21', 'POOL-22']);
+  assert.equal(staged.result, true);
+  assert.equal(staged.batch.lines.length, 4);
+  assert.equal(staged.batch.metal, 'Gold');
+  assert.equal(staged.stock.reduce((sum, item) => sum + item.currentWeight, 0), 0);
+  assert.equal(staged.pools.every(pool => pool.status === 'FULLY LIQUIDATED'), true);
+});
+
+test('Edit batch Add New Item lists available inventory pools', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock.push(
+    { id: 'pool-21-a', date: '2026-09-17', customerName: 'Pool 21K', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-21', netWeight: 1, currentWeight: 1, cost: 5000 },
+    { id: 'pool-21-b', date: '2026-09-17', customerName: 'Pool 21K', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-21', netWeight: 2, currentWeight: 2, cost: 10000 }
+  );
+  state.inventoryPools = [{ id: 'POOL-21', name: '21K pool', metal: 'Gold', karat: '21K', itemIds: ['pool-21-a', 'pool-21-b'], originalWeight: 3, originalCost: 15000, remainingWeight: 3, remainingCost: 15000, onHold: false, status: 'ACTIVE' }];
+  api.setState(state);
+
+  const modal = api.openBatchEdit('LB-0001');
+  assert.match(modal, /Available individual inventory and pooled inventory/);
+  assert.match(modal, /data-open-batch-add-id="pool:POOL-21"/);
+  assert.match(modal, /21K pool/);
 });
 
 test('a manual pool may combine mixed metals and purities', async () => {
@@ -648,14 +709,14 @@ test('record sale modal shows live profit margin fields without buyer offer', as
 
 test('cash-on-hand card never converts a missing synced balance into zero', async () => {
   const api = await loadInventoryApi();
-  api.setCashflow({ date: api.today(), configured: true, cashOnHand: null, cashIn: 0, cashOut: 0 });
+  api.setCashflow({ date: api.cashflowDate(new Date().toISOString()), configured: true, cashOnHand: null, cashIn: 0, cashOut: 0 });
 
   assert.match(api.cashflowCardMarkup(), /<strong>Not set<\/strong>/);
 });
 
 test('admin can open a confirmation before resetting IN and OUT counters', async () => {
   const api = await loadInventoryApi();
-  api.setCashflow({ date: api.today(), configured: true, cashOnHand: 0, cashIn: 66572, cashOut: 23043 });
+  api.setCashflow({ date: api.cashflowDate(new Date().toISOString()), configured: true, cashOnHand: 0, cashIn: 66572, cashOut: 23043 });
 
   const card = api.cashflowCardMarkup();
   const modal = api.openCashflowResetModal();

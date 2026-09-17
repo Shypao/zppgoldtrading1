@@ -2273,7 +2273,7 @@ function toggleInventoryForLiquidation(id,checked){
   buttons.forEach(button=>button.disabled=!inventoryPercentagePool().length);
   document.querySelectorAll('[data-inventory-selection-required]').forEach(button=>{button.disabled=!selected.length;});
   const moveButton=document.getElementById('inventory_move_selected');
-  if(moveButton) moveButton.disabled=!selected.length||selected.some(record=>!movableInventory(record));
+  if(moveButton) moveButton.disabled=!inventoryPoolRowSelection.size&&(!selected.length||selected.some(record=>!movableInventory(record)));
   const poolButton=document.getElementById('inventory_pool_selected');
   if(poolButton) poolButton.disabled=!inventoryPoolingSelection().valid;
   const clearButton=document.getElementById('inventory_clear_selected');
@@ -2288,7 +2288,7 @@ function syncInventoryMoveCheckboxes(){
   const selected=selectedInventoryForCategory();
   document.querySelectorAll('[data-inventory-selection-required]').forEach(button=>{button.disabled=!selected.length;});
   const moveButton=document.getElementById('inventory_move_selected');
-  if(moveButton) moveButton.disabled=!selected.length||selected.some(record=>!movableInventory(record));
+  if(moveButton) moveButton.disabled=!inventoryPoolRowSelection.size&&(!selected.length||selected.some(record=>!movableInventory(record)));
   const poolButton=document.getElementById('inventory_pool_selected');
   if(poolButton) poolButton.disabled=!inventoryPoolingSelection().valid;
   const clearButton=document.getElementById('inventory_clear_selected');
@@ -2350,10 +2350,12 @@ function moveInventorySelectionToLiquidation(percentage){
 }
 function moveCheckedInventoryToLiquidation(){
   const checked=selectedInventoryForCategory();
-  if(!checked.length){ toast('Check at least one inventory record first'); return; }
+  const pools=selectedExistingPoolsForPooling();
+  if(!checked.length&&!pools.length){ toast('Check at least one inventory record or pool first'); return; }
   if(checked.some(item=>!movableInventory(item))){ toast('On Hold records must be categorized as Available or For Refining before liquidation'); return; }
-  const selected=checked;
-  openInventoryMoveReview(selected,{total:selected.length,automatic:false});
+  const poolRows=pools.map(pool=>inventoryDisplayRows(inventoryPoolItems(pool))[0]).filter(Boolean);
+  const selected=[...checked,...poolRows];
+  openInventoryMoveReview(selected,{total:selected.length,automatic:false,itemIds:checked.map(item=>item.id),poolIds:pools.map(pool=>pool.id)});
 }
 function availableCombineDates(metal){
   const groups=new Map();
@@ -2641,6 +2643,32 @@ function stagePoolLiquidationBatch(pool,prepared,details){
   const remaining=syncInventoryPool(pool);pool.updatedAt=createdAt;
   return {batch,remaining};
 }
+function prepareEntirePoolMove(pool){
+  const snapshot=inventoryPoolSnapshot(pool),prepared=preparePooledInventoryAllocation(snapshot.items,snapshot.weight);
+  if(!prepared) return null;
+  return {poolId:pool.id,prepared,allocations:prepared.allocations.map(line=>({...line,sourcePoolId:pool.id}))};
+}
+function refreshLiquidationBatchMetal(batch){
+  const metals=Array.from(new Set((batch.lines||[]).map(line=>db.stock.find(item=>item.id===line.itemId)?.metal).filter(Boolean)));
+  batch.metal=metals.length===1?metals[0]:'Mixed';
+}
+function appendPoolMovesToLiquidationBatch(batch,poolMoves){
+  for(const move of poolMoves||[]){
+    const pool=db.inventoryPools.find(item=>item.id===move.poolId);
+    if(!pool) return false;
+    move.prepared.poolItems=inventoryPoolItems(pool);
+    if(!applyPooledInventoryAllocation(move.prepared)) return false;
+    batch.lines.push(...move.allocations.map(line=>({...line})));
+    syncInventoryPool(pool);pool.updatedAt=new Date().toISOString();
+  }
+  refreshLiquidationBatchMetal(batch);
+  return true;
+}
+function syncPoolsForLiquidationLines(lines,extraPoolId=''){
+  const ids=new Set([extraPoolId,...(lines||[]).map(line=>line.sourcePoolId)].filter(Boolean));
+  ids.forEach(id=>{const pool=db.inventoryPools.find(item=>item.id===id);if(pool)syncInventoryPool(pool);});
+  return Array.from(ids);
+}
 async function confirmPoolLiquidation(){
   const pool=db.inventoryPools.find(item=>item.id===val('pool_liquidation_id'));if(!pool)return;const snapshot=inventoryPoolSnapshot(pool),requested=poolLiquidationRequestedWeight(pool),prepared=preparePooledInventoryAllocation(snapshot.items,requested);
   const buyer=val('pool_liquidation_buyer').trim(),name=val('pool_liquidation_name').trim(),notes=val('pool_liquidation_notes').trim();
@@ -2678,7 +2706,7 @@ function openInventoryMoveReview(selected,context){
   const dateLabel=dates.length===1?fmtDate(dates[0]):`${fmtDate(dates[0])} – ${fmtDate(dates[dates.length-1])}`;
   const selectionLabel=context.individual?'Individual item':context.automatic?`${context.percentage}% · ${selected.length} of ${context.total}`:`${selected.length} selected record${selected.length===1?'':'s'}`;
   const mode=context.individual?'individual':dates.length>1?'combined':'selected';
-  pendingInventoryMove={percentage:context.percentage??null,total:context.total,ids:selected.map(item=>item.id),dates,metals,mode};
+  pendingInventoryMove={percentage:context.percentage??null,total:context.total,ids:context.itemIds||selected.map(item=>item.id),poolIds:context.poolIds||[],dates,metals,mode};
   const totalWeight=selected.reduce((sum,item)=>sum+Number(item.currentWeight),0);
   const totalCost=selected.reduce((sum,item)=>sum+Number(item.cost),0);
   const modal=document.createElement('div');
@@ -2707,11 +2735,17 @@ function confirmInventoryMoveToLiquidation(){
   if(!pending){ closeInventoryMoveConfirmation(); return; }
   const selected=pending.ids.map(id=>db.stock.find(item=>item.id===id)).filter(item=>item&&selectableInventory(item));
   if(selected.length!==pending.ids.length){ closeInventoryMoveConfirmation(); toast('One or more selected records are no longer available. Review the inventory again.'); render(); return; }
+  const pools=(pending.poolIds||[]).map(id=>db.inventoryPools.find(pool=>pool.id===id)).filter(Boolean);
+  if(pools.length!==(pending.poolIds||[]).length||pools.some(pool=>inventoryPoolSnapshot(pool).weight<=0)){closeInventoryMoveConfirmation();toast('One or more selected pools changed. Review the inventory again.');render();return;}
   const allocations=pending.mode==='individual'?selected.map(item=>prepareInventoryItemAllocation(item,val(`inventory_move_weight_${item.id}`))):null;
   if(allocations?.some(allocation=>!allocation)){toast(`Enter a weight between 0.01 g and ${Number(selected[0]?.currentWeight||0).toFixed(2)} g`);return;}
-  const metals=Array.from(new Set(selected.map(item=>item.metal)));
-  const group={metal:metals.length===1?metals[0]:'Mixed',ids:selected.map(item=>item.id)};
+  const poolMoves=pools.map(prepareEntirePoolMove);
+  if(poolMoves.some(move=>!move)){closeInventoryMoveConfirmation();toast('One or more selected pools no longer have inventory available');render();return;}
+  const poolItems=pools.flatMap(inventoryPoolItems),allItems=[...selected,...poolItems];
+  const metals=Array.from(new Set(allItems.map(item=>item.metal)));
+  const group={metal:metals.length===1?metals[0]:'Mixed',ids:Array.from(new Set(allItems.map(item=>item.id)))};
   if(allocations) group.allocations=allocations;
+  if(poolMoves.length){group.poolMoves=poolMoves;group.allocations=[...(allocations||liquidationLinesForItems(selected)),...poolMoves.flatMap(move=>move.allocations)];}
   const groups=[group];
   pendingLiquidationBatchSetup={groups};
   closeInventoryMoveConfirmation();
@@ -2777,14 +2811,11 @@ function openLiquidationBatchSetup(){
 async function createLiquidationBatch(){
   const pending=pendingLiquidationBatchSetup;
   if(!pending) return;
-  const prepared=pending.groups.map((group,index)=>({
-    metal:group.metal,
-    name:val(`new_liquidation_batch_name_${index}`).trim(),
-    buyer:val(`new_liquidation_batch_buyer_${index}`).trim(),
-    notes:val(`new_liquidation_batch_notes_${index}`).trim(),
-    items:group.ids.map(id=>db.stock.find(item=>item.id===id)).filter(item=>item&&selectableInventory(item)),
-    allocations:group.allocations
-  }));
+  const prepared=pending.groups.map((group,index)=>{
+    const poolItemIds=new Set((group.poolMoves||[]).flatMap(move=>move.allocations.map(line=>line.itemId)));
+    return {metal:group.metal,name:val(`new_liquidation_batch_name_${index}`).trim(),buyer:val(`new_liquidation_batch_buyer_${index}`).trim(),notes:val(`new_liquidation_batch_notes_${index}`).trim(),
+      items:group.ids.map(id=>db.stock.find(item=>item.id===id)).filter(item=>item&&(selectableInventory(item)||poolItemIds.has(item.id))),allocations:group.allocations,poolMoves:group.poolMoves||[]};
+  });
   if(prepared.some(group=>!group.name||!group.buyer)){ toast('Enter a batch name and assigned buyer'); return; }
   if(prepared.some((group,index)=>group.items.length!==pending.groups[index].ids.length)){ closeLiquidationBatchSetup(); toast('One or more selected records are no longer available'); render(); return; }
   const beforeState=JSON.parse(JSON.stringify(db));
@@ -2792,8 +2823,11 @@ async function createLiquidationBatch(){
   prepared.forEach(group=>{
     const id=nextSequenceId('LB',db.liquidationBatches);
     const batch={id,name:group.name,buyer:group.buyer,metal:group.metal,lines:[],notes:group.notes,createdAt:new Date().toISOString(),createdBy:currentUser?.displayName||''};
-    const allocations=group.allocations||liquidationLinesForItems(group.items);
-    if(!stageInventoryAllocationsForLiquidation(batch,allocations)){stagingFailed=true;return;}
+    const allocations=(group.allocations||liquidationLinesForItems(group.items)).filter(line=>!line.sourcePoolId);
+    if(allocations.length&&!stageInventoryAllocationsForLiquidation(batch,allocations)){stagingFailed=true;return;}
+    if(!allocations.length) batch.lines=[];
+    if(group.poolMoves.length&&!appendPoolMovesToLiquidationBatch(batch,group.poolMoves)){stagingFailed=true;return;}
+    refreshLiquidationBatchMetal(batch);
     db.liquidationBatches.push(batch);
   });
   if(stagingFailed){db=beforeState;closeLiquidationBatchSetup();render();toast('One or more inventory balances changed. Review the movement again.');return;}
@@ -2819,11 +2853,11 @@ function renderInventory(){
   const selectedMoveCount=selectedInventoryForCategory().length;
   const selectedRecords=selectedInventoryForCategory();
   const selectedMovableCount=selectedInventoryForMove().length;
-  const canMoveSelected=selectedMoveCount>0&&selectedMovableCount===selectedMoveCount;
   const hasMovableStock=db.stock.some(movableInventory);
   const poolingSelection=inventoryPoolingSelection();
   const canPoolSelected=poolingSelection.valid;
   const selectedPoolCount=poolingSelection.pools.length;
+  const canMoveSelected=selectedPoolCount>0||(selectedMoveCount>0&&selectedMovableCount===selectedMoveCount);
   const activeFilterLabels=[invFilter.metal,invFilter.karat,invFilter.type,invFilter.status].filter(value=>value!=='All');
   const displayStock=inventoryDisplayRows(selectedDay.stock);
   const displayAvailable=displayStock.filter(item=>item.status==='Available'||item.status==='For Refining');
@@ -3138,13 +3172,16 @@ function openLiquidationBatchEdit(id){
   const batchWeight=lines.reduce((sum,line)=>sum+Number(line.weight||0),0),batchCost=lines.reduce((sum,line)=>sum+Number(line.cost||0),0);
   const existingLineIds=new Set(lines.map(line=>line.itemId));
   const eligible=db.stock.filter(item=>movableInventory(item)&&!item.liquidationBatchId&&!existingLineIds.has(item.id));
+  const eligiblePools=(db.inventoryPools||[]).filter(pool=>inventoryPoolSnapshot(pool).weight>0);
+  const eligiblePoolRows=eligiblePools.map(pool=>inventoryDisplayRows(inventoryPoolItems(pool))[0]).filter(Boolean);
+  const eligibleEntries=[...eligible,...eligiblePoolRows];
   const modal=document.createElement('div'); modal.id='open_liquidation_batch_modal'; modal.className='modal-backdrop';
   modal.innerHTML=`<div class="inventory-move-modal liquidation-edit-modal" role="dialog" aria-modal="true" aria-labelledby="open_liquidation_batch_title">
     <div class="summary-modal-head"><div><div class="eyebrow">${esc(batch.id)} · ${esc(batch.metal)}</div><h2 id="open_liquidation_batch_title">Edit liquidation batch</h2></div><button class="modal-close" onclick="closeOpenLiquidationBatchModal()" aria-label="Close">×</button></div>
     <div class="form-grid" style="margin-top:16px;"><div class="field"><label>Batch name</label><input id="edit_open_batch_name" value="${esc(batch.name)}"></div><div class="field"><label>Assigned buyer</label><input id="edit_open_batch_buyer" value="${esc(batch.buyer)}"></div><div class="field span-2"><label>Notes</label><input id="edit_open_batch_notes" value="${esc(batch.notes||'')}"></div></div>
     <div class="liquidation-edit-current-head"><div><h3>Current batch items</h3><p class="form-note">Existing items remain unchanged.</p></div><button class="btn secondary small" onclick="toggleOpenLiquidationBatchItemPicker()">+ Add New Item</button></div>
     <div class="table-wrap liquidation-edit-current-items"><table><thead><tr><th>Item</th><th>Seller</th><th>Purchase date</th><th class="num-head">Weight</th><th class="num-head">Cost</th></tr></thead><tbody>${lines.map(line=>{const item=db.stock.find(stock=>stock.id===line.itemId)||{};return `<tr><td><strong>${esc(item.metal||batch.metal)} ${esc(gradeLabel(item.metal||batch.metal,item.karat||''))}</strong> · ${esc(item.itemType||'Inventory item')}</td><td>${esc(item.customerName||'—')}</td><td>${fmtDate(item.date)}</td><td class="num">${fmtWeight(line.weight)}</td><td class="num">${fmtMoney(line.cost)}</td></tr>`;}).join('')}</tbody><tfoot><tr><th colspan="3">${lines.length} item${lines.length===1?'':'s'}</th><th class="num">${fmtWeight(batchWeight)}</th><th class="num">${fmtMoney(batchCost)}</th></tr></tfoot></table></div>
-    <section id="edit_open_batch_item_picker" class="liquidation-edit-item-picker is-hidden"><div><h3>Add inventory to ${esc(batch.id)}</h3><p class="form-note">Available Gold, Silver, or Platinum inventory can be added to this batch.</p></div>${eligible.length?`<div class="liquidation-edit-filter"><label for="edit_open_batch_item_filter">Item filter</label><select id="edit_open_batch_item_filter" onchange="changeOpenLiquidationBatchItemFilter(this.value)">${liquidationBatchItemFilterOptions(eligible).map(option=>`<option value="${esc(option)}">${option==='All'?'All items':esc(option)}</option>`).join('')}</select><span class="form-note"><strong id="edit_open_batch_visible_count">${eligible.length}</strong> shown</span></div><div class="table-wrap"><table><thead><tr><th class="liquidation-select-all"><label><input id="edit_open_batch_select_all" type="checkbox" onchange="toggleAllVisibleOpenLiquidationBatchItems(this.checked)"> Select All</label></th><th>Item</th><th>Seller</th><th>Purchase date</th><th class="num-head">Weight</th><th class="num-head">Cost</th></tr></thead><tbody>${eligible.map(item=>`<tr data-open-batch-add-row data-item-karat="${esc(item.karat)}" data-item-type="${esc(item.itemType)}"><td><input type="checkbox" data-open-batch-add-id="${esc(item.id)}" onchange="toggleOpenLiquidationBatchAddItem(this.dataset.openBatchAddId,this.checked)" aria-label="Add ${esc(item.metal)} ${esc(gradeLabel(item.metal,item.karat))} item"></td><td><strong>${esc(item.metal)} ${esc(gradeLabel(item.metal,item.karat))}</strong> · ${esc(item.itemType)}</td><td>${esc(item.customerName||'—')}</td><td>${fmtDate(item.date)}</td><td class="num">${fmtWeight(item.currentWeight)}</td><td class="num">${fmtMoney(item.cost)}</td></tr>`).join('')}</tbody></table></div><div class="form-actions"><span class="form-note"><strong id="edit_open_batch_add_count">0</strong> selected</span><button id="edit_open_batch_add_submit" class="btn small" onclick="addItemsToOpenLiquidationBatch()" disabled>Add selected to batch</button></div>`:`<div class="empty-note">No available inventory can be added right now.</div>`}</section>
+    <section id="edit_open_batch_item_picker" class="liquidation-edit-item-picker is-hidden"><div><h3>Add inventory to ${esc(batch.id)}</h3><p class="form-note">Available individual inventory and pooled inventory can be added to this batch.</p></div>${eligibleEntries.length?`<div class="liquidation-edit-filter"><label for="edit_open_batch_item_filter">Item filter</label><select id="edit_open_batch_item_filter" onchange="changeOpenLiquidationBatchItemFilter(this.value)">${liquidationBatchItemFilterOptions(eligibleEntries).map(option=>`<option value="${esc(option)}">${option==='All'?'All items':esc(option)}</option>`).join('')}</select><span class="form-note"><strong id="edit_open_batch_visible_count">${eligibleEntries.length}</strong> shown</span></div><div class="table-wrap"><table><thead><tr><th class="liquidation-select-all"><label><input id="edit_open_batch_select_all" type="checkbox" onchange="toggleAllVisibleOpenLiquidationBatchItems(this.checked)"> Select All</label></th><th>Item</th><th>Seller / pool</th><th>Purchase date</th><th class="num-head">Weight</th><th class="num-head">Cost</th></tr></thead><tbody>${eligibleEntries.map(item=>{const token=item.isInventoryPool?`pool:${item.inventoryPoolId}`:item.id;return `<tr data-open-batch-add-row data-item-karat="${esc(item.karat)}" data-item-type="${esc(item.itemType)}"><td><input type="checkbox" data-open-batch-add-id="${esc(token)}" onchange="toggleOpenLiquidationBatchAddItem(this.dataset.openBatchAddId,this.checked)" aria-label="Add ${esc(item.metal)} ${esc(gradeLabel(item.metal,item.karat))} ${item.isInventoryPool?'pool':'item'}"></td><td><strong>${esc(item.metal)} ${esc(gradeLabel(item.metal,item.karat))}</strong> · ${esc(item.itemType)}${item.isInventoryPool?' · Pool':''}</td><td>${esc(item.customerName||'—')}</td><td>${fmtDate(item.date)}</td><td class="num">${fmtWeight(item.currentWeight)}</td><td class="num">${fmtMoney(item.cost)}</td></tr>`;}).join('')}</tbody></table></div><div class="form-actions"><span class="form-note"><strong id="edit_open_batch_add_count">0</strong> selected</span><button id="edit_open_batch_add_submit" class="btn small" onclick="addItemsToOpenLiquidationBatch()" disabled>Add selected to batch</button></div>`:`<div class="empty-note">No available inventory can be added right now.</div>`}</section>
     <div class="form-actions liquidation-edit-actions"><button class="btn secondary" onclick="closeOpenLiquidationBatchModal()">Cancel</button><button class="btn" onclick="saveOpenLiquidationBatch()">Save batch</button></div>
   </div>`;
   modal.addEventListener('click',event=>{if(event.target===modal)closeOpenLiquidationBatchModal();}); document.body.appendChild(modal);
@@ -3153,17 +3190,19 @@ async function addItemsToOpenLiquidationBatch(){
   const batch=db.liquidationBatches.find(record=>record.id===editingOpenLiquidationBatchId); if(!batch) return;
   const name=val('edit_open_batch_name').trim(),buyer=val('edit_open_batch_buyer').trim();
   if(!name||!buyer){toast('Batch name and buyer are required');return;}
-  const chosenIds=Array.from(openLiquidationBatchAddSelection);
+  const chosen=Array.from(openLiquidationBatchAddSelection),chosenIds=chosen.filter(id=>!id.startsWith('pool:')),chosenPoolIds=chosen.filter(id=>id.startsWith('pool:')).map(id=>id.slice(5));
   const items=chosenIds.map(id=>db.stock.find(item=>item.id===id)).filter(item=>item&&movableInventory(item)&&!item.liquidationBatchId);
-  if(!chosenIds.length){toast('Select at least one inventory item');return;}
-  if(items.length!==chosenIds.length){toast('One or more selected items are no longer available');return;}
+  const poolMoves=chosenPoolIds.map(id=>db.inventoryPools.find(pool=>pool.id===id)).filter(Boolean).map(prepareEntirePoolMove);
+  if(!chosen.length){toast('Select at least one inventory item or pool');return;}
+  if(items.length!==chosenIds.length||poolMoves.length!==chosenPoolIds.length||poolMoves.some(move=>!move)){toast('One or more selected items or pools are no longer available');return;}
   const beforeState=JSON.parse(JSON.stringify(db));
   Object.assign(batch,{name,buyer,notes:val('edit_open_batch_notes').trim()});
   delete batch.buyerOffer;
   const appendedItems=appendItemsToLiquidationBatch(batch,items);
   if(appendedItems.length!==items.length){db=beforeState;toast('One or more selected items are already in this batch');return;}
+  if(!appendPoolMovesToLiquidationBatch(batch,poolMoves)){db=beforeState;toast('One or more selected pools changed. Review the batch again.');return;}
   if(!await saveDB()){db=beforeState;toast('Items were not added to the batch');return;}
-  const batchId=batch.id,itemCount=appendedItems.length;
+  const batchId=batch.id,itemCount=appendedItems.length+poolMoves.length;
   closeOpenLiquidationBatchModal();render();openLiquidationBatchEdit(batchId);
   toast(`${itemCount} ${itemCount===1?'item':'items'} added to ${batchId}`);
 }
@@ -3187,6 +3226,7 @@ async function returnLiquidationBatch(id){
     if(line.pooledAllocation) restorePooledLiquidationLine(line);
     else {item.status=line.previousStatus||'Available'; delete item.liquidationBatchId;}
   }
+  syncPoolsForLiquidationLines(batch.lines,batch.poolId);
   db.liquidationBatches=db.liquidationBatches.filter(record=>record.id!==id);
   if(!await saveDB()){db=beforeState;render();toast('The batch was not returned');return;}
   render();toast(`${batch.name} returned to Current Inventory`);
@@ -3257,11 +3297,11 @@ async function submitLiquidationBatch(batchId){
     const sellingAmount=index===prepared.length-1?roundMoney(totalSold-allocatedSold):roundMoney(totalSold*ratio);
     allocatedSold=roundMoney(allocatedSold+sellingAmount);
     if(!line.pooledAllocation){item.currentWeight=0; item.cost=0; item.status='Liquidated'; delete item.liquidationBatchId;}
-    return {itemId:item.id,assay:item.karat,weight:roundWeight(weight),sellingAmount,sellingRate:roundMoney(sellingAmount/weight),proceeds:sellingAmount,costPortion:roundMoney(costPortion),previousStatus:line.previousStatus||'Available',pooledAllocation:line.pooledAllocation===true};
+    return {itemId:item.id,assay:item.karat,weight:roundWeight(weight),sellingAmount,sellingRate:roundMoney(sellingAmount/weight),proceeds:sellingAmount,costPortion:roundMoney(costPortion),previousStatus:line.previousStatus||'Available',pooledAllocation:line.pooledAllocation===true,partialAllocation:line.partialAllocation===true,sourcePoolId:line.sourcePoolId||null};
   });
   const uniqueRates=Array.from(new Set(lines.map(line=>line.sellingRate))),liquidationId=nextSequenceId('L',db.liquidations);
-  const pool=batch.poolId?db.inventoryPools.find(record=>record.id===batch.poolId):null,remaining=pool?syncInventoryPool(pool):null;
-  db.liquidations.push({id:liquidationId,batchId:batch.id,batchName:batch.name,poolId:batch.poolId||null,poolName:batch.poolName||'',date,metal:batch.metal,buyer:batch.buyer,itemCount:lines.length,sellingRate:uniqueRates.length===1?uniqueRates[0]:null,releasedWeight:roundWeight(totalWeight),proceeds:roundMoney(totalSold),paymentStatus:val('complete_batch_payment'),cost:roundMoney(totalCost),margin:roundMoney(totalSold-totalCost),profitMargin:totalCost?roundMoney((totalSold-totalCost)/totalCost*100):0,lines,remainingPoolWeight:remaining?.weight,remainingPoolCost:remaining?.cost,remarks:val('complete_batch_notes').trim(),createdBy:currentUser?.displayName||''});
+  const pool=batch.poolId?db.inventoryPools.find(record=>record.id===batch.poolId):null,remaining=pool?syncInventoryPool(pool):null,poolIds=syncPoolsForLiquidationLines(lines,batch.poolId);
+  db.liquidations.push({id:liquidationId,batchId:batch.id,batchName:batch.name,poolId:batch.poolId||null,poolIds,poolName:batch.poolName||'',date,metal:batch.metal,buyer:batch.buyer,itemCount:lines.length,sellingRate:uniqueRates.length===1?uniqueRates[0]:null,releasedWeight:roundWeight(totalWeight),proceeds:roundMoney(totalSold),paymentStatus:val('complete_batch_payment'),cost:roundMoney(totalCost),margin:roundMoney(totalSold-totalCost),profitMargin:totalCost?roundMoney((totalSold-totalCost)/totalCost*100):0,lines,remainingPoolWeight:remaining?.weight,remainingPoolCost:remaining?.cost,remarks:val('complete_batch_notes').trim(),createdBy:currentUser?.displayName||''});
   db.liquidationBatches=db.liquidationBatches.filter(record=>record.id!==batch.id);
   if(!await saveDB()){db=beforeState;render();toast('Liquidation was not recorded; inventory changes were rolled back');return;}
   closeCompleteLiquidationBatch();render();toast(`Liquidation ${liquidationId} recorded`);
@@ -3331,7 +3371,7 @@ async function deleteLiquidationRecord(){
     item.cost=roundMoney(Number(item.cost)+Number(line.costPortion||0));
     if(item.currentWeight>0&&item.status==='Liquidated') item.status=line.previousStatus==='For Selling'?'Available':line.previousStatus|| (item.itemType==='Scrap'?'For Refining':'Available');
   });
-  if(record.poolId){const pool=db.inventoryPools.find(item=>item.id===record.poolId);if(pool){pool.updatedAt=new Date().toISOString();syncInventoryPool(pool);}}
+  syncPoolsForLiquidationLines(record.lines,record.poolId);
   db.liquidations=db.liquidations.filter(l=>l.id!==record.id);
   closeAdminEditModal(); await saveDB(); render(); toast('Liquidation deleted and inventory restored');
 }

@@ -40,6 +40,33 @@ test('server accepts a partial pooled liquidation while the source keeps its rem
   assert.equal(result.stdout, 'ok');
 });
 
+test('server accepts one open liquidation batch containing multiple inventory pools', () => {
+  const state = emptyState();
+  state.stock.push(
+    { id: 'gold-21-a', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-21', netWeight: 1, currentWeight: 0, payout: 5000, cost: 0 },
+    { id: 'gold-21-b', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-21', netWeight: 2, currentWeight: 0, payout: 10000, cost: 0 },
+    { id: 'gold-22-a', metal: 'Gold', karat: '22K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-22', netWeight: 3, currentWeight: 0, payout: 18000, cost: 0 },
+    { id: 'gold-22-b', metal: 'Gold', karat: '22K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-22', netWeight: 4, currentWeight: 0, payout: 24000, cost: 0 }
+  );
+  state.inventoryPools.push(
+    { id: 'POOL-21', name: '21K pool', metal: 'Gold', karat: '21K', itemIds: ['gold-21-a', 'gold-21-b'], originalWeight: 3, originalCost: 15000, remainingWeight: 0, remainingCost: 0, onHold: false, status: 'FULLY LIQUIDATED' },
+    { id: 'POOL-22', name: '22K pool', metal: 'Gold', karat: '22K', itemIds: ['gold-22-a', 'gold-22-b'], originalWeight: 7, originalCost: 42000, remainingWeight: 0, remainingCost: 0, onHold: false, status: 'FULLY LIQUIDATED' }
+  );
+  state.liquidationBatches.push({
+    id: 'LB-MULTI', name: '21K and 22K pools', buyer: 'Gold Buyer', metal: 'Gold',
+    lines: [
+      { itemId: 'gold-21-a', previousStatus: 'Available', weight: 1, cost: 5000, pooledAllocation: true, sourcePoolId: 'POOL-21' },
+      { itemId: 'gold-21-b', previousStatus: 'Available', weight: 2, cost: 10000, pooledAllocation: true, sourcePoolId: 'POOL-21' },
+      { itemId: 'gold-22-a', previousStatus: 'Available', weight: 3, cost: 18000, pooledAllocation: true, sourcePoolId: 'POOL-22' },
+      { itemId: 'gold-22-b', previousStatus: 'Available', weight: 4, cost: 24000, pooledAllocation: true, sourcePoolId: 'POOL-22' }
+    ]
+  });
+
+  const result = validate(state);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'ok');
+});
+
 test('legacy zero-balance Pooled records do not block a modern pool move', () => {
   const state = emptyState();
   state.stock.push(
