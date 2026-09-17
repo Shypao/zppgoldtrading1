@@ -92,6 +92,11 @@ async function loadInventoryApi() {
       openManualInventoryPoolModal();
       return appended.at(-1)?.innerHTML || '';
     },
+    openCombineDates() {
+      appended.length = 0;
+      openCombineLiquidationDateSelection();
+      return appended.at(-1)?.innerHTML || '';
+    },
     stageInventoryRefining(itemIds) {
       const items = itemIds.map(id => db.stock.find(item => item.id === id)).filter(Boolean);
       const result = stageInventoryForRefining(items);
@@ -435,13 +440,17 @@ test('a manual pool may combine mixed metals and purities', async () => {
   assert.match(api.renderPools(), /metal-tag mixed/);
 });
 
-test('inventory offers manual Pool selected and removes automatic pool/date grouping actions', async () => {
+test('inventory offers manual Pool selected and the Combine dates liquidation action', async () => {
   const api = await loadInventoryApi();
   api.setState(stateFixture());
   const html = api.renderInventory();
   assert.match(html, /Pool selected/);
   assert.doesNotMatch(html, /Pool Gold \/ Silver/);
-  assert.doesNotMatch(html, />Combine dates</);
+  assert.match(html, /openCombineLiquidationDateSelection\(\)[^>]*>Combine dates</);
+
+  const modal = api.openCombineDates();
+  assert.match(modal, /Select purchase dates/);
+  assert.match(modal, /Review selected dates/);
 });
 
 test('inventory displays a pool as one available row with combined weight and cost', async () => {
