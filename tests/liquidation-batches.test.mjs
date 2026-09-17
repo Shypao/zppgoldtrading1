@@ -84,6 +84,12 @@ async function loadInventoryApi() {
       const snapshot = syncInventoryPool(pool);
       return JSON.parse(JSON.stringify({ pool, snapshot }));
     },
+    stagePool(id, weight, details) {
+      const pool = db.inventoryPools.find(item => item.id === id);
+      const prepared = preparePooledInventoryAllocation(inventoryPoolItems(pool), weight);
+      const result = prepared ? stagePoolLiquidationBatch(pool, prepared, details) : null;
+      return JSON.parse(JSON.stringify({ result, pool, stock: db.stock, batches: db.liquidationBatches, liquidations: db.liquidations }));
+    },
     renderPools() {
       return renderInventoryPools();
     },
@@ -368,9 +374,35 @@ test('inventory displays a pool as one available row with combined weight and co
   assert.match(html, /3000\.00 g/);
   assert.match(html, /PHP 300,000/);
   assert.match(html, />Available</);
-  assert.match(html, /Liquidate pool/);
+  assert.match(html, /Move to Liquidation/);
+  assert.doesNotMatch(html, /Put On Hold/);
   assert.doesNotMatch(html, /Seller A|Seller B/);
   assert.doesNotMatch(html, /Inventory Pools/);
+});
+
+test('partial pool allocation moves to an open liquidation batch before recording a sale', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'pool-a', date: '2026-09-17', customerName: 'Seller A', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-0004', netWeight: 1000, currentWeight: 1000, payout: 100000, cost: 100000 },
+    { id: 'pool-b', date: '2026-09-17', customerName: 'Seller B', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-0004', netWeight: 2000, currentWeight: 2000, payout: 200000, cost: 200000 }
+  ];
+  state.inventoryPools = [{ id: 'POOL-0004', name: 'Silver pool', metal: 'Silver', karat: '925', itemIds: ['pool-a', 'pool-b'], originalWeight: 3000, originalCost: 300000, onHold: false, status: 'ACTIVE', remainingWeight: 3000, remainingCost: 300000 }];
+  state.liquidationBatches = [];
+  state.liquidations = [];
+  api.setState(state);
+
+  const staged = api.stagePool('POOL-0004', 1000, { name: 'Silver partial batch', buyer: 'Buyer A', notes: 'First release' });
+
+  assert.equal(staged.result.batch.id, 'LB-0001');
+  assert.equal(staged.result.batch.poolId, 'POOL-0004');
+  assert.equal(staged.result.batch.lines.reduce((sum, line) => sum + line.weight, 0), 1000);
+  assert.equal(staged.result.batch.lines.reduce((sum, line) => sum + line.cost, 0), 100000);
+  assert.equal(staged.result.batch.lines.every(line => line.pooledAllocation === true), true);
+  assert.equal(staged.pool.remainingWeight, 2000);
+  assert.equal(staged.pool.remainingCost, 200000);
+  assert.equal(staged.batches.length, 1);
+  assert.equal(staged.liquidations.length, 0, 'moving to Liquidation must not record the final sale');
 });
 
 test('record sale modal shows live profit margin fields without buyer offer', async () => {
