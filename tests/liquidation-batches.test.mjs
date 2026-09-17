@@ -52,15 +52,28 @@ async function loadInventoryApi() {
       toast = originalToast;
       return JSON.parse(JSON.stringify({ pending: pendingLiquidationBatchSetup, message }));
     },
-    prepareSelectedPools(poolIds) {
+    prepareSelectedPools(poolIds, weights = {}) {
       inventoryMoveSelection.clear();
       inventoryPoolRowSelection.clear();
       poolIds.forEach(id => inventoryPoolRowSelection.add(id));
       pendingInventoryMove = null;
       pendingLiquidationBatchSetup = null;
+      appended.length = 0;
       moveCheckedInventoryToLiquidation();
-      if (pendingInventoryMove) confirmInventoryMoveToLiquidation();
-      return JSON.parse(JSON.stringify(pendingLiquidationBatchSetup));
+      const reviewHtml = appended.at(-1)?.innerHTML || '';
+      if (pendingInventoryMove) {
+        pendingInventoryMove.poolWeights = { ...(pendingInventoryMove.poolWeights || {}), ...weights };
+        confirmInventoryMoveToLiquidation();
+      }
+      return JSON.parse(JSON.stringify({ pending: pendingLiquidationBatchSetup, reviewHtml, html: appended.at(-1)?.innerHTML || '' }));
+    },
+    appendPreparedMoveToBatch(batchId) {
+      const batch = db.liquidationBatches.find(record => record.id === batchId);
+      const group = pendingLiquidationBatchSetup?.groups?.[0];
+      const result = typeof appendInventoryMoveGroupToBatch === 'function' && group
+        ? appendInventoryMoveGroupToBatch(batch, group)
+        : false;
+      return JSON.parse(JSON.stringify({ result, batch, stock: db.stock, pools: db.inventoryPools, batchCount: db.liquidationBatches.length }));
     },
     stagePoolMoves(poolIds) {
       const batch = { id: 'LB-MULTI-POOL', name: 'Multi pool batch', buyer: 'Buyer', metal: 'Mixed', lines: [] };
@@ -503,7 +516,7 @@ test('two selected pools are prepared together in one liquidation batch', async 
   state.liquidationBatches = [];
   api.setState(state);
 
-  const pending = api.prepareSelectedPools(['POOL-21', 'POOL-22']);
+  const { pending } = api.prepareSelectedPools(['POOL-21', 'POOL-22']);
   assert.equal(pending.groups.length, 1);
   assert.equal(pending.groups[0].metal, 'Gold');
   assert.deepEqual(Array.from(pending.groups[0].poolMoves, move => move.poolId), ['POOL-21', 'POOL-22']);
@@ -514,6 +527,56 @@ test('two selected pools are prepared together in one liquidation batch', async 
   assert.equal(staged.batch.metal, 'Gold');
   assert.equal(staged.stock.reduce((sum, item) => sum + item.currentWeight, 0), 0);
   assert.equal(staged.pools.every(pool => pool.status === 'FULLY LIQUIDATED'), true);
+});
+
+test('selected pools accept independent partial weights before liquidation movement', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock.push(
+    { id: '21-a', date: '2026-09-17', customerName: 'Pool 21K', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-21', netWeight: 3, currentWeight: 3, cost: 15000 },
+    { id: '22-a', date: '2026-09-17', customerName: 'Pool 22K', metal: 'Gold', karat: '22K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-22', netWeight: 4, currentWeight: 4, cost: 24000 }
+  );
+  state.inventoryPools = [
+    { id: 'POOL-21', name: '21K pool', metal: 'Gold', karat: '21K', itemIds: ['21-a'], originalWeight: 3, originalCost: 15000, remainingWeight: 3, remainingCost: 15000, onHold: false, status: 'ACTIVE' },
+    { id: 'POOL-22', name: '22K pool', metal: 'Gold', karat: '22K', itemIds: ['22-a'], originalWeight: 4, originalCost: 24000, remainingWeight: 4, remainingCost: 24000, onHold: false, status: 'ACTIVE' }
+  ];
+  api.setState(state);
+
+  const { pending, reviewHtml, html } = api.prepareSelectedPools(['POOL-21', 'POOL-22'], { 'POOL-21': 1, 'POOL-22': 2 });
+
+  assert.match(reviewHtml, /inventory_move_pool_weight_POOL-21/);
+  assert.match(reviewHtml, /inventory_move_pool_weight_POOL-22/);
+  assert.match(html, /Add to existing open batch/);
+  assert.equal(pending.groups[0].poolMoves[0].prepared.weight, 1);
+  assert.equal(pending.groups[0].poolMoves[0].prepared.cost, 5000);
+  assert.equal(pending.groups[0].poolMoves[1].prepared.weight, 2);
+  assert.equal(pending.groups[0].poolMoves[1].prepared.cost, 12000);
+});
+
+test('inventory selection can append partial pools to an existing open batch', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock.push(
+    { id: 'pool-21-a', date: '2026-09-17', customerName: '21K pool', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-21', netWeight: 1.5, currentWeight: 1.5, cost: 7500 },
+    { id: 'pool-21-b', date: '2026-09-17', customerName: '21K pool', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-21', netWeight: 1.5, currentWeight: 1.5, cost: 7500 }
+  );
+  state.inventoryPools = [
+    { id: 'POOL-21', name: '21K pool', metal: 'Gold', karat: '21K', itemIds: ['pool-21-a', 'pool-21-b'], originalWeight: 3, originalCost: 15000, remainingWeight: 3, remainingCost: 15000, onHold: false, status: 'ACTIVE' }
+  ];
+  api.setState(state);
+  api.prepareSelectedPools(['POOL-21'], { 'POOL-21': 1 });
+
+  const result = api.appendPreparedMoveToBatch('LB-0001');
+
+  assert.equal(result.result, true);
+  assert.equal(result.batchCount, 2);
+  assert.equal(result.batch.lines.length, 2);
+  assert.equal(result.batch.lines.at(-1).weight, 1);
+  assert.equal(result.batch.lines.at(-1).cost, 5000);
+  assert.equal(result.stock.filter(item => item.inventoryPoolId === 'POOL-21').reduce((sum, item) => sum + item.currentWeight, 0), 2);
+  assert.equal(result.stock.filter(item => item.inventoryPoolId === 'POOL-21').reduce((sum, item) => sum + item.cost, 0), 10000);
+  assert.equal(result.pools[0].remainingWeight, 2);
+  assert.equal(result.pools[0].remainingCost, 10000);
 });
 
 test('Edit batch Add New Item lists available inventory pools', async () => {
