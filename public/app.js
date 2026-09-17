@@ -4272,7 +4272,7 @@ function openLiquidationBatchEdit(id) {
     <div class="summary-modal-head"><div><div class="eyebrow">${esc(batch.id)} · ${esc(batch.metal)}</div><h2 id="open_liquidation_batch_title">Edit liquidation batch</h2></div><button class="modal-close" onclick="closeOpenLiquidationBatchModal()" aria-label="Close">×</button></div>
     <div class="form-grid" style="margin-top:16px;"><div class="field"><label>Batch name</label><input id="edit_open_batch_name" value="${esc(batch.name)}"></div><div class="field"><label>Assigned buyer</label><input id="edit_open_batch_buyer" value="${esc(batch.buyer)}"></div><div class="field span-2"><label>Notes</label><input id="edit_open_batch_notes" value="${esc(batch.notes || '')}"></div></div>
     <div class="liquidation-edit-current-head"><div><h3>Current batch items</h3><p class="form-note">Existing items remain unchanged.</p></div><button class="btn secondary small" onclick="toggleOpenLiquidationBatchItemPicker()">+ Add New Item</button></div>
-    <div class="table-wrap liquidation-edit-current-items"><table><thead><tr><th>Item</th><th>Seller</th><th>Purchase date</th><th class="num-head">Weight</th><th class="num-head">Cost</th></tr></thead><tbody>${lines.map(line => { const item = db.stock.find(stock => stock.id === line.itemId) || {}; return `<tr><td><strong>${esc(item.metal || batch.metal)} ${esc(gradeLabel(item.metal || batch.metal, item.karat || ''))}</strong> · ${esc(item.itemType || 'Inventory item')}</td><td>${esc(item.customerName || '—')}</td><td>${fmtDate(item.date)}</td><td class="num">${fmtWeight(line.weight)}</td><td class="num">${fmtMoney(line.cost)}</td></tr>`; }).join('')}</tbody><tfoot><tr><th colspan="3">${lines.length} item${lines.length === 1 ? '' : 's'}</th><th class="num">${fmtWeight(batchWeight)}</th><th class="num">${fmtMoney(batchCost)}</th></tr></tfoot></table></div>
+    <div class="table-wrap liquidation-edit-current-items"><table><thead><tr><th>Item</th><th>Seller</th><th>Purchase date</th><th class="num-head">Weight</th><th class="num-head">Cost</th><th>Action</th></tr></thead><tbody>${lines.map((line, index) => { const item = db.stock.find(stock => stock.id === line.itemId) || {}; return `<tr><td><strong>${esc(item.metal || batch.metal)} ${esc(gradeLabel(item.metal || batch.metal, item.karat || ''))}</strong> · ${esc(item.itemType || 'Inventory item')}</td><td>${esc(item.customerName || '—')}</td><td>${fmtDate(item.date)}</td><td class="num">${fmtWeight(line.weight)}</td><td class="num">${fmtMoney(line.cost)}</td><td><button class="btn secondary small" onclick="returnLiquidationBatchItem('${esc(batch.id)}',${index})">Return to Inventory</button></td></tr>`; }).join('')}</tbody><tfoot><tr><th colspan="3">${lines.length} item${lines.length === 1 ? '' : 's'}</th><th class="num">${fmtWeight(batchWeight)}</th><th class="num">${fmtMoney(batchCost)}</th><th></th></tr></tfoot></table></div>
     <section id="edit_open_batch_item_picker" class="liquidation-edit-item-picker is-hidden"><div><h3>Add inventory to ${esc(batch.id)}</h3><p class="form-note">Available individual inventory and pooled inventory can be added to this batch.</p></div>${eligibleEntries.length ? `<div class="liquidation-edit-filter"><label for="edit_open_batch_item_filter">Item filter</label><select id="edit_open_batch_item_filter" onchange="changeOpenLiquidationBatchItemFilter(this.value)">${liquidationBatchItemFilterOptions(eligibleEntries).map(option => `<option value="${esc(option)}">${option === 'All' ? 'All items' : esc(option)}</option>`).join('')}</select><span class="form-note"><strong id="edit_open_batch_visible_count">${eligibleEntries.length}</strong> shown</span></div><div class="table-wrap"><table><thead><tr><th class="liquidation-select-all"><label><input id="edit_open_batch_select_all" type="checkbox" onchange="toggleAllVisibleOpenLiquidationBatchItems(this.checked)"> Select All</label></th><th>Item</th><th>Seller / pool</th><th>Purchase date</th><th class="num-head">Weight</th><th class="num-head">Cost</th></tr></thead><tbody>${eligibleEntries.map(item => { const token = item.isInventoryPool ? `pool:${item.inventoryPoolId}` : item.id; return `<tr data-open-batch-add-row data-item-karat="${esc(item.karat)}" data-item-type="${esc(item.itemType)}"><td><input type="checkbox" data-open-batch-add-id="${esc(token)}" onchange="toggleOpenLiquidationBatchAddItem(this.dataset.openBatchAddId,this.checked)" aria-label="Add ${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))} ${item.isInventoryPool ? 'pool' : 'item'}"></td><td><strong>${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))}</strong> · ${esc(item.itemType)}${item.isInventoryPool ? ' · Pool' : ''}</td><td>${esc(item.customerName || '—')}</td><td>${fmtDate(item.date)}</td><td class="num">${fmtWeight(item.currentWeight)}</td><td class="num">${fmtMoney(item.cost)}</td></tr>`; }).join('')}</tbody></table></div><div class="form-actions"><span class="form-note"><strong id="edit_open_batch_add_count">0</strong> selected</span><button id="edit_open_batch_add_submit" class="btn small" onclick="addItemsToOpenLiquidationBatch()" disabled>Add selected to batch</button></div>` : `<div class="empty-note">No available inventory can be added right now.</div>`}</section>
     <div class="form-actions liquidation-edit-actions"><button class="btn secondary" onclick="closeOpenLiquidationBatchModal()">Cancel</button><button class="btn" onclick="saveOpenLiquidationBatch()">Save batch</button></div>
   </div>`;
@@ -4324,6 +4324,59 @@ async function addItemsToOpenLiquidationBatch() {
     render();
     openLiquidationBatchEdit(batchId);
     toast(`${itemCount} ${itemCount === 1 ? 'item' : 'items'} added to ${batchId}`);
+}
+function detachLiquidationBatchLine(batch, lineIndex) {
+    const index = Number(lineIndex), line = batch?.lines?.[index], item = line ? db.stock.find(stock => stock.id === line.itemId) : null;
+    if (!batch || !Number.isInteger(index) || index < 0 || !line || !item)
+        return false;
+    if (line.pooledAllocation) {
+        if (!restorePooledLiquidationLine(line))
+            return false;
+    }
+    else {
+        item.status = line.previousStatus === 'For Selling' ? 'Available' : line.previousStatus || 'Available';
+        delete item.liquidationBatchId;
+    }
+    batch.lines.splice(index, 1);
+    const poolId = line.sourcePoolId || batch.poolId || '';
+    if (poolId) {
+        const pool = db.inventoryPools.find(record => record.id === poolId);
+        if (pool) {
+            pool.updatedAt = new Date().toISOString();
+            syncInventoryPool(pool);
+        }
+    }
+    if (!batch.lines.length)
+        db.liquidationBatches = db.liquidationBatches.filter(record => record.id !== batch.id);
+    else {
+        delete batch.buyerOffer;
+        refreshLiquidationBatchMetal(batch);
+    }
+    return true;
+}
+async function returnLiquidationBatchItem(batchId, lineIndex) {
+    if (!adminEditGuard())
+        return;
+    const batch = db.liquidationBatches.find(record => record.id === batchId);
+    if (!batch)
+        return;
+    const beforeState = JSON.parse(JSON.stringify(db));
+    if (!detachLiquidationBatchLine(batch, lineIndex)) {
+        toast('This batch item could not be returned');
+        return;
+    }
+    if (!await saveDB()) {
+        db = beforeState;
+        render();
+        toast('The item was not returned to Inventory');
+        return;
+    }
+    const remains = db.liquidationBatches.some(record => record.id === batchId);
+    closeOpenLiquidationBatchModal();
+    render();
+    if (remains)
+        openLiquidationBatchEdit(batchId);
+    toast('Item returned to Inventory');
 }
 async function saveOpenLiquidationBatch() {
     const batch = db.liquidationBatches.find(record => record.id === editingOpenLiquidationBatchId);

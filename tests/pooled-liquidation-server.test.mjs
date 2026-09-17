@@ -143,3 +143,16 @@ test('server accepts a manual pool containing mixed metals and purities', () => 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'ok');
 });
+
+test('server accepts a pool with one remaining member after another item returns to inventory', () => {
+  const state = emptyState();
+  state.stock.push(
+    { id: 'returned', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', netWeight: 1, currentWeight: 1, payout: 5000, cost: 5000 },
+    { id: 'remaining', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-ONE', netWeight: 2, currentWeight: 2, payout: 10000, cost: 10000 }
+  );
+  state.inventoryPools.push({ id: 'POOL-ONE', name: 'Remaining 21K pool', metal: 'Gold', karat: '21K', itemIds: ['remaining'], originalWeight: 2, originalCost: 10000, remainingWeight: 2, remainingCost: 10000, onHold: false, status: 'ACTIVE' });
+
+  const result = validate(state);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'ok');
+});

@@ -75,6 +75,13 @@ async function loadInventoryApi() {
         : false;
       return JSON.parse(JSON.stringify({ result, batch, stock: db.stock, pools: db.inventoryPools, batchCount: db.liquidationBatches.length }));
     },
+    returnBatchLine(batchId, lineIndex) {
+      const batch = db.liquidationBatches.find(record => record.id === batchId);
+      const result = typeof detachLiquidationBatchLine === 'function'
+        ? detachLiquidationBatchLine(batch, lineIndex)
+        : false;
+      return JSON.parse(JSON.stringify({ result, batch, stock: db.stock, pools: db.inventoryPools, batches: db.liquidationBatches }));
+    },
     stagePoolMoves(poolIds) {
       const batch = { id: 'LB-MULTI-POOL', name: 'Multi pool batch', buyer: 'Buyer', metal: 'Mixed', lines: [] };
       const moves = poolIds.map(id => prepareEntirePoolMove(db.inventoryPools.find(pool => pool.id === id)));
@@ -413,8 +420,48 @@ test('editing a batch offers available inventory from other metals', async () =>
 
   assert.match(html, /\+ Add New Item/);
   assert.match(html, /Current batch items/);
+  assert.match(html, /returnLiquidationBatchItem\('LB-0001',0\)/);
+  assert.match(html, />Return to Inventory</);
   assert.match(html, /New Silver Seller/);
   assert.match(html, /Available individual inventory and pooled inventory/);
+});
+
+test('returning a normal liquidation batch item restores it and closes an empty batch', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  api.setState(state);
+
+  const result = api.returnBatchLine('LB-0001', 0);
+
+  assert.equal(result.result, true);
+  assert.equal(result.stock.find(item => item.id === 'stock-transit-a').status, 'Available');
+  assert.equal(result.stock.find(item => item.id === 'stock-transit-a').liquidationBatchId, undefined);
+  assert.equal(result.batches.some(batch => batch.id === 'LB-0001'), false);
+});
+
+test('returning one pooled batch line restores its pool balance and keeps other batch items', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'pool-a', date: '2026-09-18', customerName: 'Seller', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-21', netWeight: 1, currentWeight: 0, cost: 0 },
+    { id: 'pool-b', date: '2026-09-18', customerName: 'Seller', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-21', netWeight: 1, currentWeight: 0, cost: 0 }
+  ];
+  state.inventoryPools = [{ id: 'POOL-21', name: '21K pool', metal: 'Gold', karat: '21K', itemIds: ['pool-a', 'pool-b'], originalWeight: 2, originalCost: 2, remainingWeight: 0, remainingCost: 0, onHold: false, status: 'FULLY LIQUIDATED' }];
+  state.liquidationBatches = [{ id: 'LB-POOL', name: 'Pool batch', buyer: 'Buyer', metal: 'Gold', lines: [
+    { itemId: 'pool-a', previousStatus: 'Available', weight: 1, cost: 1, pooledAllocation: true, sourcePoolId: 'POOL-21' },
+    { itemId: 'pool-b', previousStatus: 'Available', weight: 1, cost: 1, pooledAllocation: true, sourcePoolId: 'POOL-21' }
+  ] }];
+  api.setState(state);
+
+  const result = api.returnBatchLine('LB-POOL', 0);
+
+  assert.equal(result.result, true);
+  assert.equal(result.batch.lines.length, 1);
+  assert.equal(result.stock.find(item => item.id === 'pool-a').currentWeight, 1);
+  assert.equal(result.stock.find(item => item.id === 'pool-a').cost, 1);
+  assert.equal(result.pools[0].remainingWeight, 1);
+  assert.equal(result.pools[0].remainingCost, 1);
+  assert.equal(result.pools[0].status, 'PARTIALLY LIQUIDATED');
 });
 
 test('adding Silver to a Gold batch converts it to Mixed and preserves both lines', async () => {

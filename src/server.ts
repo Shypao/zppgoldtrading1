@@ -599,7 +599,7 @@ export function validateLedgerIntegrity(state: LedgerState): void {
     if(!pool.id||poolIds.has(pool.id)) throw new Error('Inventory pools contain a missing or duplicate ID');
     poolIds.add(pool.id);
     const itemIds=Array.isArray(pool.itemIds)?pool.itemIds.map(String):[];
-    if(itemIds.length<2||new Set(itemIds).size!==itemIds.length) throw new Error(`Inventory pool ${pool.id} must contain at least two unique items`);
+    if(itemIds.length<1||new Set(itemIds).size!==itemIds.length) throw new Error(`Inventory pool ${pool.id} must contain at least one unique item`);
     const items=itemIds.map(id=>stockById.get(id));
     if(items.some(item=>!item)) throw new Error(`Inventory pool ${pool.id} references a missing inventory item`);
     const metals=new Set(items.map(item=>String(item!.metal??''))),grades=new Set(items.map(item=>String(item!.karat??'')));
