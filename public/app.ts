@@ -2829,11 +2829,70 @@ function renderInventory(){
     <div class="inventory-stock-head"><div><h2 class="block-title">Stock records</h2><p class="form-note">${inventorySearch?`${rows.length} matching record${rows.length===1?'':'s'}`:activeFilterLabels.length?`Showing: ${activeFilterLabels.map(esc).join(' · ')}`:'Showing all records'} across ${inventoryDateLabel()}.</p></div><div class="inventory-stock-tools"><div class="field inventory-stock-search"><label for="inventory_stock_search">Search stock records</label><input id="inventory_stock_search" type="search" autocomplete="off" value="${esc(inventorySearch)}" placeholder="Customer, date, metal, karat, or status" oninput="updateInventorySearch(this.value)"></div><button class="btn secondary small" onclick="openInventoryFilterModal()">Change filters</button></div></div>
     ${isAdmin()?`<div class="inventory-action-panel"><div class="inventory-action-status"><strong>${percentagePool.length} eligible ${inventorySelectedDate==='All'?'across all dates':'on this date'}</strong><span><span id="inventory_liq_count">${selectedMoveCount}</span> manually selected${percentagePool.length?'':' · change the filters'}</span>${selectedGradeCounts.size?`<div class="inventory-selection-chips">${Array.from(selectedGradeCounts.entries()).map(([grade,count])=>`<span>${esc(grade)} · ${count}</span>`).join('')}</div>`:''}</div><div class="inventory-action-buttons"><button class="btn secondary small" onclick="selectAllVisibleInventory()">Select all shown</button><button class="btn secondary small" onclick="selectAllLowKaratGold()">Select low-karat Gold</button><button class="btn secondary small" data-inventory-selection-required onclick="clearInventorySelection()" ${selectedMoveCount?'':'disabled'}>Clear</button><div class="inventory-bulk-category"><select id="inventory_bulk_status" aria-label="Category for selected inventory" onchange="inventoryBulkStatus=this.value">${['Available','For Refining','On Hold'].map(status=>`<option ${inventoryBulkStatus===status?'selected':''}>${status}</option>`).join('')}</select><button class="btn secondary small" data-inventory-selection-required onclick="categorizeCheckedInventory()" ${selectedMoveCount?'':'disabled'}>Apply category</button></div><button class="btn" id="inventory_pool_selected" onclick="openManualInventoryPoolModal()" ${canPoolSelected?'':'disabled'}>Pool selected</button><button class="btn secondary small" id="inventory_move_selected" onclick="moveCheckedInventoryToLiquidation()" ${canMoveSelected?'':'disabled'}>Move selected to liquidation</button><button class="btn secondary small" data-inventory-selection-required onclick="prepareInventoryForRefining()" ${selectedMoveCount?'':'disabled'}>Refine selected</button></div></div>`:''}
     ${tableOrEmpty(rows, s=>`<tr>${isAdmin()?`<td>${s.isInventoryPool?'—':`<input type="checkbox" data-inventory-move-id="${s.id}" aria-label="Select ${esc(s.metal)} ${esc(s.karat)} from ${esc(s.customerName)}" onchange="toggleInventoryForLiquidation('${s.id}',this.checked)" ${inventoryMoveSelection.has(s.id)?'checked':''} ${categorizableInventory(s)?'':'disabled'}>`}</td>`:''}<td>${fmtDate(s.date)}</td><td>${esc(s.customerName)}</td><td><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)}</td>
-      <td>${esc(s.itemType)}</td><td class="num">${fmtWeight(s.currentWeight)}</td><td class="num">${fmtMoney(s.cost)}</td><td>${statusPill(s.status)}${s.isInventoryPool?`<br><span class="form-note">${esc(s.inventoryPoolId)}</span>`:''}</td><td>${esc(s.remarks||'—')}</td>${isAdmin()?`<td><div class="form-actions">${s.isInventoryPool?`<button class="btn small" onclick="openPoolLiquidationModal('${s.inventoryPoolId}')">Liquidate Pool</button>`:`${movableInventory(s)?`<button class="btn secondary small" onclick="liquidateInventoryItem('${s.id}')">Liquidate item</button>`:''}${adminEditButton('Inventory',s.id)}`}</div></td>`:''}</tr>`,
+      <td>${esc(s.itemType)}</td><td class="num">${fmtWeight(s.currentWeight)}</td><td class="num">${fmtMoney(s.cost)}</td><td>${statusPill(s.status)}${s.isInventoryPool?`<br><span class="form-note">${esc(s.inventoryPoolId)}</span>`:''}</td><td>${esc(s.remarks||'—')}</td>${isAdmin()?`<td><div class="form-actions">${s.isInventoryPool?`<button class="btn small" onclick="openPoolLiquidationModal('${s.inventoryPoolId}')">Liquidate Pool</button><button class="btn secondary small" onclick="openInventoryPoolEdit('${s.inventoryPoolId}')">Edit</button>`:`${movableInventory(s)?`<button class="btn secondary small" onclick="liquidateInventoryItem('${s.id}')">Liquidate item</button>`:''}${adminEditButton('Inventory',s.id)}`}</div></td>`:''}</tr>`,
       [...(isAdmin()?['Select']:[]),'Date','Customer','Metal / karat','Type','Current weight','Cost','Status','Remarks',...(isAdmin()?['Actions']:[])],
       `No stock matches this filter ${inventorySelectedDate==='All'?'across all purchase dates':`on ${fmtDate(selectedDay.date)}`}.`)}
   </section>
   `;
+}
+let editingInventoryPoolId=null;
+function sharedPoolItemValue(items,key){
+  const values=Array.from(new Set(items.map(item=>String(item[key]||''))));
+  return values.length===1?values[0]:'';
+}
+function openInventoryPoolEdit(id){
+  const pool=db.inventoryPools.find(item=>item.id===id);if(!pool||!adminEditGuard())return;
+  const snapshot=inventoryPoolSnapshot(pool);if(!snapshot.items.length)return;
+  editingInventoryPoolId=id;
+  const composition=inventoryPoolComposition(snapshot.items),dates=snapshot.items.map(item=>item.date).filter(Boolean).sort();
+  const date=dates.at(-1)||String(pool.createdAt||'').slice(0,10)||todayStr();
+  const gradeKeys=composition.metal==='Mixed'?[]:Array.from(new Set([...(GRADES[composition.metal]||[]),...snapshot.items.map(item=>item.karat).filter(Boolean)]));
+  const mixedPurities=composition.metal!=='Mixed'&&composition.karat==='Mixed';
+  const itemType=sharedPoolItemValue(snapshot.items,'itemType')||'Mixed';
+  openAdminEditModal('Edit pooled inventory',`<div class="form-grid">
+    <div class="field"><label>Date</label><input id="edit_pool_date" type="date" value="${esc(date)}"></div>
+    <div class="field"><label>Classification</label><select id="edit_pool_status"><option ${pool.onHold?'':'selected'}>Available</option><option ${pool.onHold?'selected':''}>On Hold</option></select></div>
+    <div class="field"><label>Karat / purity</label><select id="edit_pool_karat" ${composition.metal==='Mixed'?'disabled':''}>${composition.metal==='Mixed'?'<option value="Mixed" selected>Mixed metals / purities</option>':`${mixedPurities?'<option value="Mixed" selected>Mixed purities</option>':''}${gradeKeys.map(key=>`<option value="${esc(key)}" ${key===composition.karat?'selected':''}>${esc(gradeLabel(composition.metal,key))}</option>`).join('')}`}</select></div>
+    <div class="field"><label>Current weight (g)</label><input id="edit_pool_weight" type="number" min="0.01" max="${roundWeight(snapshot.items.reduce((sum,item)=>sum+Number(item.netWeight||0),0))}" step="0.01" value="${snapshot.weight}"></div>
+    <div class="field"><label>Remaining cost (PHP)</label><input id="edit_pool_cost" type="number" min="0" step="0.01" value="${snapshot.cost}"></div>
+    <div class="field"><label>Payment method</label><input id="edit_pool_payment" value="${esc(sharedPoolItemValue(snapshot.items,'paymentMethod'))}"></div>
+    <div class="field"><label>Staff member</label><input id="edit_pool_staff" value="${esc(sharedPoolItemValue(snapshot.items,'staff')||currentUser?.displayName||'')}"></div>
+    <div class="field"><label>Item type</label><select id="edit_pool_type"><option ${itemType==='Jewelry'?'selected':''}>Jewelry</option><option ${itemType==='Scrap'?'selected':''}>Scrap</option>${itemType==='Mixed'?'<option selected>Mixed</option>':''}</select></div>
+    <div class="field span-2"><label>Remarks</label><textarea id="edit_pool_remarks">${esc(pool.notes||'')}</textarea></div>
+  </div><p class="form-note">Changes apply to the pooled balance while every original inventory record remains traceable.</p>`,'saveInventoryPoolEdit');
+}
+function distributePoolWeight(items,targetWeight){
+  const currentTotal=items.reduce((sum,item)=>sum+Number(item.currentWeight||0),0);
+  if(targetWeight<=currentTotal&&currentTotal>0){
+    let assigned=0;const positive=items.filter(item=>Number(item.currentWeight||0)>0);
+    positive.forEach((item,index)=>{item.currentWeight=index===positive.length-1?roundWeight(targetWeight-assigned):roundWeight(targetWeight*(Number(item.currentWeight)/currentTotal));assigned=roundWeight(assigned+item.currentWeight);});
+    items.filter(item=>!positive.includes(item)).forEach(item=>{item.currentWeight=0;});return;
+  }
+  let increase=roundWeight(targetWeight-currentTotal),assigned=0;
+  const available=items.filter(item=>Number(item.netWeight||0)>Number(item.currentWeight||0));
+  const capacity=available.reduce((sum,item)=>sum+Math.max(0,Number(item.netWeight||0)-Number(item.currentWeight||0)),0);
+  available.forEach((item,index)=>{const room=Math.max(0,Number(item.netWeight||0)-Number(item.currentWeight||0));const addition=index===available.length-1?roundWeight(increase-assigned):roundWeight(increase*(room/capacity));item.currentWeight=roundWeight(Number(item.currentWeight||0)+addition);assigned=roundWeight(assigned+addition);});
+}
+function distributePoolCost(items,targetCost){
+  const positive=items.filter(item=>Number(item.currentWeight||0)>0),currentCost=positive.reduce((sum,item)=>sum+Number(item.cost||0),0),weight=positive.reduce((sum,item)=>sum+Number(item.currentWeight||0),0);
+  let assigned=0;items.filter(item=>!positive.includes(item)).forEach(item=>{item.cost=0;});
+  positive.forEach((item,index)=>{const share=currentCost>0?Number(item.cost||0)/currentCost:Number(item.currentWeight||0)/weight;item.cost=index===positive.length-1?roundMoney(targetCost-assigned):roundMoney(targetCost*share);assigned=roundMoney(assigned+item.cost);});
+}
+async function saveInventoryPoolEdit(){
+  if(!adminEditGuard())return;
+  const pool=db.inventoryPools.find(item=>item.id===editingInventoryPoolId);if(!pool)return;
+  const items=inventoryPoolItems(pool),targetWeight=Number(val('edit_pool_weight')),targetCost=Number(val('edit_pool_cost'));
+  const maximumWeight=roundWeight(items.reduce((sum,item)=>sum+Number(item.netWeight||0),0));
+  if(!val('edit_pool_date')){toast('Date is required');return;}
+  if(!Number.isFinite(targetWeight)||targetWeight<=0||targetWeight>maximumWeight){toast(`Current weight must be between 0.01 g and ${maximumWeight.toFixed(2)} g`);return;}
+  if(!Number.isFinite(targetCost)||targetCost<0){toast('Enter a valid remaining cost');return;}
+  const beforeState=JSON.parse(JSON.stringify(db)),status=val('edit_pool_status'),karat=val('edit_pool_karat'),itemType=val('edit_pool_type');
+  distributePoolWeight(items,roundWeight(targetWeight));distributePoolCost(items,roundMoney(targetCost));
+  items.forEach(item=>{item.date=val('edit_pool_date');item.status=status==='On Hold'?'On Hold':'Available';item.paymentMethod=val('edit_pool_payment').trim();item.staff=val('edit_pool_staff').trim();if(itemType!=='Mixed')item.itemType=itemType;if(karat&&karat!=='Mixed')item.karat=karat;});
+  pool.onHold=status==='On Hold';pool.notes=val('edit_pool_remarks').trim();pool.updatedAt=new Date().toISOString();
+  const composition=inventoryPoolComposition(items);pool.metal=composition.metal;pool.karat=composition.karat;syncInventoryPool(pool);
+  if(!await saveDB()){db=beforeState;render();toast('The pooled inventory was not updated');return;}
+  editingInventoryPoolId=null;closeAdminEditModal();render();toast('Pooled inventory updated');
 }
 let editingInventoryId=null;
 function openInventoryEdit(id){
@@ -2841,16 +2900,18 @@ function openInventoryEdit(id){
   if(item.inventoryPoolId) return;
   editingInventoryId=id;
   const statuses=['Available','For Refining','On Hold','Liquidated','Refined','Sold'];
+  const gradeKeys=Array.from(new Set([...(GRADES[item.metal]||[]),item.karat].filter(Boolean)));
   openAdminEditModal('Edit purchase / inventory record',`<div class="form-grid">
     <div class="field"><label>Date</label><input id="edit_inventory_date" type="date" value="${esc(item.date||todayStr())}"></div>
     <div class="field"><label>Classification</label><select id="edit_inventory_status">${statuses.map(status=>`<option ${item.status===status?'selected':''}>${status}</option>`).join('')}</select></div>
+    <div class="field"><label>Karat / purity</label><select id="edit_inventory_karat">${gradeKeys.map(key=>`<option value="${esc(key)}" ${item.karat===key?'selected':''}>${esc(gradeLabel(item.metal,key))}</option>`).join('')}</select></div>
     <div class="field"><label>Current weight (g)</label><input id="edit_inventory_weight" type="number" min="0" max="${Number(item.netWeight)}" step="0.01" value="${Number(item.currentWeight)}"></div>
     <div class="field"><label>Remaining cost (PHP)</label><input id="edit_inventory_cost" type="number" min="0" step="0.01" value="${Number(item.cost)}"></div>
     <div class="field"><label>Payment method</label><input id="edit_inventory_payment" value="${esc(item.paymentMethod||'')}"></div>
     <div class="field"><label>Staff member</label><input id="edit_inventory_staff" value="${esc(item.staff||'')}"></div>
     <div class="field"><label>Item type</label><select id="edit_inventory_type"><option ${item.itemType==='Jewelry'?'selected':''}>Jewelry</option><option ${item.itemType==='Scrap'?'selected':''}>Scrap</option></select></div>
     <div class="field span-2"><label>Remarks</label><textarea id="edit_inventory_remarks">${esc(item.remarks||'')}</textarea></div>
-  </div><p class="form-note">Original metal, purity, purchase weight, rate, and payout remain locked to preserve the audit trail.</p>`,'saveInventoryEdit','deleteInventoryRecord');
+  </div><p class="form-note">An Administrator can correct the recorded karat or purity. Original metal, purchase weight, rate, and payout remain locked.</p>`,'saveInventoryEdit','deleteInventoryRecord');
 }
 async function saveInventoryEdit(){
   if(!adminEditGuard()) return;
@@ -2861,7 +2922,7 @@ async function saveInventoryEdit(){
   if(!Number.isFinite(cost)||cost<0){ toast('Enter a valid remaining cost'); return; }
   if(weight===0&&!['Liquidated','Refined','Sold'].includes(status)){ toast('Choose Liquidated, Refined, or Sold when the remaining weight is zero'); return; }
   if(weight>0&&['Liquidated','Refined','Sold'].includes(status)){ toast('Liquidated, Refined, or Sold inventory must have zero remaining weight'); return; }
-  Object.assign(item,{date:val('edit_inventory_date'),status,currentWeight:roundWeight(weight),cost:roundMoney(cost),paymentMethod:val('edit_inventory_payment').trim(),staff:val('edit_inventory_staff').trim(),itemType:val('edit_inventory_type'),remarks:val('edit_inventory_remarks').trim()});
+  Object.assign(item,{date:val('edit_inventory_date'),status,karat:val('edit_inventory_karat')||item.karat,currentWeight:roundWeight(weight),cost:roundMoney(cost),paymentMethod:val('edit_inventory_payment').trim(),staff:val('edit_inventory_staff').trim(),itemType:val('edit_inventory_type'),remarks:val('edit_inventory_remarks').trim()});
   closeAdminEditModal(); await saveDB(); render(); toast('Inventory record updated');
 }
 async function deleteInventoryRecord(){

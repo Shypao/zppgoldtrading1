@@ -62,6 +62,16 @@ async function loadInventoryApi() {
       openLiquidationBatchEdit(id);
       return appended.at(-1)?.innerHTML || '';
     },
+    openPoolEdit(id) {
+      appended.length = 0;
+      openInventoryPoolEdit(id);
+      return appended.at(-1)?.innerHTML || '';
+    },
+    openInventoryEdit(id) {
+      appended.length = 0;
+      openInventoryEdit(id);
+      return appended.at(-1)?.innerHTML || '';
+    },
     appendToBatch(batchId, itemIds) {
       const batch = db.liquidationBatches.find(record => record.id === batchId);
       const items = itemIds.map(id => db.stock.find(item => item.id === id)).filter(Boolean);
@@ -377,10 +387,59 @@ test('inventory displays a pool as one available row with combined weight and co
   assert.match(html, /PHP 300,000/);
   assert.match(html, />Available</);
   assert.match(html, /Liquidate Pool/);
+  assert.match(html, /openInventoryPoolEdit\('POOL-0003'\)[^>]*>Edit</);
   assert.doesNotMatch(html, /Put On Hold/);
   assert.doesNotMatch(html, /Seller A|Seller B/);
   assert.doesNotMatch(html, /Inventory Pools/);
   assert.doesNotMatch(html, /Manage this item through/);
+
+  const editModal = api.openPoolEdit('POOL-0003');
+  assert.match(editModal, /Edit pooled inventory/);
+  assert.match(editModal, /id="edit_pool_date"/);
+  assert.match(editModal, /id="edit_pool_status"/);
+  assert.match(editModal, /id="edit_pool_karat"/);
+  assert.match(editModal, /<option value="925" selected>925<\/option>/);
+  assert.match(editModal, /<option value="999"/);
+  assert.match(editModal, /<option value="900"/);
+  assert.match(editModal, /id="edit_pool_weight"/);
+  assert.match(editModal, /id="edit_pool_cost"/);
+  assert.match(editModal, /id="edit_pool_remarks"/);
+});
+
+test('inventory edit offers a metal-specific karat or purity selector', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [{ id: 'silver-edit', date: '2026-09-17', customerName: 'Seller', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', netWeight: 113, currentWeight: 113, payout: 8927, cost: 8927 }];
+  state.inventoryPools = [];
+  api.setState(state);
+
+  const modal = api.openInventoryEdit('silver-edit');
+
+  assert.match(modal, /Edit purchase \/ inventory record/);
+  assert.match(modal, /id="edit_inventory_karat"/);
+  assert.match(modal, /<option value="999"/);
+  assert.match(modal, /<option value="925" selected>925<\/option>/);
+  assert.match(modal, /<option value="900"/);
+  assert.match(modal, /<option value="800"/);
+  assert.match(modal, /<option value="750"[^>]*>75%<\/option>/);
+  assert.match(modal, /<option value="600"[^>]*>60%<\/option>/);
+});
+
+test('a same-metal pool with several purities keeps Mixed selected when edited', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'silver-925', date: '2026-09-17', customerName: 'Seller A', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-0005', netWeight: 500, currentWeight: 500, payout: 50000, cost: 50000 },
+    { id: 'silver-999', date: '2026-09-17', customerName: 'Seller B', metal: 'Silver', karat: '999', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-0005', netWeight: 500, currentWeight: 500, payout: 60000, cost: 60000 }
+  ];
+  state.inventoryPools = [{ id: 'POOL-0005', name: 'Mixed silver pool', metal: 'Silver', karat: 'Mixed', itemIds: ['silver-925', 'silver-999'], originalWeight: 1000, originalCost: 110000, onHold: false }];
+  api.setState(state);
+
+  const modal = api.openPoolEdit('POOL-0005');
+
+  assert.match(modal, /<option value="Mixed" selected>Mixed purities<\/option>/);
+  assert.match(modal, /<option value="925"/);
+  assert.match(modal, /<option value="999"/);
 });
 
 test('partial pool allocation moves to an open liquidation batch before recording a sale', async () => {
