@@ -1,4 +1,5 @@
 node_modules/
+dist/
 .vercel/
 .env
 .env.*
@@ -11,3 +12,5 @@ data/*.db-wal
 
 .DS_Store
 npm-debug.log*
+.vercel
+.env*
