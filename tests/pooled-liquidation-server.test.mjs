@@ -40,6 +40,37 @@ test('server accepts a partial pooled liquidation while the source keeps its rem
   assert.equal(result.stdout, 'ok');
 });
 
+test('legacy zero-balance Pooled records do not block a modern pool move', () => {
+  const state = emptyState();
+  state.stock.push(
+    { id: 'legacy-a', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Pooled', netWeight: 100, currentWeight: 0, payout: 10000, cost: 0 },
+    { id: 'legacy-b', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Pooled', netWeight: 200, currentWeight: 0, payout: 20000, cost: 0 },
+    { id: 'modern-a', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-0002', netWeight: 1000, currentWeight: 500, payout: 100000, cost: 50000 },
+    { id: 'modern-b', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-0002', netWeight: 2000, currentWeight: 1500, payout: 200000, cost: 150000 }
+  );
+  state.inventoryPools.push(
+    {
+      id: 'POOL-0001', name: 'Legacy pool', metal: 'Silver', karat: '925', itemIds: ['legacy-a', 'legacy-b'],
+      originalWeight: 300, originalCost: 30000, remainingWeight: 300, remainingCost: 30000, status: 'ACTIVE'
+    },
+    {
+      id: 'POOL-0002', name: 'Modern pool', metal: 'Silver', karat: '925', itemIds: ['modern-a', 'modern-b'],
+      originalWeight: 3000, originalCost: 300000, remainingWeight: 2000, remainingCost: 200000, onHold: false, status: 'PARTIALLY LIQUIDATED'
+    }
+  );
+  state.liquidationBatches.push({
+    id: 'LB-0001', name: 'Modern partial batch', buyer: 'Buyer', metal: 'Silver', poolId: 'POOL-0002',
+    lines: [
+      { itemId: 'modern-a', previousStatus: 'Available', weight: 500, cost: 50000, pooledAllocation: true },
+      { itemId: 'modern-b', previousStatus: 'Available', weight: 500, cost: 50000, pooledAllocation: true }
+    ]
+  });
+
+  const result = validate(state);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'ok');
+});
+
 test('server accepts a correctly labelled mixed-metal liquidation batch', () => {
   const state = emptyState();
   state.stock.push(
