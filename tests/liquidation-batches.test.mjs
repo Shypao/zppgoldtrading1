@@ -103,6 +103,11 @@ async function loadInventoryApi() {
       openInventoryPoolEdit(id);
       return appended.at(-1)?.innerHTML || '';
     },
+    openPoolLiquidation(id) {
+      appended.length = 0;
+      openPoolLiquidationModal(id);
+      return appended.at(-1)?.innerHTML || '';
+    },
     returnPoolMembers(poolId, itemIds) {
       const pool = db.inventoryPools.find(record => record.id === poolId);
       const result = typeof detachInventoryPoolItems === 'function'
@@ -726,6 +731,11 @@ test('inventory displays a pool as one available row with combined weight and co
   assert.match(editModal, /data-pool-return-item-id="pool-a"/);
   assert.match(editModal, /data-pool-return-item-id="pool-b"/);
   assert.match(editModal, /Return selected to Inventory/);
+
+  const liquidationModal = api.openPoolLiquidation('POOL-0003');
+  assert.match(liquidationModal, /Liquidation destination/);
+  assert.match(liquidationModal, /Create new liquidation batch/);
+  assert.match(liquidationModal, /Add to existing open batch/);
 });
 
 test('returning selected pool members keeps their remaining balances as available inventory', async () => {

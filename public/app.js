@@ -3393,6 +3393,12 @@ function updatePoolLiquidationPreview() {
     if (button)
         button.disabled = !prepared;
 }
+function changePoolLiquidationDestination(value) {
+    const creating = value === 'new';
+    const details = document.getElementById('pool_liquidation_new_batch_fields');
+    if (details)
+        details.classList.toggle('is-hidden', !creating);
+}
 function openPoolLiquidationModal(id) {
     const pool = db.inventoryPools.find(item => item.id === id);
     if (!pool || !adminEditGuard())
@@ -3402,11 +3408,12 @@ function openPoolLiquidationModal(id) {
         toast('This pool is fully liquidated');
         return;
     }
+    const openBatches = db.liquidationBatches || [];
     closePoolLiquidationModal();
     const modal = document.createElement('div');
     modal.id = 'pool_liquidation_modal';
     modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="summary-modal" role="dialog" aria-modal="true" aria-labelledby="pool_liquidation_title"><div class="summary-modal-head"><div><div class="eyebrow">${esc(pool.id)} · Available</div><h2 id="pool_liquidation_title">Move ${esc(pool.name)} to Liquidation</h2></div><button class="modal-close" onclick="closePoolLiquidationModal()" aria-label="Close">×</button></div><p class="move-confirmation-intro">Choose a partial weight or the entire pool. This creates an open liquidation batch; the sale is recorded later from the Liquidation page.</p><input id="pool_liquidation_id" type="hidden" value="${esc(pool.id)}"><div class="field"><label>Liquidation type</label><div class="pool-liquidation-types"><label><input type="radio" name="pool_liquidation_type" value="partial" onchange="updatePoolLiquidationPreview()" checked> Partial</label><label><input type="radio" name="pool_liquidation_type" value="entire" onchange="updatePoolLiquidationPreview()"> Entire pool</label></div></div><div class="form-grid"><div class="field"><label>Weight for liquidation (g)</label><input id="pool_liquidation_weight" type="number" min="0.01" max="${snapshot.weight}" step="0.01" oninput="updatePoolLiquidationPreview()"></div><div class="field"><label>Cost basis (automatic)</label><output id="pool_liquidation_cost">—</output></div><div class="field"><label>Assigned buyer</label><input id="pool_liquidation_buyer" placeholder="Buyer name"></div><div class="field"><label>Batch name</label><input id="pool_liquidation_name" value="${esc(pool.name)} liquidation"></div><div class="field span-2"><label>Notes</label><textarea id="pool_liquidation_notes"></textarea></div></div><div class="move-confirmation-summary"><div><span>Available in pool</span><strong id="pool_liquidation_available">${fmtWeight(snapshot.weight)}</strong></div><div><span>Mean cost / g</span><strong id="pool_liquidation_average">${fmtMoneyExact(snapshot.averageCost)}/g</strong></div><div><span>Remaining in inventory</span><strong id="pool_liquidation_remaining">—</strong></div></div><div class="form-actions"><button class="btn secondary" onclick="closePoolLiquidationModal()">Cancel</button><button class="btn" id="confirm_pool_liquidation" onclick="confirmPoolLiquidation()" disabled>Move to Liquidation</button></div></div>`;
+    modal.innerHTML = `<div class="summary-modal" role="dialog" aria-modal="true" aria-labelledby="pool_liquidation_title"><div class="summary-modal-head"><div><div class="eyebrow">${esc(pool.id)} · Available</div><h2 id="pool_liquidation_title">Move ${esc(pool.name)} to Liquidation</h2></div><button class="modal-close" onclick="closePoolLiquidationModal()" aria-label="Close">×</button></div><p class="move-confirmation-intro">Choose a partial weight or the entire pool, then choose whether to create a new batch or add it to an existing open batch.</p><input id="pool_liquidation_id" type="hidden" value="${esc(pool.id)}"><div class="field"><label for="pool_liquidation_destination">Liquidation destination</label><select id="pool_liquidation_destination" onchange="changePoolLiquidationDestination(this.value)"><option value="new">Create new liquidation batch</option>${openBatches.map(batch => `<option value="${esc(batch.id)}">Add to existing open batch · ${esc(batch.id)} · ${esc(batch.name)}</option>`).join('')}</select>${openBatches.length ? '' : '<span class="form-note">No open batch is currently available.</span>'}</div><div class="field"><label>Liquidation type</label><div class="pool-liquidation-types"><label><input type="radio" name="pool_liquidation_type" value="partial" onchange="updatePoolLiquidationPreview()" checked> Partial</label><label><input type="radio" name="pool_liquidation_type" value="entire" onchange="updatePoolLiquidationPreview()"> Entire pool</label></div></div><div class="form-grid"><div class="field"><label>Weight for liquidation (g)</label><input id="pool_liquidation_weight" type="number" min="0.01" max="${snapshot.weight}" step="0.01" oninput="updatePoolLiquidationPreview()"></div><div class="field"><label>Cost basis (automatic)</label><output id="pool_liquidation_cost">—</output></div></div><div id="pool_liquidation_new_batch_fields" class="form-grid"><div class="field"><label>Assigned buyer</label><input id="pool_liquidation_buyer" placeholder="Buyer name"></div><div class="field"><label>Batch name</label><input id="pool_liquidation_name" value="${esc(pool.name)} liquidation"></div><div class="field span-2"><label>Notes</label><textarea id="pool_liquidation_notes"></textarea></div></div><div class="move-confirmation-summary"><div><span>Available in pool</span><strong id="pool_liquidation_available">${fmtWeight(snapshot.weight)}</strong></div><div><span>Mean cost / g</span><strong id="pool_liquidation_average">${fmtMoneyExact(snapshot.averageCost)}/g</strong></div><div><span>Remaining in inventory</span><strong id="pool_liquidation_remaining">—</strong></div></div><div class="form-actions"><button class="btn secondary" onclick="closePoolLiquidationModal()">Cancel</button><button class="btn" id="confirm_pool_liquidation" onclick="confirmPoolLiquidation()" disabled>Move to Liquidation</button></div></div>`;
     modal.addEventListener('click', event => { if (event.target === modal)
         closePoolLiquidationModal(); });
     document.body.appendChild(modal);
@@ -3466,9 +3473,35 @@ async function confirmPoolLiquidation() {
     if (!pool)
         return;
     const snapshot = inventoryPoolSnapshot(pool), requested = poolLiquidationRequestedWeight(pool), prepared = preparePooledInventoryAllocation(snapshot.items, requested);
+    const destination = val('pool_liquidation_destination') || 'new';
     const buyer = val('pool_liquidation_buyer').trim(), name = val('pool_liquidation_name').trim(), notes = val('pool_liquidation_notes').trim();
     if (!prepared) {
         toast(`Enter a weight between 0.01 g and ${snapshot.weight.toFixed(2)} g`);
+        return;
+    }
+    if (destination !== 'new') {
+        const batch = db.liquidationBatches.find(record => record.id === destination);
+        if (!batch) {
+            toast('The selected liquidation batch is no longer available');
+            return;
+        }
+        const beforeState = JSON.parse(JSON.stringify(db)), move = preparePoolMove(pool, requested);
+        if (!move || !appendPoolMovesToLiquidationBatch(batch, [move])) {
+            db = beforeState;
+            toast('The pool could not be added to this liquidation batch');
+            return;
+        }
+        delete batch.buyerOffer;
+        refreshLiquidationBatchMetal(batch);
+        if (!await saveDB()) {
+            db = beforeState;
+            render();
+            toast('The pool was not added to the liquidation batch');
+            return;
+        }
+        closePoolLiquidationModal();
+        goTab('liquidation');
+        toast(`${fmtWeight(prepared.weight)} added to ${batch.id} at ${fmtMoneyExact(prepared.cost)} cost`);
         return;
     }
     if (!buyer || !name) {
