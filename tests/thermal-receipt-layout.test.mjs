@@ -23,31 +23,43 @@ test('thermal receipt width includes its padding so printed totals are not clipp
 test('58 mm receipts keep all text inside the VOZY P50 print-head boundary', async () => {
   const source = await readFile(appPath, 'utf8');
 
-  assert.match(source, /const receiptWidth = paperWidth === 80 \? 80 : 46;/);
-  assert.match(source, /const paperPadding = paperWidth === 80 \? 4 : 2;/);
+  assert.match(source, /const receiptWidth = paperWidth === 80 \? 72 : 48;/);
+  assert.match(source, /const paperPadding = paperWidth === 80 \? 2 : 1;/);
   assert.match(
     source,
-    /@page\{size:\$\{paperWidth\}mm auto;margin:0\}/,
-    'the receipt page should use the full selected roll width',
+    /@page\{size:\$\{paperWidth\}mm \$\{receiptHeight\}mm;margin:0\}/,
+    'the receipt page should use the full selected roll width and measured content height',
   );
   assert.match(
     source,
-    /width:\$\{receiptWidth\}mm;padding:\$\{paperPadding\}mm/,
+    /width:\$\{receiptWidth\}mm;[^}]*padding:\$\{paperPadding\}mm!important/,
     'the 58 mm profile should leave a 2 mm guard inside the 48 mm print head',
   );
-  assert.match(source, /\.receipt-calc\{font-size:\$\{paperWidth === 80 \? 10 : 9\}px;white-space:nowrap\}/);
-  assert.match(source, /\.receipt-total\{font-size:\$\{paperWidth === 80 \? 14 : 12\}px;gap:6px\}/);
+  assert.match(source, /\.receipt-items\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*10\s*:\s*9\}px/);
+  assert.match(source, /\.receipt-total\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*14\s*:\s*13\}px/);
 });
 
-test('thermal receipt print text uses strong black strokes', async () => {
-  const source = await readFile(indexPath, 'utf8');
+test('thermal receipt includes the complete POS structure', async () => {
+  const source = await readFile(appPath, 'utf8');
 
-  assert.match(
-    source,
-    /body\.printing-thermal-receipt \.thermal-receipt\.paper-80\{[^}]*color:#000;[^}]*font-family:"Courier New",Courier,monospace;[^}]*font-weight:700;[^}]*print-color-adjust:exact;/,
-  );
-  assert.match(
-    source,
-    /body\.printing-thermal-receipt \.receipt-shop,[\s\S]*?\.receipt-meta strong\{font-weight:900;\}/,
-  );
+  assert.match(source, /Transaction No\.:/);
+  assert.match(source, /class="receipt-items"/);
+  assert.match(source, /ITEM \/ DESCRIPTION/);
+  assert.match(source, /class="receipt-item-detail">\$\{esc\(item\.itemType\)\}/);
+  assert.match(source, /Rate: PHP \$\{receiptMoneyNumber\(item\.rate\)\}\/g/);
+  assert.match(source, /<span>PAID:<\/span>/);
+  assert.match(source, /<span>CHANGE:<\/span>/);
+  assert.match(source, /<span>METHOD:<\/span>/);
+  assert.match(source, /Thank you!/);
+});
+
+test('every printed receipt line uses larger heavy thermal typography', async () => {
+  const source = await readFile(appPath, 'utf8');
+
+  assert.match(source, /body\{font-family:"Courier New",Courier,monospace;font-size:\$\{paperWidth\s*===\s*80\s*\?\s*11\.5\s*:\s*10\.5\}px;font-weight:900;/);
+  assert.match(source, /-webkit-text-stroke:\.12px #000/);
+  assert.match(source, /\.receipt-address\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*10\.5\s*:\s*9\.5\}px/);
+  assert.match(source, /\.receipt-items\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*10\s*:\s*9\}px/);
+  assert.match(source, /\.receipt-item-rate\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*9\s*:\s*8\}px;font-weight:900/);
+  assert.match(source, /\.receipt-quote\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*9\s*:\s*8\}px;font-style:italic/);
 });
