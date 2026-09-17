@@ -106,6 +106,22 @@ async function loadInventoryApi() {
         selectedIds: Array.from(refiningSelection)
       }));
     },
+    openIndividualMove(id) {
+      appended.length = 0;
+      liquidateInventoryItem(id);
+      return appended.at(-1)?.innerHTML || '';
+    },
+    preparePartialItem(id, weight) {
+      const item = db.stock.find(record => record.id === id);
+      return JSON.parse(JSON.stringify(prepareInventoryItemAllocation(item, weight)));
+    },
+    stagePartialItem(id, weight) {
+      const item = db.stock.find(record => record.id === id);
+      const allocation = prepareInventoryItemAllocation(item, weight);
+      const batch = { id: 'LB-PARTIAL', name: 'Partial item', buyer: 'Buyer', metal: item.metal, lines: [] };
+      const result = stageInventoryAllocationsForLiquidation(batch, [allocation]);
+      return JSON.parse(JSON.stringify({ result, batch, item }));
+    },
     appendToBatch(batchId, itemIds) {
       const batch = db.liquidationBatches.find(record => record.id === batchId);
       const items = itemIds.map(id => db.stock.find(item => item.id === id)).filter(Boolean);
@@ -266,6 +282,41 @@ test('Refine selected does not combine different metals into one refining select
   assert.deepEqual(Array.from(preview.pendingIds), []);
   assert.equal(state.stock[0].status, 'Available');
   assert.equal(state.stock.at(-1).status, 'Available');
+});
+
+test('individual liquidation movement accepts a configurable partial weight', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  Object.assign(state.stock[0], { currentWeight: 2.47, netWeight: 2.47, cost: 15339 });
+  api.setState(state);
+
+  const modal = api.openIndividualMove('stock-on-hand');
+  const allocation = api.preparePartialItem('stock-on-hand', 1);
+
+  assert.match(modal, /Enter the exact weight to move/);
+  assert.match(modal, /id="inventory_move_weight_stock-on-hand"/);
+  assert.match(modal, /of 2\.47 g available/);
+  assert.equal(allocation.weight, 1);
+  assert.equal(allocation.cost, 6210.12);
+  assert.equal(allocation.partialAllocation, true);
+  assert.equal(allocation.pooledAllocation, true);
+});
+
+test('staging a partial item keeps its proportional balance in current inventory', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  Object.assign(state.stock[0], { currentWeight: 2.47, netWeight: 2.47, cost: 15339 });
+  api.setState(state);
+
+  const staged = api.stagePartialItem('stock-on-hand', 1);
+
+  assert.equal(staged.result, true);
+  assert.equal(staged.batch.lines[0].weight, 1);
+  assert.equal(staged.batch.lines[0].cost, 6210.12);
+  assert.equal(staged.item.currentWeight, 1.47);
+  assert.equal(staged.item.cost, 9128.88);
+  assert.equal(staged.item.status, 'Available');
+  assert.equal(staged.item.liquidationBatchId, undefined);
 });
 
 test('For Liquidation records are excluded from Current Inventory', async () => {

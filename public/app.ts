@@ -2656,6 +2656,22 @@ function liquidateInventoryItem(id){
   inventoryMoveSelection.clear(); inventoryMoveSelection.add(id);
   openInventoryMoveReview([item],{total:1,automatic:false,individual:true});
 }
+function prepareInventoryItemAllocation(item,requestedWeight){
+  const availableWeight=roundWeight(Number(item?.currentWeight||0)),availableCost=roundMoney(Number(item?.cost||0));
+  const weight=roundWeight(Number(requestedWeight));
+  if(!item||weight<0.01||weight>availableWeight+0.005) return null;
+  const full=weight>=availableWeight-0.005;
+  const allocatedWeight=full?availableWeight:weight;
+  const cost=full?availableCost:roundMoney(availableCost*(allocatedWeight/availableWeight));
+  return {itemId:item.id,previousStatus:item.status,weight:allocatedWeight,cost,pooledAllocation:!full,partialAllocation:!full};
+}
+function updateInventoryMovePartialPreview(id){
+  const item=db.stock.find(stock=>stock.id===id),allocation=prepareInventoryItemAllocation(item,val(`inventory_move_weight_${id}`));
+  const cost=document.getElementById(`inventory_move_cost_${id}`),weightTotal=document.getElementById('inventory_move_total_weight'),costTotal=document.getElementById('inventory_move_total_cost');
+  if(cost) cost.textContent=allocation?fmtMoney(allocation.cost):'—';
+  if(weightTotal) weightTotal.textContent=allocation?fmtWeight(allocation.weight):'—';
+  if(costTotal) costTotal.textContent=allocation?fmtMoney(allocation.cost):'—';
+}
 function openInventoryMoveReview(selected,context){
   const metals=Array.from(new Set(selected.map(item=>item.metal)));
   const dates=Array.from(new Set(selected.map(item=>item.date))).sort();
@@ -2673,13 +2689,13 @@ function openInventoryMoveReview(selected,context){
     <div class="move-confirmation-summary">
       <div><span>Purchase date${dates.length===1?'':'s'}</span><strong>${dateLabel}</strong></div>
       <div><span>Selection</span><strong>${selectionLabel}</strong></div>
-      <div><span>Total weight</span><strong>${fmtWeight(totalWeight)}</strong></div>
-      <div><span>Inventory cost</span><strong>${fmtMoney(totalCost)}</strong></div>
+      <div><span>Total weight</span><strong id="inventory_move_total_weight">${fmtWeight(totalWeight)}</strong></div>
+      <div><span>Inventory cost</span><strong id="inventory_move_total_cost">${fmtMoney(totalCost)}</strong></div>
     </div>
     <div class="table-wrap move-confirmation-items"><table><thead><tr><th>Inventory item</th><th>Customer</th><th>Status</th><th class="num-head">Weight moving</th><th class="num-head">Cost</th></tr></thead><tbody>
-      ${selected.map(item=>`<tr><td><strong>${esc(item.metal)} ${esc(item.karat)}</strong><br><span class="form-note">${esc(item.itemType)}${item.remarks?' · '+esc(item.remarks):''}</span></td><td>${esc(item.customerName||'—')}</td><td>${statusPill(item.status)}</td><td class="num"><strong>${fmtWeight(item.currentWeight)}</strong><br><span class="form-note">full available weight</span></td><td class="num">${fmtMoney(item.cost)}</td></tr>`).join('')}
+      ${selected.map(item=>`<tr><td><strong>${esc(item.metal)} ${esc(item.karat)}</strong><br><span class="form-note">${esc(item.itemType)}${item.remarks?' · '+esc(item.remarks):''}</span></td><td>${esc(item.customerName||'—')}</td><td>${statusPill(item.status)}</td><td class="num">${context.individual?`<label class="field"><span class="form-note">Enter weight</span><input id="inventory_move_weight_${item.id}" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" value="${Number(item.currentWeight)}" oninput="updateInventoryMovePartialPreview('${item.id}')"></label><span class="form-note">of ${fmtWeight(item.currentWeight)} available</span>`:`<strong>${fmtWeight(item.currentWeight)}</strong><br><span class="form-note">full available weight</span>`}</td><td class="num" id="inventory_move_cost_${item.id}">${fmtMoney(item.cost)}</td></tr>`).join('')}
     </tbody></table></div>
-    <div class="move-confirmation-note"><strong>What happens next?</strong><span>Assign a name and buyer to the batch. Gold, Silver, and Platinum items may remain together. The records will then become For Liquidation and leave Current Inventory until sold or returned.</span></div>
+    <div class="move-confirmation-note"><strong>What happens next?</strong><span>${context.individual?'Enter the exact weight to move. Its cost is calculated automatically from the item’s current average cost; the remaining weight and cost stay in Inventory.':'Assign a name and buyer to the batch. Gold, Silver, and Platinum items may remain together. The records will then become For Liquidation and leave Current Inventory until sold or returned.'}</span></div>
     <div class="form-actions"><button class="btn secondary" onclick="closeInventoryMoveConfirmation()">Cancel</button><button class="btn" onclick="confirmInventoryMoveToLiquidation()">Continue to batch details</button></div>
   </div>`;
   modal.addEventListener('click',event=>{if(event.target===modal)closeInventoryMoveConfirmation();});
@@ -2691,8 +2707,12 @@ function confirmInventoryMoveToLiquidation(){
   if(!pending){ closeInventoryMoveConfirmation(); return; }
   const selected=pending.ids.map(id=>db.stock.find(item=>item.id===id)).filter(item=>item&&selectableInventory(item));
   if(selected.length!==pending.ids.length){ closeInventoryMoveConfirmation(); toast('One or more selected records are no longer available. Review the inventory again.'); render(); return; }
+  const allocations=pending.mode==='individual'?selected.map(item=>prepareInventoryItemAllocation(item,val(`inventory_move_weight_${item.id}`))):null;
+  if(allocations?.some(allocation=>!allocation)){toast(`Enter a weight between 0.01 g and ${Number(selected[0]?.currentWeight||0).toFixed(2)} g`);return;}
   const metals=Array.from(new Set(selected.map(item=>item.metal)));
-  const groups=[{metal:metals.length===1?metals[0]:'Mixed',ids:selected.map(item=>item.id)}];
+  const group={metal:metals.length===1?metals[0]:'Mixed',ids:selected.map(item=>item.id)};
+  if(allocations) group.allocations=allocations;
+  const groups=[group];
   pendingLiquidationBatchSetup={groups};
   closeInventoryMoveConfirmation();
   openLiquidationBatchSetup();
@@ -2719,6 +2739,21 @@ function appendItemsToLiquidationBatch(batch,items){
   if(batchMetals.length) batch.metal=batchMetals.length===1?batchMetals[0]:'Mixed';
   return appendedItems;
 }
+function stageInventoryAllocationsForLiquidation(batch,allocations){
+  const resolved=allocations.map(line=>({line,item:db.stock.find(stock=>stock.id===line.itemId)}));
+  if(resolved.some(({line,item})=>!item||!selectableInventory(item)||Number(line.weight)<=0||Number(line.weight)>Number(item.currentWeight)+0.005||Number(line.cost)<0||Number(line.cost)>Number(item.cost)+0.01)) return false;
+  batch.lines=[];
+  for(const {line,item} of resolved){
+    const full=!line.pooledAllocation;
+    batch.lines.push({...line});
+    if(full){item.status='For Liquidation';item.liquidationBatchId=batch.id;}
+    else{
+      item.currentWeight=roundWeight(Number(item.currentWeight)-Number(line.weight));
+      item.cost=roundMoney(Number(item.cost)-Number(line.cost));
+    }
+  }
+  return true;
+}
 function openLiquidationBatchSetup(){
   const pending=pendingLiquidationBatchSetup;
   if(!pending) return;
@@ -2729,7 +2764,8 @@ function openLiquidationBatchSetup(){
     <div class="summary-modal-head"><div><div class="eyebrow">Create liquidation batch</div><h2 id="liquidation_batch_setup_title">Assign batch details</h2></div><button class="modal-close" onclick="closeLiquidationBatchSetup()" aria-label="Close">×</button></div>
     <p class="move-confirmation-intro">Complete the batch details below. Mixed Gold, Silver, and Platinum items are accepted.</p>
     ${groups.map((group,index)=>{
-      const totalWeight=group.items.reduce((sum,item)=>sum+Number(item.currentWeight),0),totalCost=group.items.reduce((sum,item)=>sum+Number(item.cost),0);
+      const allocations=group.allocations||liquidationLinesForItems(group.items);
+      const totalWeight=allocations.reduce((sum,line)=>sum+Number(line.weight),0),totalCost=allocations.reduce((sum,line)=>sum+Number(line.cost),0);
       const metals=Array.from(new Set(group.items.map(item=>item.metal)));
       return `<section class="move-confirmation-note"><strong>${esc(metals.join(' / '))} batch · ${group.items.length} item${group.items.length===1?'':'s'}</strong><div class="form-grid" style="margin-top:12px;"><div class="field"><label>Batch name</label><input id="new_liquidation_batch_name_${index}" value="${esc(suggestedLiquidationBatchName(group.items))}" required></div><div class="field"><label>Assigned buyer</label><input id="new_liquidation_batch_buyer_${index}" placeholder="Buyer name" required></div><div class="field span-2"><label>Notes</label><input id="new_liquidation_batch_notes_${index}" placeholder="Optional"></div></div><div class="move-confirmation-summary"><div><span>Metal${metals.length===1?'':'s'}</span><strong>${esc(metals.join(' / '))}</strong></div><div><span>Items</span><strong>${group.items.length}</strong></div><div><span>Total weight</span><strong>${fmtWeight(totalWeight)}</strong></div><div><span>Carrying cost</span><strong>${fmtMoney(totalCost)}</strong></div></div></section>`;
     }).join('')}
@@ -2746,17 +2782,21 @@ async function createLiquidationBatch(){
     name:val(`new_liquidation_batch_name_${index}`).trim(),
     buyer:val(`new_liquidation_batch_buyer_${index}`).trim(),
     notes:val(`new_liquidation_batch_notes_${index}`).trim(),
-    items:group.ids.map(id=>db.stock.find(item=>item.id===id)).filter(item=>item&&selectableInventory(item))
+    items:group.ids.map(id=>db.stock.find(item=>item.id===id)).filter(item=>item&&selectableInventory(item)),
+    allocations:group.allocations
   }));
   if(prepared.some(group=>!group.name||!group.buyer)){ toast('Enter a batch name and assigned buyer'); return; }
   if(prepared.some((group,index)=>group.items.length!==pending.groups[index].ids.length)){ closeLiquidationBatchSetup(); toast('One or more selected records are no longer available'); render(); return; }
   const beforeState=JSON.parse(JSON.stringify(db));
+  let stagingFailed=false;
   prepared.forEach(group=>{
     const id=nextSequenceId('LB',db.liquidationBatches);
     const batch={id,name:group.name,buyer:group.buyer,metal:group.metal,lines:[],notes:group.notes,createdAt:new Date().toISOString(),createdBy:currentUser?.displayName||''};
-    appendItemsToLiquidationBatch(batch,group.items);
+    const allocations=group.allocations||liquidationLinesForItems(group.items);
+    if(!stageInventoryAllocationsForLiquidation(batch,allocations)){stagingFailed=true;return;}
     db.liquidationBatches.push(batch);
   });
+  if(stagingFailed){db=beforeState;closeLiquidationBatchSetup();render();toast('One or more inventory balances changed. Review the movement again.');return;}
   const saved=await saveDB();
   if(!saved){db=beforeState;render();toast(`Liquidation ${prepared.length===1?'batch was':'batches were'} not created`);return;}
   inventoryMoveSelection.clear(); closeLiquidationBatchSetup(); goTab('liquidation'); toast(`${prepared.length} liquidation ${prepared.length===1?'batch':'batches'} created`);
