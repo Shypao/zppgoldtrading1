@@ -91,7 +91,7 @@ async function loadInventoryApi() {
       return JSON.parse(JSON.stringify({ result, pool, stock: db.stock, batches: db.liquidationBatches, liquidations: db.liquidations }));
     },
     renderPools() {
-      return renderInventoryPools();
+      return renderInventory();
     },
     openCashflowResetModal() {
       appended.length = 0;
@@ -300,7 +300,8 @@ test('a manually created On Hold pool stays On Hold after partial liquidation', 
   assert.equal(result.pool.remainingWeight, 2000);
   assert.equal(result.pool.remainingCost, 200000);
   assert.match(api.renderPools(), /Silver reserve/);
-  assert.match(api.renderPools(), /ON HOLD/);
+  assert.match(api.renderPools(), /On Hold/);
+  assert.match(api.renderPools(), /Liquidate Pool/);
 });
 
 test('manual pools remain independent when one pool is partially liquidated', async () => {
@@ -345,7 +346,8 @@ test('a manual pool may combine mixed metals and purities', async () => {
   assert.equal(allocation.prepared.cost, 295000);
   assert.equal(result.pool.remainingWeight, 500);
   assert.equal(result.pool.remainingCost, 295000);
-  assert.match(api.renderPools(), /Mixed metals \/ purities/);
+  assert.match(api.renderPools(), /Mixed reserve/);
+  assert.match(api.renderPools(), /metal-tag mixed/);
 });
 
 test('inventory offers manual Pool selected and removes automatic pool/date grouping actions', async () => {
@@ -374,10 +376,11 @@ test('inventory displays a pool as one available row with combined weight and co
   assert.match(html, /3000\.00 g/);
   assert.match(html, /PHP 300,000/);
   assert.match(html, />Available</);
-  assert.match(html, /Move to Liquidation/);
+  assert.match(html, /Liquidate Pool/);
   assert.doesNotMatch(html, /Put On Hold/);
   assert.doesNotMatch(html, /Seller A|Seller B/);
   assert.doesNotMatch(html, /Inventory Pools/);
+  assert.doesNotMatch(html, /Manage this item through/);
 });
 
 test('partial pool allocation moves to an open liquidation batch before recording a sale', async () => {
