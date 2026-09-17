@@ -96,6 +96,13 @@ async function loadInventoryApi() {
       openInventoryPoolEdit(id);
       return appended.at(-1)?.innerHTML || '';
     },
+    returnPoolMembers(poolId, itemIds) {
+      const pool = db.inventoryPools.find(record => record.id === poolId);
+      const result = typeof detachInventoryPoolItems === 'function'
+        ? detachInventoryPoolItems(pool, itemIds)
+        : false;
+      return JSON.parse(JSON.stringify({ result, stock: db.stock, pools: db.inventoryPools }));
+    },
     openInventoryEdit(id) {
       appended.length = 0;
       openInventoryEdit(id);
@@ -325,6 +332,8 @@ test('individual liquidation movement accepts a configurable partial weight', as
   assert.match(modal, /Enter the exact weight to move/);
   assert.match(modal, /id="inventory_move_weight_stock-on-hand"/);
   assert.match(modal, /of 2\.47 g available/);
+  assert.match(modal, /Create new liquidation batch/);
+  assert.match(modal, /Add to existing open batch · LB-0001/);
   assert.equal(allocation.weight, 1);
   assert.equal(allocation.cost, 6210.12);
   assert.equal(allocation.partialAllocation, true);
@@ -546,6 +555,8 @@ test('selected pools accept independent partial weights before liquidation movem
 
   assert.match(reviewHtml, /inventory_move_pool_weight_POOL-21/);
   assert.match(reviewHtml, /inventory_move_pool_weight_POOL-22/);
+  assert.match(reviewHtml, /Create new liquidation batch/);
+  assert.match(reviewHtml, /Add to existing open batch · LB-0001/);
   assert.match(html, /Add to existing open batch/);
   assert.equal(pending.groups[0].poolMoves[0].prepared.weight, 1);
   assert.equal(pending.groups[0].poolMoves[0].prepared.cost, 5000);
@@ -664,6 +675,41 @@ test('inventory displays a pool as one available row with combined weight and co
   assert.match(editModal, /id="edit_pool_weight"/);
   assert.match(editModal, /id="edit_pool_cost"/);
   assert.match(editModal, /id="edit_pool_remarks"/);
+  assert.match(editModal, /Pool items/);
+  assert.match(editModal, /data-pool-return-item-id="pool-a"/);
+  assert.match(editModal, /data-pool-return-item-id="pool-b"/);
+  assert.match(editModal, /Return selected to Inventory/);
+});
+
+test('returning selected pool members keeps their remaining balances as available inventory', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'pool-a', date: '2026-09-17', customerName: 'Seller A', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'On Hold', inventoryPoolId: 'POOL-0003', netWeight: 1000, currentWeight: 500, payout: 100000, cost: 50000 },
+    { id: 'pool-b', date: '2026-09-17', customerName: 'Seller B', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'On Hold', inventoryPoolId: 'POOL-0003', netWeight: 2000, currentWeight: 2000, payout: 200000, cost: 200000 }
+  ];
+  state.inventoryPools = [{
+    id: 'POOL-0003', name: 'Silver pool', metal: 'Silver', karat: '925', itemIds: ['pool-a', 'pool-b'],
+    originalItems: [
+      { itemId: 'pool-a', originalWeight: 1000, originalCost: 100000, statusAtPooling: 'Available' },
+      { itemId: 'pool-b', originalWeight: 2000, originalCost: 200000, statusAtPooling: 'Available' }
+    ],
+    originalWeight: 3000, originalCost: 300000, onHold: true, status: 'ON HOLD', remainingWeight: 2500, remainingCost: 250000
+  }];
+  api.setState(state);
+
+  const result = api.returnPoolMembers('POOL-0003', ['pool-a']);
+
+  assert.equal(result.result, true);
+  assert.equal(result.stock[0].inventoryPoolId, undefined);
+  assert.equal(result.stock[0].status, 'Available');
+  assert.equal(result.stock[0].currentWeight, 500);
+  assert.equal(result.stock[0].cost, 50000);
+  assert.deepEqual(Array.from(result.pools[0].itemIds), ['pool-b']);
+  assert.equal(result.pools[0].originalWeight, 2000);
+  assert.equal(result.pools[0].originalCost, 200000);
+  assert.equal(result.pools[0].remainingWeight, 2000);
+  assert.equal(result.pools[0].remainingCost, 200000);
 });
 
 test('an existing pool can be checked with matching inventory and remains one pool', async () => {

@@ -2718,6 +2718,7 @@ function updateInventoryMovePoolPreview(id){
   if(costTotal)costTotal.textContent=valid?fmtMoney(itemCost+poolMoves.reduce((sum,item)=>sum+Number(item.prepared.cost),0)):'—';
   if(button)button.disabled=!valid;
 }
+function changeInventoryMoveDestination(value){if(pendingInventoryMove)pendingInventoryMove.destination=value||'new';}
 function openInventoryMoveReview(selected,context){
   const metals=Array.from(new Set(selected.map(item=>item.metal)));
   const dates=Array.from(new Set(selected.map(item=>item.date))).sort();
@@ -2725,9 +2726,10 @@ function openInventoryMoveReview(selected,context){
   const selectionLabel=context.individual?'Individual item':context.automatic?`${context.percentage}% · ${selected.length} of ${context.total}`:`${selected.length} selected record${selected.length===1?'':'s'}`;
   const mode=context.individual?'individual':dates.length>1?'combined':'selected';
   const poolIds=context.poolIds||[];
-  pendingInventoryMove={percentage:context.percentage??null,total:context.total,ids:context.itemIds||selected.map(item=>item.id),poolIds,poolWeights:Object.fromEntries(poolIds.map(id=>[id,inventoryPoolSnapshot(db.inventoryPools.find(pool=>pool.id===id)).weight])),dates,metals,mode};
+  pendingInventoryMove={percentage:context.percentage??null,total:context.total,ids:context.itemIds||selected.map(item=>item.id),poolIds,poolWeights:Object.fromEntries(poolIds.map(id=>[id,inventoryPoolSnapshot(db.inventoryPools.find(pool=>pool.id===id)).weight])),dates,metals,mode,destination:'new'};
   const totalWeight=selected.reduce((sum,item)=>sum+Number(item.currentWeight),0);
   const totalCost=selected.reduce((sum,item)=>sum+Number(item.cost),0);
+  const openBatches=db.liquidationBatches||[];
   const modal=document.createElement('div');
   modal.id='inventory_move_confirmation'; modal.className='modal-backdrop';
   modal.innerHTML=`<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="inventory_move_title">
@@ -2739,6 +2741,7 @@ function openInventoryMoveReview(selected,context){
       <div><span>Total weight</span><strong id="inventory_move_total_weight">${fmtWeight(totalWeight)}</strong></div>
       <div><span>Inventory cost</span><strong id="inventory_move_total_cost">${fmtMoney(totalCost)}</strong></div>
     </div>
+    <div class="field"><label for="inventory_move_destination">Liquidation destination</label><select id="inventory_move_destination" onchange="changeInventoryMoveDestination(this.value)"><option value="new">Create new liquidation batch</option>${openBatches.map(batch=>`<option value="${esc(batch.id)}">Add to existing open batch · ${esc(batch.id)} · ${esc(batch.name)}</option>`).join('')}</select>${openBatches.length?'':'<span class="form-note">No open batch is currently available.</span>'}</div>
     <div class="table-wrap move-confirmation-items"><table><thead><tr><th>Inventory item</th><th>Customer</th><th>Status</th><th class="num-head">Weight moving</th><th class="num-head">Cost</th></tr></thead><tbody>
       ${selected.map(item=>`<tr><td><strong>${esc(item.metal)} ${esc(item.karat)}</strong><br><span class="form-note">${esc(item.itemType)}${item.remarks?' · '+esc(item.remarks):''}</span></td><td>${esc(item.customerName||'—')}</td><td>${statusPill(item.status)}</td><td class="num">${item.isInventoryPool?`<label class="field"><span class="form-note">Enter pool weight</span><input id="inventory_move_pool_weight_${item.inventoryPoolId}" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" value="${Number(item.currentWeight)}" oninput="updateInventoryMovePoolPreview('${item.inventoryPoolId}')"></label><span class="form-note">of ${fmtWeight(item.currentWeight)} in pool</span>`:context.individual?`<label class="field"><span class="form-note">Enter weight</span><input id="inventory_move_weight_${item.id}" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" value="${Number(item.currentWeight)}" oninput="updateInventoryMovePartialPreview('${item.id}')"></label><span class="form-note">of ${fmtWeight(item.currentWeight)} available</span>`:`<strong>${fmtWeight(item.currentWeight)}</strong><br><span class="form-note">full available weight</span>`}</td><td class="num" id="inventory_move_cost_${item.id}">${fmtMoney(item.cost)}</td></tr>`).join('')}
     </tbody></table></div>
@@ -2766,7 +2769,8 @@ function confirmInventoryMoveToLiquidation(){
   if(allocations) group.allocations=allocations;
   if(poolMoves.length){group.poolMoves=poolMoves;group.allocations=[...(allocations||liquidationLinesForItems(selected)),...poolMoves.flatMap(move=>move.allocations)];}
   const groups=[group];
-  pendingLiquidationBatchSetup={groups};
+  const destination=document.getElementById('inventory_move_destination')?.value||pending.destination||'new';
+  pendingLiquidationBatchSetup={groups,destination};
   closeInventoryMoveConfirmation();
   openLiquidationBatchSetup();
 }
@@ -2831,7 +2835,7 @@ function openLiquidationBatchSetup(){
   modal.innerHTML=`<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="liquidation_batch_setup_title">
     <div class="summary-modal-head"><div><div class="eyebrow">Send inventory to Liquidation</div><h2 id="liquidation_batch_setup_title">Choose batch destination</h2></div><button class="modal-close" onclick="closeLiquidationBatchSetup()" aria-label="Close">×</button></div>
     <p class="move-confirmation-intro">Choose whether to create a new batch or add this inventory to an existing open batch.</p>
-    ${groups.length===1&&openBatches.length?`<div class="field"><label for="liquidation_batch_destination">Liquidation destination</label><select id="liquidation_batch_destination"><option value="new">Create new liquidation batch</option>${openBatches.map(batch=>`<option value="${esc(batch.id)}">Add to existing open batch · ${esc(batch.id)} · ${esc(batch.name)}</option>`).join('')}</select></div>`:'<input id="liquidation_batch_destination" type="hidden" value="new">'}
+    ${groups.length===1&&openBatches.length?`<div class="field"><label for="liquidation_batch_destination">Liquidation destination</label><select id="liquidation_batch_destination"><option value="new" ${pending.destination==='new'?'selected':''}>Create new liquidation batch</option>${openBatches.map(batch=>`<option value="${esc(batch.id)}" ${pending.destination===batch.id?'selected':''}>Add to existing open batch · ${esc(batch.id)} · ${esc(batch.name)}</option>`).join('')}</select></div>`:`<input id="liquidation_batch_destination" type="hidden" value="${esc(pending.destination||'new')}">`}
     ${groups.map((group,index)=>{
       const allocations=group.allocations||liquidationLinesForItems(group.items);
       const totalWeight=allocations.reduce((sum,line)=>sum+Number(line.weight),0),totalCost=allocations.reduce((sum,line)=>sum+Number(line.cost),0);
@@ -2846,7 +2850,7 @@ function openLiquidationBatchSetup(){
 async function createLiquidationBatch(){
   const pending=pendingLiquidationBatchSetup;
   if(!pending) return;
-  const destination=val('liquidation_batch_destination')||'new';
+  const destination=val('liquidation_batch_destination')||pending.destination||'new';
   if(destination!=='new'){
     const batch=db.liquidationBatches.find(record=>record.id===destination);
     if(!batch){toast('The selected liquidation batch is no longer available');return;}
@@ -2996,7 +3000,35 @@ function openInventoryPoolEdit(id){
     <div class="field"><label>Staff member</label><input id="edit_pool_staff" value="${esc(sharedPoolItemValue(snapshot.items,'staff')||currentUser?.displayName||'')}"></div>
     <div class="field"><label>Item type</label><select id="edit_pool_type"><option ${itemType==='Jewelry'?'selected':''}>Jewelry</option><option ${itemType==='Scrap'?'selected':''}>Scrap</option>${itemType==='Mixed'?'<option selected>Mixed</option>':''}</select></div>
     <div class="field span-2"><label>Remarks</label><textarea id="edit_pool_remarks">${esc(pool.notes||'')}</textarea></div>
-  </div><p class="form-note">Changes apply to the pooled balance while every original inventory record remains traceable.</p>`,'saveInventoryPoolEdit');
+  </div><p class="form-note">Changes apply to the pooled balance while every original inventory record remains traceable.</p>
+  <section style="margin-top:20px;padding-top:16px;border-top:2px solid var(--line);"><h3>Pool items</h3><p class="form-note">Select records to remove from this pool and return as individual Available inventory.</p><div class="table-wrap"><table><thead><tr><th>Select</th><th>Item</th><th>Customer</th><th class="num-head">Remaining weight</th><th class="num-head">Remaining cost</th></tr></thead><tbody>${snapshot.items.map(item=>`<tr><td><input type="checkbox" data-pool-return-item-id="${esc(item.id)}" ${Number(item.currentWeight)>0?'':'disabled'} aria-label="Return ${esc(item.metal)} ${esc(gradeLabel(item.metal,item.karat))} from pool"></td><td><strong>${esc(item.metal)} ${esc(gradeLabel(item.metal,item.karat))}</strong><br><span class="form-note">${esc(item.itemType)}</span></td><td>${esc(item.customerName||'—')}</td><td class="num">${fmtWeight(item.currentWeight)}</td><td class="num">${fmtMoney(item.cost)}</td></tr>`).join('')}</tbody></table></div><div class="form-actions"><button class="btn secondary" type="button" onclick="returnSelectedPoolItemsToInventory()">Return selected to Inventory</button></div></section>`,'saveInventoryPoolEdit');
+}
+function detachInventoryPoolItems(pool,itemIds){
+  const selectedIds=new Set(itemIds||[]),poolIds=new Set(pool?.itemIds||[]);
+  if(!pool||!selectedIds.size||Array.from(selectedIds).some(id=>!poolIds.has(id)))return false;
+  const remainingIds=(pool.itemIds||[]).filter(id=>!selectedIds.has(id));
+  if(!remainingIds.length)return false;
+  const selectedItems=inventoryPoolItems(pool).filter(item=>selectedIds.has(item.id)&&Number(item.currentWeight)>0);
+  if(selectedItems.length!==selectedIds.size)return false;
+  selectedItems.forEach(item=>{delete item.inventoryPoolId;delete item.liquidationBatchId;item.status='Available';});
+  pool.itemIds=remainingIds;
+  const originalById=new Map((pool.originalItems||[]).map(item=>[item.itemId,item]));
+  pool.originalItems=(pool.originalItems||[]).filter(item=>!selectedIds.has(item.itemId));
+  const remainingItems=inventoryPoolItems(pool);
+  pool.originalWeight=roundWeight(remainingItems.reduce((sum,item)=>sum+Number(originalById.get(item.id)?.originalWeight??item.netWeight??item.currentWeight),0));
+  pool.originalCost=roundMoney(remainingItems.reduce((sum,item)=>sum+Number(originalById.get(item.id)?.originalCost??item.payout??item.cost),0));
+  const composition=inventoryPoolComposition(remainingItems);pool.metal=composition.metal;pool.karat=composition.karat;pool.updatedAt=new Date().toISOString();syncInventoryPool(pool);
+  return true;
+}
+async function returnSelectedPoolItemsToInventory(){
+  if(!adminEditGuard())return;
+  const pool=db.inventoryPools.find(item=>item.id===editingInventoryPoolId);if(!pool)return;
+  const ids=Array.from(document.querySelectorAll?.('[data-pool-return-item-id]:checked')||[]).map(input=>input.dataset.poolReturnItemId).filter(Boolean);
+  if(!ids.length){toast('Select at least one pool item to return');return;}
+  const beforeState=JSON.parse(JSON.stringify(db));
+  if(!detachInventoryPoolItems(pool,ids)){toast('Keep at least one available item in the pool');return;}
+  if(!await saveDB()){db=beforeState;render();toast('The selected items were not returned to Inventory');return;}
+  editingInventoryPoolId=null;closeAdminEditModal();render();toast(`${ids.length} ${ids.length===1?'item':'items'} returned to Available Inventory`);
 }
 function distributePoolWeight(items,targetWeight){
   const currentTotal=items.reduce((sum,item)=>sum+Number(item.currentWeight||0),0);
