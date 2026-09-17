@@ -48,7 +48,10 @@ async function loadInventoryApi() {
       pendingInventoryMove = null;
       pendingLiquidationBatchSetup = null;
       openInventoryMoveReview(items, { total: items.length, automatic: false });
-      if (pendingInventoryMove) confirmInventoryMoveToLiquidation();
+      if (pendingInventoryMove) {
+        changeInventoryMoveDestination('new');
+        confirmInventoryMoveToLiquidation();
+      }
       toast = originalToast;
       return JSON.parse(JSON.stringify({ pending: pendingLiquidationBatchSetup, message }));
     },
@@ -62,6 +65,7 @@ async function loadInventoryApi() {
       moveCheckedInventoryToLiquidation();
       const reviewHtml = appended.at(-1)?.innerHTML || '';
       if (pendingInventoryMove) {
+        changeInventoryMoveDestination('new');
         pendingInventoryMove.poolWeights = { ...(pendingInventoryMove.poolWeights || {}), ...weights };
         confirmInventoryMoveToLiquidation();
       }
@@ -344,6 +348,8 @@ test('individual liquidation movement accepts a configurable partial weight', as
   assert.match(modal, /Enter the exact weight to move/);
   assert.match(modal, /id="inventory_move_weight_stock-on-hand"/);
   assert.match(modal, /of 2\.47 g available/);
+  assert.match(modal, /Select a liquidation destination/);
+  assert.match(modal, /id="inventory_move_continue"[^>]*disabled/);
   assert.match(modal, /Create new liquidation batch/);
   assert.match(modal, /Add to existing open batch · LB-0001/);
   assert.equal(allocation.weight, 1);
@@ -607,6 +613,7 @@ test('selected pools accept independent partial weights before liquidation movem
 
   assert.match(reviewHtml, /inventory_move_pool_weight_POOL-21/);
   assert.match(reviewHtml, /inventory_move_pool_weight_POOL-22/);
+  assert.match(reviewHtml, /Select a liquidation destination/);
   assert.match(reviewHtml, /Create new liquidation batch/);
   assert.match(reviewHtml, /Add to existing open batch · LB-0001/);
   assert.match(html, /Add to existing open batch/);
@@ -734,6 +741,7 @@ test('inventory displays a pool as one available row with combined weight and co
 
   const liquidationModal = api.openPoolLiquidation('POOL-0003');
   assert.match(liquidationModal, /Liquidation destination/);
+  assert.match(liquidationModal, /Select a liquidation destination/);
   assert.match(liquidationModal, /Create new liquidation batch/);
   assert.match(liquidationModal, /Add to existing open batch/);
 });
