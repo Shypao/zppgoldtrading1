@@ -5,16 +5,12 @@
   "type": "module",
   "scripts": {
     "build": "node ./node_modules/typescript/bin/tsc -p tsconfig.json && node ./node_modules/typescript/bin/tsc -p tsconfig.client.json",
-    "dev": "node --env-file-if-exists=.env.local --experimental-strip-types src/server.ts",
-    "start": "node --env-file-if-exists=.env.local dist/src/server.js",
-    "test": "node --test tests/*.test.mjs",
+    "dev": "node --experimental-strip-types src/server.ts",
+    "start": "node dist/server.js",
     "typecheck": "node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit && node ./node_modules/typescript/bin/tsc -p tsconfig.client.json --noEmit"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0"
-  },
-  "dependencies": {
-    "@libsql/client": "^0.18.0"
   }
 }

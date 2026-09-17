@@ -2,98 +2,31 @@
 // The legacy single-page UI is incrementally typed; server and persistence code use strict TypeScript.
 // @ts-nocheck
 /* ============================= DATA LAYER ============================= */
-let db = { rates: [], customers: [], stock: [], inventoryPools: [], liquidationBatches: [], liquidations: [], refiningBatches: [], retailSales: [] };
+let db = { rates: [], customers: [], stock: [], liquidations: [], refiningBatches: [], retailSales: [] };
 let currentTab = 'dashboard';
 let currentUser = null;
 let userAccounts = [];
-let currentCashflow = null;
-let cashflowSyncBusy = false;
-let cashflowHistorySnapshot = null;
-let cashflowHistoryDate = '';
-let cashflowHistoryLoading = false;
-const CASHFLOW_PAGE_SIZE = 50;
-let cashflowPurchasePage = 1;
-let cashflowAdjustmentPage = 1;
-let cashflowSearch = '';
-let cashflowAdjustmentSearch = '';
 const STORE_KEY = 'zpp_gold_db';
 const LEDGER_DB_NAME = 'zpp_gold_trading_ph';
-const LEDGER_DB_VERSION = 3;
-const ARRAY_STORES = ['customers', 'stock', 'inventoryPools', 'liquidationBatches', 'liquidations', 'refiningBatches', 'retailSales', 'pricingHistory'];
+const LEDGER_DB_VERSION = 1;
+const ARRAY_STORES = ['customers', 'stock', 'liquidations', 'refiningBatches', 'retailSales', 'pricingHistory'];
 let ledgerDB = null;
-let storageLocationCleanupNeeded = false;
 function uid(p) { return (p || 'id') + '_' + Math.random().toString(36).slice(2, 9); }
-function todayStr() {
-    const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
-    const value = Object.fromEntries(parts.map(part => [part.type, part.value]));
-    return `${value.year}-${value.month}-${value.day}`;
-}
-function cashflowDateStr(value = new Date()) {
-    const shifted = new Date(value.getTime() - 4 * 60 * 60 * 1000);
-    const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(shifted);
-    const date = Object.fromEntries(parts.map(part => [part.type, part.value]));
-    return `${date.year}-${date.month}-${date.day}`;
-}
+function todayStr() { const d = new Date(), off = d.getTimezoneOffset(); return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10); }
 function monthStr() { return todayStr().slice(0, 7); }
-function fmtMoney(n) { n = Number(n) || 0; return 'PHP ' + Math.round(n).toLocaleString('en-PH', { maximumFractionDigits: 0 }); }
-function fmtMoneyExact(n) { n = Number(n) || 0; return 'PHP ' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtMoney(n) { n = Number(n) || 0; return 'PHP ' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function fmtWeight(n) { return (Number(n) || 0).toFixed(2) + ' g'; }
 function roundMoney(n) { return Math.round((Number(n) + Number.EPSILON) * 100) / 100; }
-function roundPeso(n) { return Math.round(Number(n) || 0); }
 function roundWeight(n) { return Math.round((Number(n) + Number.EPSILON) * 100) / 100; }
 function fmtDate(d) { if (!d)
     return '—'; const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: '2-digit' }); }
 function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
-function parseMoneyEntry(value) { return Number(String(value ?? '').replace(/,/g, '')) || 0; }
-function moneyEntryValue(value) {
-    const number = parseMoneyEntry(value);
-    return number ? number.toLocaleString('en-PH', { maximumFractionDigits: 2 }) : '';
-}
-function formatMoneyEntry(input) {
-    const raw = String(input.value || '').replace(/,/g, '').replace(/[^0-9.]/g, '');
-    if (!raw) {
-        input.value = '';
-        return;
-    }
-    const hasDecimal = raw.includes('.');
-    const parts = raw.split('.');
-    const whole = (parts.shift() || '0').replace(/^0+(?=\d)/, '') || '0';
-    const decimals = parts.join('').slice(0, 2);
-    input.value = Number(whole).toLocaleString('en-PH') + (hasDecimal ? '.' + decimals : '');
-    input.setSelectionRange?.(input.value.length, input.value.length);
-}
-function nextSequenceId(prefix, records) {
-    const maximum = records.reduce((max, record) => {
-        const match = String(record.id || '').match(new RegExp(`^${prefix}-(\\d+)$`));
-        return match ? Math.max(max, Number(match[1])) : max;
-    }, 0);
-    return `${prefix}-${String(maximum + 1).padStart(4, '0')}`;
-}
 function ensureShape() {
     db.customers = db.customers || [];
     db.stock = db.stock || [];
-    db.inventoryPools = db.inventoryPools || [];
-    db.stock.forEach(item => {
-        if (Object.prototype.hasOwnProperty.call(item, 'location')) {
-            delete item.location;
-            storageLocationCleanupNeeded = true;
-        }
-        if (item.status === 'For Selling') {
-            item.status = 'Available';
-            storageLocationCleanupNeeded = true;
-        }
-    });
-    db.liquidationBatches = db.liquidationBatches || [];
-    db.liquidationBatches.forEach(batch => {
-        if (Object.prototype.hasOwnProperty.call(batch, 'buyerOffer')) {
-            delete batch.buyerOffer;
-            storageLocationCleanupNeeded = true;
-        }
-    });
     db.liquidations = db.liquidations || [];
     db.refiningBatches = db.refiningBatches || [];
     db.retailSales = db.retailSales || [];
-    syncAllInventoryPools();
     db.pricingHistory = db.pricingHistory || [];
     db.pricingHistory.forEach(h => { if (!h.id)
         h.id = uid('rate'); });
@@ -106,10 +39,7 @@ function ensureShape() {
     db.pricing.silver.overrides = db.pricing.silver.overrides || {};
     db.pricing.platinum = db.pricing.platinum || { base: 0, overrides: {} };
     db.pricing.platinum.overrides = db.pricing.platinum.overrides || {};
-    db.pricing.auto = Object.assign({ enabled: true, lastFetchDate: '', lastAppliedDate: '', lastFetchedAt: '', marketPhp: {}, goldSource: '', draft: null }, db.pricing.auto || {});
-    db.pricing.gradeMultipliers = db.pricing.gradeMultipliers || {};
-    db.pricing.dailyFormula = db.pricing.dailyFormula || { effectiveDate: '', baseRates: {} };
-    db.pricing.dailyFormula.baseRates = db.pricing.dailyFormula.baseRates || {};
+    db.pricing.auto = Object.assign({ enabled: true, payoutPct: 94, lastFetchDate: '', lastAppliedDate: '', lastFetchedAt: '', usdPhp: 0, spotUsd: {}, draft: null }, db.pricing.auto || {});
 }
 function openLedgerDB() {
     return new Promise((resolve, reject) => {
@@ -150,15 +80,9 @@ async function saveDB() {
                 showLogin();
                 throw new Error('Session expired');
             }
-            const result = await response.json().catch(() => null);
-            if (response.status === 409)
-                throw new Error(result?.error || 'The database changed in another session. Refresh and try again.');
             if (!response.ok)
-                throw new Error(result?.error || 'Database server returned HTTP ' + response.status);
-            if (Number.isInteger(result?.revision))
-                db._revision = result.revision;
-            storageLocationCleanupNeeded = false;
-            return true;
+                throw new Error('Database server returned HTTP ' + response.status);
+            return;
         }
         if (!ledgerDB)
             ledgerDB = await openLedgerDB();
@@ -175,56 +99,32 @@ async function saveDB() {
             tx.onerror = () => reject(tx.error);
             tx.onabort = () => reject(tx.error);
         });
-        storageLocationCleanupNeeded = false;
-        return true;
     }
     catch (e) {
         console.error('Save failed', e);
         toast('Could not save — changes may not persist');
-        return false;
     }
 }
-async function savePricingDB(includeHistory = false) {
-    if (!isAdmin() || !(location.protocol === 'http:' || location.protocol === 'https:'))
-        return saveDB();
-    try {
-        ensureShape();
-        const body = { pricing: db.pricing };
-        if (includeHistory)
-            body.pricingHistory = db.pricingHistory;
-        const response = await fetch('/api/pricing', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        if (response.status === 401) {
-            showLogin();
-            throw new Error('Session expired');
-        }
-        const result = await response.json().catch(() => null);
-        if (!response.ok)
-            throw new Error(result?.error || 'Pricing server returned HTTP ' + response.status);
-        if (Number.isInteger(result?.revision))
-            db._revision = result.revision;
-        return true;
-    }
-    catch (error) {
-        console.error('Pricing save failed', error);
-        toast('Could not save pricing — please try again');
-        return false;
-    }
-}
-function seedEmptyLedger() {
-    db.customers = [];
+function seedDemo() {
+    const c1 = uid('cust');
+    db.customers = [{ id: c1, name: 'Maria Santos', contact: '0917 555 2210', notes: 'Regular seller, mostly 18K scrap.' }];
     db.pricing = {
         effectiveDate: todayStr(),
-        gold: { base: 8500, overrides: {} },
-        silver: { base: 105, overrides: {} },
-        platinum: { base: 2450, overrides: {} },
-        auto: { enabled: true, lastFetchDate: '', lastAppliedDate: '', lastFetchedAt: '', usdPhp: 0, spotUsd: {}, draft: null },
-        dailyFormula: { effectiveDate: todayStr(), baseRates: { Gold: 8500, Silver: 105, Platinum: 2450 } },
+        gold: { base: 8350, overrides: {} },
+        silver: { base: 70, overrides: {} },
+        platinum: { base: 2300, overrides: {} },
+        auto: { enabled: true, payoutPct: 94, lastFetchDate: '', lastAppliedDate: '', lastFetchedAt: '', usdPhp: 0, spotUsd: {}, draft: null },
         featured: { metal: 'Gold', key: '18K-BUO', low: 6360, high: 6560 }
     };
     db.pricingHistory = [{ id: uid('rate'), ts: Date.now(), effectiveDate: todayStr(), enteredBy: 'Admin', snapshot: JSON.parse(JSON.stringify(db.pricing)) }];
-    db.stock = [];
-    db.inventoryPools = [];
-    db.liquidationBatches = [];
+    const netW = 15.00, rate = 6260, amt = netW * rate;
+    db.stock = [{
+            id: uid('stk'), date: todayStr(), customerId: c1, customerName: 'Maria Santos',
+            metal: 'Gold', itemType: 'Scrap', karat: '18K', grossWeight: 15.25, deductions: 0.25,
+            netWeight: netW, currentWeight: netW, rate: rate, suggestedAmount: amt, payout: amt,
+            overrideReason: '', paymentMethod: 'Cash', staff: 'Joseph Reyes', status: 'For Refining',
+            location: 'Vault A · Sample tray', remarks: 'Sample entry from proposal illustration', cost: amt
+        }];
     db.liquidations = [];
     db.refiningBatches = [];
     db.retailSales = [];
@@ -243,17 +143,12 @@ async function loadDB() {
             if (serverState.pricing) {
                 db = serverState;
                 ensureShape();
-                if (storageLocationCleanupNeeded)
-                    await saveDB();
             }
             else {
-                const revision = serverState._revision;
-                seedEmptyLedger();
-                db._revision = revision;
+                seedDemo();
                 ensureShape();
                 await saveDB();
             }
-            await loadBuyingDraft();
             boot();
             if (isAdmin() && db.pricing.auto.enabled && db.pricing.auto.lastAppliedDate !== todayStr())
                 refreshPhilippineRates(true);
@@ -261,8 +156,6 @@ async function loadDB() {
         }
         ledgerDB = await openLedgerDB();
         const found = await loadFromLedgerDB();
-        if (found && storageLocationCleanupNeeded)
-            await saveDB();
         if (!found) {
             let legacy = null;
             try {
@@ -279,13 +172,13 @@ async function loadDB() {
                 ensureShape();
             }
             else
-                seedEmptyLedger();
+                seedDemo();
             await saveDB();
         }
     }
     catch (e) {
         console.error('Database load failed', e);
-        seedEmptyLedger();
+        seedDemo();
         ensureShape();
     }
     boot();
@@ -320,10 +213,6 @@ async function initializeAuth() {
             return;
         }
         const result = await response.json();
-        if (!result.authenticated || !result.user) {
-            showLogin();
-            return;
-        }
         currentUser = result.user;
         showApp();
         await loadDB();
@@ -358,15 +247,14 @@ async function signOut() {
         await fetch('/api/logout', { method: 'POST' });
     }
     catch (ignore) { }
-    db = { rates: [], customers: [], stock: [], inventoryPools: [], liquidationBatches: [], liquidations: [], refiningBatches: [], retailSales: [] };
+    db = { rates: [], customers: [], stock: [], liquidations: [], refiningBatches: [], retailSales: [] };
     userAccounts = [];
-    currentCashflow = null;
     showLogin();
 }
 async function resetDemo() {
-    if (!confirm('This clears the ledger and restores the default rates. Continue?'))
+    if (!confirm('This replaces all current data with the sample dataset. Continue?'))
         return;
-    seedEmptyLedger();
+    seedDemo();
     await saveDB();
     render();
     toast('Sample data restored');
@@ -381,176 +269,83 @@ function toast(msg) {
 /* ============================= PRICING / RATES ============================= */
 const GOLD_GRADES = [
     { key: '24K', label: '24K', mult: 1 },
-    { key: '23K', label: '23K', mult: 0.95 },
+    { key: '23K', label: '23K', mult: 0.965 },
     { key: '22K', label: '22K', mult: 0.916 },
     { key: '21K', label: '21K', mult: 0.875 },
-    { key: '20K', label: '20K', mult: 0.79 },
     { key: '18K', label: '18K', mult: 0.75 },
     { key: '18K-BUO', label: '18K-Buo', mult: 0.75 },
-    { key: '17K', label: '17K', mult: 0.7 },
-    { key: '16K', label: '16K', mult: 0.645 },
+    { key: '16K', label: '16K', mult: 0.667 },
     { key: '14K', label: '14K', mult: 0.585 },
-    { key: '12K', label: '12K', mult: 0.4789 },
+    { key: '12K', label: '12K', mult: 0.375 },
     { key: '10K', label: '10K', mult: 0.35 },
-    { key: '9K', label: '9K', mult: 0.335 },
-    { key: '8K', label: '8K', mult: 0.24 },
-    { key: '5K', label: '5K', mult: 0.06 },
+    { key: '8K', label: '8K', mult: 0.25 },
     { key: '98%', label: '98%', mult: 0.98 },
     { key: '73%', label: '73%', mult: 0.73 },
 ];
-const SILVER_GRADES = [
-    { key: '999', label: '999', mult: 1 },
-    { key: '925', label: '925', mult: 925 / 999 },
-    { key: '900', label: '900', mult: 0.9 },
-    { key: '800', label: '800', mult: 0.8 },
-    { key: '750', label: '75%', mult: 0.75 },
-    { key: '600', label: '60%', mult: 0.6 },
-];
-const PLATINUM_GRADES = [
-    { key: '999', label: '999', mult: 1 },
-    { key: '950', label: '950', mult: 950 / 999 },
-    { key: '900', label: '900', mult: 900 / 999 },
-    { key: '850', label: '850', mult: 850 / 999 },
-];
-const GRADE_META = { Gold: GOLD_GRADES, Silver: SILVER_GRADES, Platinum: PLATINUM_GRADES };
-const GRADES = Object.fromEntries(Object.entries(GRADE_META).map(([metal, grades]) => [metal, grades.map(g => g.key)]));
+const SILVER_GRADES = ['999', '925', '900', '800'];
+const PLATINUM_GRADES = ['999', '950', '900', '850'];
+const GRADES = { Gold: GOLD_GRADES.map(g => g.key), Silver: SILVER_GRADES, Platinum: PLATINUM_GRADES };
 function gradeMeta(metal, key) {
-    return (GRADE_META[metal] || []).find(g => g.key === key) || null;
-}
-function configuredGradeMultiplier(metal, key) {
-    const saved = Number(db.pricing?.gradeMultipliers?.[metal]?.[key]);
-    return Number.isFinite(saved) && saved >= 0 ? saved : (Number(gradeMeta(metal, key)?.mult) || 0);
-}
-function configuredBaseRate(metal) {
-    const liveBase = Number(bucketFor(metal).base) || 0;
-    const daily = db.pricing?.dailyFormula;
-    const configured = Number(daily?.effectiveDate === todayStr() ? daily?.baseRates?.[metal] : NaN);
-    return Number.isFinite(configured) && configured > 0 ? configured : liveBase;
-}
-function configuredSilver925Rate(silver999Base = configuredBaseRate('Silver')) {
-    const daily = db.pricing?.dailyFormula;
-    const configured = Number(daily?.effectiveDate === todayStr() ? daily?.baseRates?.Silver925 : NaN);
-    if (Number.isFinite(configured) && configured > 0)
-        return roundPeso(configured);
-    const legacyOverride = Number(db.pricing?.silver?.overrides?.['925']);
-    if (Number.isFinite(legacyOverride) && legacyOverride > 0)
-        return roundPeso(legacyOverride);
-    return roundPeso(Math.max(Number(silver999Base || 0) - 10, 0));
-}
-function calculatedRateFromBase(metal, key, base) {
-    const customPurity = customPurityFromKey(key);
-    if (!Number.isFinite(base) || base <= 0 || (!gradeMeta(metal, key) && customPurity === null))
-        return 0;
-    let rate = 0;
-    if (customPurity !== null) {
-        rate = base * (customPurity / 100);
-    }
-    else if (metal === 'Gold') {
-        rate = base * configuredGradeMultiplier(metal, key);
-    }
-    else if (metal === 'Silver') {
-        const sterlingRate = configuredSilver925Rate(base);
-        rate = key === '999' ? base : key === '925' ? sterlingRate : sterlingRate * Number(key) / 925;
-    }
-    else if (metal === 'Platinum') {
-        const deductions = { 999: 0, 950: 100, 900: 150, 850: 200 };
-        rate = Math.max(base - Number(deductions[key] ?? 0), 0);
-    }
-    return roundPeso(rate);
+    if (metal === 'Gold')
+        return GOLD_GRADES.find(g => g.key === key) || null;
+    return { key, label: key, mult: 1 };
 }
 function computedRate(metal, key) {
-    return calculatedRateFromBase(metal, key, configuredBaseRate(metal));
+    if (metal === 'Gold') {
+        const g = GOLD_GRADES.find(x => x.key === key);
+        return g ? +(db.pricing.gold.base * g.mult).toFixed(2) : 0;
+    }
+    if (metal === 'Silver')
+        return +(db.pricing.silver.base * (parseInt(key, 10) / 999)).toFixed(2);
+    if (metal === 'Platinum')
+        return +(db.pricing.platinum.base * (parseInt(key, 10) / 999)).toFixed(2);
+    return 0;
 }
 function bucketFor(metal) { return metal === 'Gold' ? db.pricing.gold : metal === 'Silver' ? db.pricing.silver : db.pricing.platinum; }
 function metalRate(metal, key) {
     const b = bucketFor(metal);
     const ov = b.overrides[key];
-    return (ov != null && ov !== '') ? roundPeso(ov) : computedRate(metal, key);
+    return (ov != null && ov !== '') ? +ov : computedRate(metal, key);
 }
 function isOverridden(metal, key) {
     const b = bucketFor(metal);
     return b.overrides[key] != null && b.overrides[key] !== '';
 }
-function customPurityFromKey(key) {
-    const match = String(key || '').match(/^(\d+(?:\.\d+)?)%$/);
-    if (!match)
-        return null;
-    const purity = Number(match[1]);
-    return Number.isFinite(purity) && purity > 0 && purity <= 100 ? purity : null;
-}
-function customPurityGradeKey(value) {
-    const purity = Number(value);
-    if (!Number.isFinite(purity) || purity <= 0 || purity > 100)
-        return '';
-    return `${Number(purity.toFixed(2))}%`;
-}
-function gradeLabel(metal, key) {
-    const g = gradeMeta(metal, key);
-    if (g)
-        return g.label;
-    const customPurity = customPurityFromKey(key);
-    return customPurity === null ? key : `${Number(customPurity.toFixed(2))}% purity`;
-}
+function gradeLabel(metal, key) { const g = gradeMeta(metal, key); return g ? g.label : key; }
 function distinctKarats(metal) { return GRADES[metal] || []; }
 function activeRate(metal, karat) {
-    const isCustomPurity = customPurityFromKey(karat) !== null;
-    if ((!GRADES[metal] || !GRADES[metal].includes(karat)) && !isCustomPurity)
+    if (!GRADES[metal] || !GRADES[metal].includes(karat))
         return null;
     return { rate: metalRate(metal, karat), effectiveDate: db.pricing.effectiveDate };
 }
-async function setBase(metal, value) {
-    const v = roundPeso(parseFloat(value));
-    if (!Number.isFinite(v) || v <= 0) {
-        toast('Enter a valid PHP base rate');
-        render();
-        return;
-    }
-    if (db.pricing.dailyFormula.effectiveDate !== todayStr())
-        db.pricing.dailyFormula = { effectiveDate: todayStr(), baseRates: {} };
-    db.pricing.dailyFormula.baseRates[metal] = v;
-    if (await savePricingDB()) {
-        render();
-        toast(`${metal} PHP base rate updated for today`);
-    }
+function setBase(metal, value) {
+    const v = parseFloat(value);
+    bucketFor(metal).base = isNaN(v) ? 0 : v;
+    saveDB();
+    render();
 }
-async function setSilver925Base(value) {
-    const rate = roundPeso(parseFloat(value));
-    if (!Number.isFinite(rate) || rate <= 0) {
-        toast('Enter a valid 925 Silver rate');
-        render();
-        return;
-    }
-    if (db.pricing.dailyFormula.effectiveDate !== todayStr())
-        db.pricing.dailyFormula = { effectiveDate: todayStr(), baseRates: {} };
-    db.pricing.dailyFormula.baseRates.Silver925 = rate;
-    delete db.pricing.silver.overrides['925'];
-    if (await savePricingDB()) {
-        render();
-        toast('Silver 925 basis rate updated for today');
-    }
-}
-async function setOverride(metal, key, value) {
+function setOverride(metal, key, value) {
     const b = bucketFor(metal);
     if (value === '') {
         delete b.overrides[key];
     }
     else {
-        b.overrides[key] = roundPeso(parseFloat(value));
+        b.overrides[key] = parseFloat(value);
     }
-    await (isAdmin() ? savePricingDB() : saveDB());
+    saveDB();
     render();
 }
-async function resetOverride(metal, key) {
+function resetOverride(metal, key) {
     delete bucketFor(metal).overrides[key];
-    await (isAdmin() ? savePricingDB() : saveDB());
+    saveDB();
     render();
 }
-async function setFeatured(metal, key, low, high, remarks = '') {
-    db.pricing.featured = { metal, key, low: parseFloat(low) || 0, high: parseFloat(high) || 0, remarks: String(remarks || '').trim() };
-    await savePricingDB();
+function setFeatured(metal, key, low, high) {
+    db.pricing.featured = { metal, key, low: parseFloat(low) || 0, high: parseFloat(high) || 0 };
+    saveDB();
     render();
 }
-async function clearFeatured() { db.pricing.featured = null; featuredRemarksDraft = ''; await savePricingDB(); render(); }
+function clearFeatured() { db.pricing.featured = null; saveDB(); render(); }
 let pricingFetchBusy = false;
 const overrideEditors = new Set();
 const TROY_OUNCE_GRAMS = 31.1034768;
@@ -573,7 +368,7 @@ async function refreshPhilippineRates(silent) {
     try {
         let proposal;
         if (location.protocol === 'http:' || location.protocol === 'https:') {
-            proposal = await fetchJson('/api/market?apply=1');
+            proposal = await fetchJson('/api/market?apply=1&payoutPct=' + encodeURIComponent(db.pricing.auto.payoutPct));
         }
         else {
             const [gold, silver, platinum, fx] = await Promise.all([
@@ -583,15 +378,15 @@ async function refreshPhilippineRates(silent) {
             const usdPhp = Number(fx.rates && fx.rates.PHP), spotUsd = { Gold: Number(gold.price), Silver: Number(silver.price), Platinum: Number(platinum.price) };
             if (!usdPhp || Object.values(spotUsd).some(v => !v))
                 throw new Error('Incomplete market data');
-            const marketPhp = { Gold: +(spotUsd.Gold * usdPhp / TROY_OUNCE_GRAMS).toFixed(2), Silver: +(spotUsd.Silver * usdPhp / TROY_OUNCE_GRAMS).toFixed(2), Platinum: +(spotUsd.Platinum * usdPhp / TROY_OUNCE_GRAMS).toFixed(2) };
-            proposal = { effectiveDate: todayStr(), fetchedAt: new Date().toISOString(), marketPhp, goldSource: 'Converted international spot fallback', draft: { effectiveDate: todayStr(), gold: marketPhp.Gold, silver: marketPhp.Silver, platinum: marketPhp.Platinum } };
+            const factor = Math.max(0, Math.min(100, Number(db.pricing.auto.payoutPct) || 0)) / 100;
+            proposal = { effectiveDate: todayStr(), fetchedAt: new Date().toISOString(), usdPhp, spotUsd, draft: { effectiveDate: todayStr(), gold: +(spotUsd.Gold * usdPhp / TROY_OUNCE_GRAMS * factor).toFixed(2), silver: +(spotUsd.Silver * usdPhp / TROY_OUNCE_GRAMS * factor).toFixed(2), platinum: +(spotUsd.Platinum * usdPhp / TROY_OUNCE_GRAMS * factor).toFixed(2) } };
         }
         db.pricing.auto.lastFetchDate = proposal.effectiveDate;
         db.pricing.auto.lastFetchedAt = proposal.fetchedAt;
-        db.pricing.auto.marketPhp = proposal.marketPhp || {};
-        db.pricing.auto.goldSource = proposal.goldSource || '';
+        db.pricing.auto.usdPhp = proposal.usdPhp;
+        db.pricing.auto.spotUsd = proposal.spotUsd;
         activateMarketRates(proposal.draft, silent ? 'Automatic 5-second internet update' : 'Manual internet refresh', !silent);
-        if (isAdmin() && !silent)
+        if (isAdmin())
             await saveDB();
         if (!silent)
             toast('Live internet prices refreshed and activated');
@@ -635,7 +430,15 @@ function visiblePricingHistory() {
         return true;
     });
 }
-async function setAutoEnabled(checked) { db.pricing.auto.enabled = checked; await savePricingDB(); render(); }
+function setAutoEnabled(checked) { db.pricing.auto.enabled = checked; saveDB(); render(); }
+function setPayoutPct(value) {
+    const n = parseFloat(value);
+    if (!isNaN(n))
+        db.pricing.auto.payoutPct = Math.max(0, Math.min(100, n));
+    db.pricing.auto.draft = null;
+    saveDB();
+    render();
+}
 function overrideEditorId(metal, key) { return metal + '|' + key; }
 function beginOverride(metal, key) {
     const id = overrideEditorId(metal, key);
@@ -660,163 +463,48 @@ function commitOverride(metal, key, value) {
     setOverride(metal, key, n);
     toast(`${gradeLabel(metal, key)} price overridden`);
 }
-async function savePricingSnapshot() {
+function savePricingSnapshot() {
     const by = val('px_by').trim() || 'Admin';
     const date = val('px_date') || todayStr();
     db.pricing.effectiveDate = date;
     db.pricingHistory.push({ id: uid('rate'), ts: Date.now(), effectiveDate: date, enteredBy: by, snapshot: JSON.parse(JSON.stringify(db.pricing)) });
-    if (await savePricingDB(true)) {
-        render();
-        toast('Rate sheet saved to history');
-    }
+    saveDB();
+    render();
+    toast('Rate sheet saved to history');
 }
-async function saveGoldMultipliers() {
-    if (!adminEditGuard())
-        return;
-    const values = {};
-    for (const grade of GOLD_GRADES) {
-        const inputId = `multiplier_gold_${grade.key.replace(/[^a-z0-9]/gi, '_')}`;
-        const value = Number(val(inputId));
-        if (!Number.isFinite(value) || value < 0 || value > 1.5) {
-            toast(`Enter a valid multiplier for ${grade.label}`);
-            return;
-        }
-        values[grade.key] = value;
-    }
-    db.pricing.gradeMultipliers = db.pricing.gradeMultipliers || {};
-    db.pricing.gradeMultipliers.Gold = values;
-    closeGoldMultiplierEditor();
-    if (await savePricingDB()) {
-        render();
-        toast('Gold karat multipliers updated');
-    }
-}
-async function resetGoldMultipliers() {
-    if (!adminEditGuard() || !confirm('Reset every Gold multiplier to the original rate-sheet values?'))
-        return;
-    if (db.pricing.gradeMultipliers)
-        delete db.pricing.gradeMultipliers.Gold;
-    closeGoldMultiplierEditor();
-    if (await savePricingDB()) {
-        render();
-        toast('Gold multipliers reset');
-    }
-}
-function openGoldMultiplierEditor() {
-    if (!adminEditGuard())
-        return;
-    closeGoldMultiplierEditor();
-    const modal = document.createElement('div');
-    modal.id = 'gold_multiplier_modal';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="summary-modal multiplier-modal" role="dialog" aria-modal="true" aria-labelledby="gold_multiplier_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">Daily rate setup</div><h2 id="gold_multiplier_title">Gold karat multipliers</h2></div><button type="button" class="modal-close" onclick="closeGoldMultiplierEditor()" aria-label="Close">×</button></div>
-    <p class="form-note multiplier-modal-note">Change how each Gold grade is calculated from today's 24K PHP base. Example: 0.750 means 75% of the base.</p>
-    <div class="multiplier-grid">${GOLD_GRADES.map(grade => `<div class="field"><label>${esc(grade.label)}</label><input id="multiplier_gold_${grade.key.replace(/[^a-z0-9]/gi, '_')}" type="number" min="0" max="1.5" step="0.001" value="${configuredGradeMultiplier('Gold', grade.key)}"></div>`).join('')}</div>
-    <div class="form-actions multiplier-modal-actions"><button type="button" class="btn secondary" onclick="resetGoldMultipliers()">Reset multipliers</button><button type="button" class="btn secondary" onclick="closeGoldMultiplierEditor()">Cancel</button><button type="button" class="btn" onclick="saveGoldMultipliers()">Save multipliers</button></div>
-  </div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeGoldMultiplierEditor(); });
-    document.body.appendChild(modal);
-    modal.querySelector('input')?.focus();
-}
-function closeGoldMultiplierEditor() { document.getElementById('gold_multiplier_modal')?.remove(); }
 /* ============================= NAV / BOOT ============================= */
 const TABS = [
-    { id: 'dashboard', label: 'Dashboard & reports' },
+    { id: 'dashboard', label: 'Dashboard', staff: true },
     { id: 'rates', label: 'Daily rate setup', staff: true },
     { id: 'buying', label: 'Buying transactions', staff: true },
     { id: 'inventory', label: 'Inventory', staff: true },
-    { id: 'liquidation', label: 'Liquidation' },
+    { id: 'liquidation', label: 'Selective liquidation' },
     { id: 'refining', label: 'Refining tracking' },
     { id: 'retail', label: 'Limited retail sales' },
-    { id: 'customers', label: 'Customer management' },
+    { id: 'customers', label: 'Customer management', staff: true },
+    { id: 'reports', label: 'Reports & exports' },
     { id: 'users', label: 'User accounts' },
 ];
 function boot() {
     const nav = document.getElementById('navTabs');
     if (!allowedTabs().some(tab => tab.id === currentTab))
-        currentTab = allowedTabs()[0]?.id || 'buying';
+        currentTab = 'dashboard';
     nav.innerHTML = allowedTabs().map(t => `<button data-tab="${t.id}" class="${t.id === currentTab ? 'active' : ''}" onclick="goTab('${t.id}')"><span class="dot"></span>${t.label}</button>`).join('');
     document.getElementById('pageDate').textContent = fmtDate(todayStr());
     render();
     startAutomaticPricing();
 }
 let automaticPricingTimer = null;
-let sharedPricingSyncBusy = false;
-async function syncSharedPricing() {
-    if (sharedPricingSyncBusy || isAdmin() || !(location.protocol === 'http:' || location.protocol === 'https:'))
-        return;
-    sharedPricingSyncBusy = true;
-    try {
-        const previousPricing = JSON.stringify(db.pricing);
-        const buyingMetal = currentTab === 'buying' ? val('b_metal') : '';
-        const buyingKarat = currentTab === 'buying' ? selectedBuyingGrade() : '';
-        const buyingRateInput = document.getElementById('b_rate');
-        const buyingRateOverridden = buyingDraftForm.b_rate_overridden === 'true';
-        const response = await fetch('/api/pricing', { cache: 'no-store' });
-        if (response.status === 401) {
-            showLogin();
-            return;
-        }
-        const result = await response.json().catch(() => null);
-        if (!response.ok)
-            throw new Error(result?.error || 'Pricing sync failed');
-        if (Number.isInteger(result?.revision))
-            db._revision = result.revision;
-        if (!result?.pricing || JSON.stringify(result.pricing) === previousPricing)
-            return;
-        db.pricing = result.pricing;
-        ensureShape();
-        if (currentTab === 'rates') {
-            const editingRateField = document.activeElement?.matches('input,select,textarea');
-            if (!editingRateField)
-                render();
-        }
-        else if (currentTab === 'buying' && buyingRateInput && !buyingRateOverridden) {
-            const currentRate = buyingMetal && buyingKarat ? roundPeso(activeRate(buyingMetal, buyingKarat)?.rate) : 0;
-            buyingRateInput.value = currentRate ? String(currentRate) : '';
-            buyingDraftForm.b_rate = buyingRateInput.value;
-            buyingDraftForm.b_rate_overridden = 'false';
-            recalcBuying();
-            scheduleBuyingDraftSave();
-        }
-    }
-    catch (error) {
-        console.error('Shared pricing sync failed', error);
-    }
-    finally {
-        sharedPricingSyncBusy = false;
-    }
-}
 function startAutomaticPricing() {
     if (automaticPricingTimer)
         return;
     automaticPricingTimer = setInterval(() => {
-        if (!currentUser || document.hidden)
-            return;
-        if (currentTab === 'buying')
-            syncCashflow();
-        if (isAdmin()) {
-            if (db.pricing.auto.enabled)
-                refreshPhilippineRates(true);
-        }
-        else {
-            syncSharedPricing();
-        }
+        if (currentUser && db.pricing.auto.enabled && !document.hidden)
+            refreshPhilippineRates(true);
     }, 5000);
     document.addEventListener('visibilitychange', () => {
-        if (!currentUser || document.hidden)
-            return;
-        if (currentTab === 'buying')
-            syncCashflow();
-        if (isAdmin()) {
-            if (db.pricing.auto.enabled)
-                refreshPhilippineRates(true);
-        }
-        else {
-            syncSharedPricing();
-        }
+        if (currentUser && !document.hidden && db.pricing.auto.enabled)
+            refreshPhilippineRates(true);
     });
 }
 function goTab(id) {
@@ -825,282 +513,117 @@ function goTab(id) {
     currentTab = id;
     document.querySelectorAll('nav.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
     render();
-    if (id === 'buying')
-        syncCashflow();
     if (id === 'users')
         loadUserAccounts();
 }
 function render() {
     const titles = {
-        dashboard: ['Admin overview, records & exports', 'Dashboard & reports'],
+        dashboard: ['Overview', 'Dashboard'],
         rates: ['Pricing control', 'Daily rate setup'],
         buying: ['Record a purchase', 'Buying transactions'],
         inventory: ['Current stock', 'Inventory'],
-        liquidation: ['Off-hand stock assigned to buyers', 'Liquidation'],
+        liquidation: ['Release stock to a buyer or refiner', 'Selective liquidation'],
         refining: ['Refining batches', 'Refining tracking'],
         retail: ['Walk-in resale', 'Limited retail sales'],
         customers: ['Sellers on file', 'Customer management'],
+        reports: ['Ledger views & exports', 'Reports & exports'],
         users: ['Access control', 'User accounts'],
     };
     document.getElementById('pageEyebrow').textContent = titles[currentTab][0];
     document.getElementById('pageTitle').textContent = titles[currentTab][1];
     const el = document.getElementById('content');
     const fns = { dashboard: renderDashboard, rates: renderRates, buying: renderBuying, inventory: renderInventory,
-        liquidation: renderLiquidation, refining: renderRefining, retail: renderRetail, customers: renderCustomers,
+        liquidation: renderLiquidation, refining: renderRefining, retail: renderRetail, customers: renderCustomers, reports: renderReports,
         users: renderUsers };
     el.innerHTML = fns[currentTab]();
 }
 /* ============================= DASHBOARD ============================= */
-let dashboardReportPanel = '';
-let purchaseHistoryFrom = '';
-let purchaseHistoryTo = '';
-let liquidationHistoryFrom = '';
-let liquidationHistoryTo = '';
-function shiftDateKey(dateKey, days) {
-    const date = new Date(`${dateKey}T00:00:00Z`);
-    date.setUTCDate(date.getUTCDate() + days);
-    return date.toISOString().slice(0, 10);
-}
-let readinessFrom = shiftDateKey(todayStr(), -13);
-let readinessTo = todayStr();
-function toggleDashboardReport(panel) {
-    dashboardReportPanel = dashboardReportPanel === panel ? '' : panel;
-    render();
-    if (dashboardReportPanel)
-        requestAnimationFrame(() => document.getElementById('dashboard_report_content')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-}
-function filterDashboardReport(value) {
-    const query = String(value || '').trim().toLowerCase();
-    const rows = Array.from(document.querySelectorAll('#dashboard_report_content [data-dashboard-search]'));
-    let visible = 0;
-    rows.forEach(row => {
-        const matches = !query || String(row.dataset.dashboardSearch || '').includes(query);
-        row.hidden = !matches;
-        if (matches)
-            visible += 1;
-    });
-    const count = document.getElementById('dashboard_search_result_count');
-    if (count)
-        count.textContent = `Showing ${visible} of ${rows.length}`;
-    document.getElementById('dashboard_search_empty')?.classList.toggle('is-hidden', visible > 0 || !rows.length);
-}
-function dashboardReportSearch(placeholder, total) {
-    return `<div class="dashboard-report-search"><div class="field"><label for="dashboard_report_search">Search records</label><input id="dashboard_report_search" type="search" autocomplete="off" placeholder="${esc(placeholder)}" oninput="filterDashboardReport(this.value)"></div><span id="dashboard_search_result_count">Showing ${total} of ${total}</span></div><div id="dashboard_search_empty" class="empty-note is-hidden">No records match your search.</div>`;
-}
-function dashboardSearchValue(...values) { return esc(values.filter(value => value != null).join(' ').toLowerCase()); }
-function purchaseHistoryDateMatch(item) {
-    return (!purchaseHistoryFrom || item.date >= purchaseHistoryFrom) && (!purchaseHistoryTo || item.date <= purchaseHistoryTo);
-}
-function purchaseHistoryRecords() {
-    return db.stock.filter(item => !item.sourceRefiningBatchId && purchaseHistoryDateMatch(item)).slice().sort((a, b) => b.date.localeCompare(a.date));
-}
-function applyPurchaseHistoryDates() {
-    const from = val('purchase_history_from'), to = val('purchase_history_to');
-    if (from && to && from > to) {
-        toast('The From date must be before the To date');
-        return;
-    }
-    purchaseHistoryFrom = from;
-    purchaseHistoryTo = to;
-    render();
-    requestAnimationFrame(() => document.getElementById('dashboard_report_content')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-}
-function setPurchaseHistoryDatePreset(preset) {
-    if (preset === 'today') {
-        purchaseHistoryFrom = todayStr();
-        purchaseHistoryTo = todayStr();
-    }
-    else if (preset === 'month') {
-        purchaseHistoryFrom = `${monthStr()}-01`;
-        purchaseHistoryTo = todayStr();
-    }
-    else {
-        purchaseHistoryFrom = '';
-        purchaseHistoryTo = '';
-    }
-    render();
-    requestAnimationFrame(() => document.getElementById('dashboard_report_content')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-}
-function purchaseHistoryFilterLabel() {
-    if (purchaseHistoryFrom && purchaseHistoryTo)
-        return purchaseHistoryFrom === purchaseHistoryTo ? fmtDate(purchaseHistoryFrom) : `${fmtDate(purchaseHistoryFrom)} to ${fmtDate(purchaseHistoryTo)}`;
-    if (purchaseHistoryFrom)
-        return `From ${fmtDate(purchaseHistoryFrom)}`;
-    if (purchaseHistoryTo)
-        return `Through ${fmtDate(purchaseHistoryTo)}`;
-    return 'All purchase dates';
-}
-function liquidationHistoryDateMatch(item) {
-    return (!liquidationHistoryFrom || item.date >= liquidationHistoryFrom) && (!liquidationHistoryTo || item.date <= liquidationHistoryTo);
-}
-function liquidationHistoryRecords() {
-    return db.liquidations.filter(liquidationHistoryDateMatch).slice().sort((a, b) => b.date.localeCompare(a.date));
-}
-function applyLiquidationHistoryDates() {
-    const from = val('liquidation_history_from'), to = val('liquidation_history_to');
-    if (from && to && from > to) {
-        toast('The From date must be before the To date');
-        return;
-    }
-    liquidationHistoryFrom = from;
-    liquidationHistoryTo = to;
-    render();
-    requestAnimationFrame(() => document.getElementById('dashboard_report_content')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-}
-function setLiquidationHistoryDatePreset(preset) {
-    if (preset === 'today') {
-        liquidationHistoryFrom = todayStr();
-        liquidationHistoryTo = todayStr();
-    }
-    else if (preset === 'month') {
-        liquidationHistoryFrom = `${monthStr()}-01`;
-        liquidationHistoryTo = todayStr();
-    }
-    else {
-        liquidationHistoryFrom = '';
-        liquidationHistoryTo = '';
-    }
-    render();
-    requestAnimationFrame(() => document.getElementById('dashboard_report_content')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-}
-function liquidationHistoryFilterLabel() {
-    if (liquidationHistoryFrom && liquidationHistoryTo)
-        return liquidationHistoryFrom === liquidationHistoryTo ? fmtDate(liquidationHistoryFrom) : `${fmtDate(liquidationHistoryFrom)} to ${fmtDate(liquidationHistoryTo)}`;
-    if (liquidationHistoryFrom)
-        return `From ${fmtDate(liquidationHistoryFrom)}`;
-    if (liquidationHistoryTo)
-        return `Through ${fmtDate(liquidationHistoryTo)}`;
-    return 'All liquidation dates';
-}
-function readinessDateMatch(item) {
-    return (!readinessFrom || item.date >= readinessFrom) && (!readinessTo || item.date <= readinessTo);
-}
-function applyReadinessDates() {
-    const from = val('readiness_from'), to = val('readiness_to');
-    if (from && to && from > to) {
-        toast('The From date must be before the To date');
-        return;
-    }
-    readinessFrom = from;
-    readinessTo = to;
-    render();
-    requestAnimationFrame(() => document.getElementById('dashboard_report_content')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-}
-function setReadinessDatePreset(preset) {
-    if (preset === 'today') {
-        readinessFrom = todayStr();
-        readinessTo = todayStr();
-    }
-    else if (preset === 'two-weeks') {
-        readinessFrom = shiftDateKey(todayStr(), -13);
-        readinessTo = todayStr();
-    }
-    else {
-        readinessFrom = '';
-        readinessTo = '';
-    }
-    render();
-    requestAnimationFrame(() => document.getElementById('dashboard_report_content')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-}
-function readinessFilterLabel() {
-    if (readinessFrom && readinessTo)
-        return readinessFrom === readinessTo ? fmtDate(readinessFrom) : `${fmtDate(readinessFrom)} to ${fmtDate(readinessTo)}`;
-    if (readinessFrom)
-        return `From ${fmtDate(readinessFrom)}`;
-    if (readinessTo)
-        return `Through ${fmtDate(readinessTo)}`;
-    return 'All purchase dates';
-}
-function todayPurchaseMetalSummary(purchases, metal) {
-    const items = purchases.filter(item => item.metal === metal);
-    return {
-        metal,
-        items,
-        count: items.length,
-        weight: items.reduce((sum, item) => sum + Number(item.netWeight || 0), 0),
-        payout: items.reduce((sum, item) => sum + Number(item.payout || 0), 0)
-    };
-}
-function dailyMetalPurityBreakdownMarkup(items, metal) {
-    const totals = purchaseTotalsByPurity(items);
-    return `<section class="daily-metal-purity-breakdown"><h3>${esc(metal)} totals by purity</h3>
-    ${tableOrEmpty(totals, entry => `<tr><td><strong>${esc(gradeLabel(entry.metal, entry.karat))}</strong></td><td class="num">${entry.count}</td><td class="num">${fmtWeight(entry.purchasedWeight)}</td><td class="num">${fmtMoney(entry.payout)}</td><td class="num">${fmtWeight(entry.remainingWeight)}</td></tr>`, ['Karat / purity', 'Purchase lines', 'Purchased net weight', 'Total payout', 'Remaining weight'], 'No ' + metal.toLowerCase() + ' purchases recorded today.')}
-  </section>`;
-}
-function closeTodayMetalPurchases() { document.getElementById('today_metal_purchases_modal')?.remove(); }
-function openTodayMetalPurchases(metal) {
-    const items = db.stock.filter(item => !item.sourceRefiningBatchId && item.date === todayStr() && item.metal === metal).slice().sort((a, b) => String(b.recordedAt || '').localeCompare(String(a.recordedAt || '')));
-    const summary = todayPurchaseMetalSummary(items, metal);
-    closeTodayMetalPurchases();
-    const modal = document.createElement('div');
-    modal.id = 'today_metal_purchases_modal';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="summary-modal daily-metal-modal" role="dialog" aria-modal="true" aria-labelledby="today_metal_purchases_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">Daily purchase report · ${fmtDate(todayStr())}</div><h2 id="today_metal_purchases_title">${esc(metal)} purchased today</h2></div><button class="modal-close" onclick="closeTodayMetalPurchases()" aria-label="Close">×</button></div>
-    <div class="daily-metal-summary"><div><span>Items</span><strong>${summary.count}</strong></div><div><span>Total weight</span><strong>${fmtWeight(summary.weight)}</strong></div><div><span>Total payout</span><strong>${fmtMoney(summary.payout)}</strong></div></div>
-    ${dailyMetalPurityBreakdownMarkup(items, metal)}
-    <h3 class="daily-metal-transactions-heading">Individual purchases</h3>
-    ${tableOrEmpty(items, item => `<tr><td>${esc(item.customerName || 'Walk-in')}</td><td><span class="metal-tag ${metal.toLowerCase()}">${esc(gradeLabel(metal, item.karat))}</span> · ${esc(item.itemType || '—')}</td><td class="num">${fmtWeight(item.netWeight)}</td><td class="num">${fmtMoney(item.payout)}</td><td>${esc(item.paymentMethod || '—')}</td></tr>`, ['Seller', 'Grade / item', 'Net weight', 'Payout', 'Payment'], 'No ' + metal.toLowerCase() + ' purchases recorded today.')}
-  </div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeTodayMetalPurchases(); });
-    document.body.appendChild(modal);
-}
 function renderDashboard() {
     const today = todayStr(), mon = monthStr();
-    const purchases = db.stock.filter(s => !s.sourceRefiningBatchId);
-    const pToday = purchases.filter(s => s.date === today);
-    const pMonth = purchases.filter(s => s.date.startsWith(mon));
+    const pToday = db.stock.filter(s => s.date === today);
+    const pMonth = db.stock.filter(s => s.date.startsWith(mon));
     const payoutToday = pToday.reduce((a, s) => a + Number(s.payout), 0);
     const payoutMonth = pMonth.reduce((a, s) => a + Number(s.payout), 0);
-    const monthLabel = new Date(`${mon}-01T00:00:00`).toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
-    const inventoryMonth = db.stock.filter(s => s.date.startsWith(mon) && Number(s.currentWeight) > 0 && !['For Liquidation', 'Liquidated', 'Refined', 'Sold'].includes(s.status));
-    const inventoryAmountMonth = inventoryMonth.reduce((a, s) => a + Number(s.cost), 0);
-    const inventoryWeightMonth = inventoryMonth.reduce((a, s) => a + Number(s.currentWeight), 0);
-    const todayMetalSummaries = ['Gold', 'Silver', 'Platinum'].map(metal => todayPurchaseMetalSummary(pToday, metal));
+    const invByMetal = { Gold: 0, Silver: 0, Platinum: 0 };
+    const invCostByMetal = { Gold: 0, Silver: 0, Platinum: 0 };
+    db.stock.forEach(s => { if (s.currentWeight > 0 && s.status !== 'Liquidated' && s.status !== 'Sold') {
+        invByMetal[s.metal] = (invByMetal[s.metal] || 0) + Number(s.currentWeight);
+        invCostByMetal[s.metal] = (invCostByMetal[s.metal] || 0) + Number(s.cost);
+    } });
+    const maxW = Math.max(invByMetal.Gold, invByMetal.Silver, invByMetal.Platinum, 1);
+    const readySelling = db.stock.filter(s => s.status === 'For Selling').reduce((a, s) => a + Number(s.currentWeight), 0);
+    const readyRefining = db.stock.filter(s => s.status === 'For Refining').reduce((a, s) => a + Number(s.currentWeight), 0);
+    const onHold = db.stock.filter(s => s.status === 'On Hold').reduce((a, s) => a + Number(s.currentWeight), 0);
     const liqMonth = db.liquidations.filter(l => l.date.startsWith(mon));
     const liqMargin = liqMonth.reduce((a, l) => a + Number(l.margin), 0);
     const retailMonth = db.retailSales.filter(r => r.date.startsWith(mon));
     const retailMargin = retailMonth.reduce((a, r) => a + Number(r.margin), 0);
+    const releaseStatus = (metal, intervalDays) => {
+        const rows = db.liquidations.filter(l => l.metal === metal).sort((a, b) => b.date.localeCompare(a.date));
+        if (!rows.length)
+            return { label: 'No release yet', sub: `Recommended every ${intervalDays} days` };
+        const last = new Date(rows[0].date + 'T00:00:00');
+        last.setDate(last.getDate() + intervalDays);
+        const due = last.toLocaleDateString('en-PH', { month: 'short', day: '2-digit', year: 'numeric' });
+        return { label: due, sub: `Last release ${fmtDate(rows[0].date)}` };
+    };
+    const goldRelease = releaseStatus('Gold', 3), silverRelease = releaseStatus('Silver', 7);
     return `
   <section class="block">
     <h2 class="block-title">Today &amp; this month</h2>
     <div class="stat-row">
       <div class="stat"><div class="label">Purchases today</div><div class="value">${pToday.length}</div><div class="sub">${fmtMoney(payoutToday)} paid out</div></div>
-      <div class="stat"><div class="label">${esc(monthLabel)} inventory amount</div><div class="value">${fmtMoney(inventoryAmountMonth)}</div><div class="sub">${inventoryMonth.length} active item${inventoryMonth.length === 1 ? '' : 's'} · ${fmtWeight(inventoryWeightMonth)}</div></div>
       <div class="stat"><div class="label">Purchases this month</div><div class="value">${pMonth.length}</div><div class="sub">${fmtMoney(payoutMonth)} paid out</div></div>
       ${isAdmin() ? `<div class="stat"><div class="label">Liquidation margin (month)</div><div class="value">${fmtMoney(liqMargin)}</div><div class="sub">${liqMonth.length} batch(es) released</div></div>
       <div class="stat"><div class="label">Retail margin (month)</div><div class="value">${fmtMoney(retailMargin)}</div><div class="sub">${retailMonth.length} item(s) sold</div></div>` : ''}
     </div>
   </section>
 
-  <section class="block daily-metal-report">
-    <div class="daily-metal-report-head"><div><h2 class="block-title">Today's purchases by metal</h2><p class="form-note">Select a metal to see every purchase recorded on ${fmtDate(today)}.</p></div><strong>${fmtMoney(payoutToday)} total payout</strong></div>
-    <div class="daily-metal-grid">
-      ${todayMetalSummaries.map(summary => `<button type="button" class="daily-metal-card ${summary.metal.toLowerCase()}" onclick="openTodayMetalPurchases('${summary.metal}')">
-        <span class="daily-metal-name"><span class="metal-dot ${summary.metal.toLowerCase()}"></span>${summary.metal}</span>
-        <strong>${fmtMoney(summary.payout)}</strong>
-        <small>${summary.count} item${summary.count === 1 ? '' : 's'} · ${fmtWeight(summary.weight)}</small>
-        <span class="daily-metal-open">View purity breakdown →</span>
-      </button>`).join('')}
+  <section class="block two-col">
+    <div>
+      <h2 class="block-title">Current inventory by metal</h2>
+      <div class="bar-compare">
+        <div class="bar-row"><div class="bar-label">Gold</div><div class="bar-track"><div class="bar-fill" style="width:${(invByMetal.Gold / maxW * 100).toFixed(1)}%"></div></div><div class="bar-value">${fmtWeight(invByMetal.Gold)}</div></div>
+        <div class="bar-row"><div class="bar-label">Silver</div><div class="bar-track"><div class="bar-fill silver" style="width:${(invByMetal.Silver / maxW * 100).toFixed(1)}%"></div></div><div class="bar-value">${fmtWeight(invByMetal.Silver)}</div></div>
+        <div class="bar-row"><div class="bar-label">Platinum</div><div class="bar-track"><div class="bar-fill" style="width:${(invByMetal.Platinum / maxW * 100).toFixed(1)}%;background:var(--platinum-m);"></div></div><div class="bar-value">${fmtWeight(invByMetal.Platinum)}</div></div>
+      </div>
+      <p class="form-note" style="margin-top:10px;">Carrying cost — Gold ${fmtMoney(invCostByMetal.Gold)} · Silver ${fmtMoney(invCostByMetal.Silver)} · Platinum ${fmtMoney(invCostByMetal.Platinum)}</p>
+    </div>
+    <div>
+      <h2 class="block-title">Liquidation readiness</h2>
+      <div class="stat-row" style="gap:10px;">
+        <div class="stat" style="flex:1 1 auto;"><div class="label">For selling</div><div class="value">${fmtWeight(readySelling)}</div></div>
+        <div class="stat" style="flex:1 1 auto;"><div class="label">For refining</div><div class="value">${fmtWeight(readyRefining)}</div></div>
+        <div class="stat" style="flex:1 1 auto;"><div class="label">On hold</div><div class="value">${fmtWeight(onHold)}</div></div>
+      </div>
     </div>
   </section>
 
-  ${isAdmin() ? renderReports() : ''}
+  ${isAdmin() ? `<section class="block">
+    <h2 class="block-title">Independent release schedules</h2>
+    <div class="stat-row">
+      <div class="stat"><div class="label">Gold next recommended release</div><div class="value">${goldRelease.label}</div><div class="sub">${goldRelease.sub} · 2–3 day cadence</div></div>
+      <div class="stat"><div class="label">Silver next recommended release</div><div class="value">${silverRelease.label}</div><div class="sub">${silverRelease.sub} · weekly cadence</div></div>
+    </div>
+  </section>` : ''}
+
+  <section class="block latest-purchases">
+    <h2 class="block-title">Latest purchases</h2>
+    ${tableOrEmpty(db.stock.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8), s => `
+      <tr><td data-label="Date">${fmtDate(s.date)}</td><td data-label="Customer">${esc(s.customerName)}</td><td data-label="Metal / karat"><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)}</td>
+      <td data-label="Type">${esc(s.itemType)}</td><td data-label="Net weight" class="num">${fmtWeight(s.netWeight)}</td><td data-label="Payout" class="num">${fmtMoney(s.payout)}</td>
+      <td data-label="Status">${statusPill(s.status)}</td>${isAdmin() ? `<td data-label="Actions">${adminEditButton('Inventory', s.id)}</td>` : ''}</tr>`, ['Date', 'Customer', 'Metal / karat', 'Type', 'Net weight', 'Payout', 'Status', ...(isAdmin() ? ['Actions'] : [])], 'No purchases recorded yet — add one under Buying transactions.')}
+  </section>
   `;
 }
 function statusPill(status) {
-    const map = { 'Available': 'selling', 'For Liquidation': 'liquidation', 'For Refining': 'refining', 'On Hold': 'hold', 'Liquidated': 'liquidated', 'Refined': 'liquidated', 'Sold': 'sold' };
+    const map = { 'For Selling': 'selling', 'For Refining': 'refining', 'On Hold': 'hold', 'Liquidated': 'liquidated', 'Sold': 'sold' };
     return `<span class="pill ${map[status] || ''}">${status}</span>`;
 }
 function tableOrEmpty(rows, rowFn, headers, emptyMsg) {
     if (!rows.length)
         return `<div class="empty-note">${emptyMsg}</div>`;
-    const numericHeaders = new Set([
-        'Net weight', 'Weight', 'Current weight', 'Weight available', 'Gross weight', 'Available weight', 'Input wt', 'Output weight',
-        'Rate', 'Payout', 'Cost', 'Input cost', 'Output value', 'Total cost', 'Total sold', 'Profit', 'Margin', 'Charges',
-        'Items', 'Transactions', 'Selling history', 'Total weight sold', 'Total payout', 'Expected yield', 'Actual yield', 'Variance'
-    ]);
+    const numericHeaders = new Set(['Net weight', 'Payout']);
     return `<div class="table-wrap"><table><thead><tr>${headers.map(h => `<th class="${numericHeaders.has(h) ? 'num-head' : ''}">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(rowFn).join('')}</tbody></table></div>`;
 }
 /* ============================= RATES ============================= */
@@ -1115,51 +638,48 @@ function renderRates() {
     <div class="auto-panel-head">
       <div>
         <h3>Automatic Philippine internet pricing</h3>
-        <div class="metal-section-desc" style="margin:0;">Philippine market prices are shown in PHP per gram and activated automatically. You can set today's exact PHP base rate for each metal.</div>
-        <div class="auto-status">${pricingFetchBusy ? '<span class="spinner"></span>Updating Philippine market data…' : `Last checked: ${esc(fetched)}${auto.goldSource ? ` · Gold source: ${esc(auto.goldSource)}` : ''}`}</div>
+        <div class="metal-section-desc" style="margin:0;">Live USD metal prices are converted to PHP per gram, adjusted by your buying payout percentage, and activated automatically once per Philippine day.</div>
+        <div class="auto-status">${pricingFetchBusy ? '<span class="spinner"></span>Updating market data…' : `Last checked: ${esc(fetched)}${auto.usdPhp ? ` · USD/PHP ${Number(auto.usdPhp).toFixed(4)}` : ''}`}</div>
       </div>
       <div class="auto-controls">
         <label class="switch-line"><input type="checkbox" ${auto.enabled ? 'checked' : ''} onchange="setAutoEnabled(this.checked)"> Update automatically every 5 seconds</label>
+        <div class="field"><label>Buying payout</label><div style="display:flex;align-items:center;gap:5px"><input style="width:82px" type="number" min="0" max="100" step="0.1" value="${auto.payoutPct}" onchange="setPayoutPct(this.value)"><span>%</span></div></div>
         <button class="btn small" onclick="refreshPhilippineRates(false)" ${pricingFetchBusy ? 'disabled' : ''}>Refresh &amp; apply now</button>
-        <button class="btn secondary small" onclick="openDailyBaseEditor('Gold')">Edit today's PHP base</button>
       </div>
     </div>
     <div class="stat-row" style="margin-top:16px">
-      <div class="stat"><div class="label">Gold 24K buying rate</div><div class="value">${fmtMoney(configuredBaseRate('Gold'))}/g</div><div class="sub">Market: ${fmtMoney(auto.marketPhp?.Gold)}/g</div></div>
-      <div class="stat"><div class="label">Silver 999 buying rate</div><div class="value">${fmtMoney(configuredBaseRate('Silver'))}/g</div><div class="sub">Market: ${fmtMoney(auto.marketPhp?.Silver)}/g</div></div>
-      <div class="stat"><div class="label">Platinum 999 buying rate</div><div class="value">${fmtMoney(configuredBaseRate('Platinum'))}/g</div><div class="sub">Market: ${fmtMoney(auto.marketPhp?.Platinum)}/g</div></div>
+      <div class="stat"><div class="label">Active Gold 24K</div><div class="value">${fmtMoney(db.pricing.gold.base)}/g</div></div>
+      <div class="stat"><div class="label">Active Silver 999</div><div class="value">${fmtMoney(db.pricing.silver.base)}/g</div></div>
+      <div class="stat"><div class="label">Active Platinum 999</div><div class="value">${fmtMoney(db.pricing.platinum.base)}/g</div></div>
     </div>
-    <p class="source-note">The internet price supplies the PHP base rate. Gold grades use the saved karat multipliers. Gold uses <a href="https://www.livepriceofgold.com/philippines-gold-price-per-gram.html" target="_blank" rel="noopener">LivePriceOfGold Philippines</a> when available, with an automatic fallback. Verify high-value payouts independently.</p>
+    <p class="source-note">Formula: USD spot/oz × USD/PHP ÷ 31.1034768 × payout %. Indicative sources: <a href="https://gold-api.com" target="_blank" rel="noopener">Gold API</a> and <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener">ExchangeRate-API</a>. Verify high-value payouts independently.</p>
   </section>
   <section class="block">
-    <div class="batch-head"><div><h2 class="block-title">How automated pricing works</h2><p class="metal-section-desc">Use <strong>Edit today's PHP base</strong> to set a metal's base rate for this Philippine date. Gold grades recalculate using the saved karat multipliers. Use <strong>Override PHP rate</strong> only when one specific grade needs a different exact rate.</p></div></div>
+    <h2 class="block-title">How automated pricing works</h2>
+    <p class="metal-section-desc">The live pure-metal rates calculate every karat or purity automatically. Click <strong>Override price</strong> on an individual grade to enter your own rate. That grade stays overridden through future internet updates until you reset it.</p>
   </section>
 
   <section class="metal-section">
-    <div class="rate-section-title-row"><div class="metal-section-head"><span class="metal-dot gold"></span><h3>Gold</h3><span class="count">${GOLD_GRADES.length} grades</span></div>${renderRateDownloadButton()}</div>
+    <div class="metal-section-head"><span class="metal-dot gold"></span><h3>Gold</h3><span class="count">${GOLD_GRADES.length} grades</span></div>
     <div class="base-row">
       <div class="base-box">
         <div class="base-label">24K rate — pure gold</div>
-        <div class="base-input"><span>₱</span><input type="text" inputmode="numeric" value="${roundPeso(configuredBaseRate('Gold')) || ''}" onchange="setBase('Gold', this.value)"></div>
+        <div class="base-input"><span>₱</span><input type="text" inputmode="decimal" value="${db.pricing.gold.base || ''}" onchange="setBase('Gold', this.value)"></div>
       </div>
       ${renderFeaturedBox()}
     </div>
-    <div class="grade-grid">${goldGrid.map(g => renderGradeCard('Gold', g.key, g.label)).join('')}</div>
+    <div class="grade-grid">${goldGrid.map(g => renderGradeCard('Gold', g.key, g.label, g.mult)).join('')}</div>
   </section>
 
   <section class="metal-section">
     <div class="metal-section-head"><span class="metal-dot silver"></span><h3>Silver</h3><span class="count">${SILVER_GRADES.length} grades</span></div>
     <div class="base-row">
       <div class="base-box">
-        <div class="base-label">999 rate — independent silver rate</div>
-        <div class="base-input"><span>₱</span><input type="text" inputmode="numeric" value="${roundPeso(configuredBaseRate('Silver')) || ''}" onchange="setBase('Silver', this.value)"></div>
-      </div>
-      <div class="base-box">
-        <div class="base-label">925 basis — calculates 900, 800, 75% and 60%</div>
-        <div class="base-input"><span>₱</span><input type="text" inputmode="numeric" value="${configuredSilver925Rate() || ''}" onchange="setSilver925Base(this.value)"></div>
+        <div class="base-label">999 rate — pure silver</div>
+        <div class="base-input"><span>₱</span><input type="text" inputmode="decimal" value="${db.pricing.silver.base || ''}" onchange="setBase('Silver', this.value)"></div>
       </div>
     </div>
-    <div class="grade-grid">${SILVER_GRADES.filter(g => g.key !== '999' && g.key !== '925').map(g => renderGradeCard('Silver', g.key, g.label)).join('')}</div>
+    <div class="grade-grid">${SILVER_GRADES.map(k => renderGradeCard('Silver', k, k, null)).join('')}</div>
   </section>
 
   <section class="metal-section">
@@ -1167,10 +687,10 @@ function renderRates() {
     <div class="base-row">
       <div class="base-box">
         <div class="base-label">999 rate — pure platinum</div>
-        <div class="base-input"><span>₱</span><input type="text" inputmode="numeric" value="${roundPeso(configuredBaseRate('Platinum')) || ''}" onchange="setBase('Platinum', this.value)"></div>
+        <div class="base-input"><span>₱</span><input type="text" inputmode="decimal" value="${db.pricing.platinum.base || ''}" onchange="setBase('Platinum', this.value)"></div>
       </div>
     </div>
-    <div class="grade-grid">${PLATINUM_GRADES.map(g => renderGradeCard('Platinum', g.key, g.label)).join('')}</div>
+    <div class="grade-grid">${PLATINUM_GRADES.map(k => renderGradeCard('Platinum', k, k, null)).join('')}</div>
   </section>
 
   <section class="block">
@@ -1194,436 +714,31 @@ function renderStaffRates() {
     <div class="auto-panel-head"><div><h3>Active buying rates</h3><div class="metal-section-desc" style="margin:0;">Live base pricing refreshes every five seconds. Staff may override individual grades when needed.</div><div class="auto-status">Effective date: ${fmtDate(db.pricing.effectiveDate)} · Last checked: ${esc(fetched)}</div></div></div>
   </section>
   <section class="metal-section">
-    <div class="rate-section-title-row"><div class="metal-section-head"><span class="metal-dot gold"></span><h3>Gold</h3><span class="count">${GOLD_GRADES.length} grades</span></div>${renderRateDownloadButton()}</div>
-    <div class="grade-grid">${GOLD_GRADES.map(g => renderGradeCard('Gold', g.key, g.label)).join('')}</div>
+    <div class="metal-section-head"><span class="metal-dot gold"></span><h3>Gold</h3><span class="count">${GOLD_GRADES.length} grades</span></div>
+    <div class="grade-grid">${GOLD_GRADES.map(g => renderGradeCard('Gold', g.key, g.label, g.mult)).join('')}</div>
   </section>
   <section class="metal-section">
     <div class="metal-section-head"><span class="metal-dot silver"></span><h3>Silver</h3><span class="count">${SILVER_GRADES.length} grades</span></div>
-    <div class="grade-grid">${SILVER_GRADES.map(g => renderGradeCard('Silver', g.key, g.label)).join('')}</div>
+    <div class="grade-grid">${SILVER_GRADES.map(key => renderGradeCard('Silver', key, key, null)).join('')}</div>
   </section>
   <section class="metal-section">
     <div class="metal-section-head"><span class="metal-dot platinum"></span><h3>Platinum</h3><span class="count">${PLATINUM_GRADES.length} grades</span></div>
-    <div class="grade-grid">${PLATINUM_GRADES.map(g => renderGradeCard('Platinum', g.key, g.label)).join('')}</div>
+    <div class="grade-grid">${PLATINUM_GRADES.map(key => renderGradeCard('Platinum', key, key, null)).join('')}</div>
   </section>`;
 }
-function renderRateDownloadButton() {
-    const icon = `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 15v4h14v-4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-    const button = (format) => {
-        const formatLabel = format === 'phone' ? 'Phone' : 'Desktop';
-        return `<button id="rate_download_${format}" type="button" class="btn secondary rate-download-btn" onclick="openRateSheetDownloadModal('${format}')" title="Choose JPG or PNG for the ${formatLabel.toLowerCase()} layout">${icon}<span class="rate-download-label">${formatLabel} Download</span></button>`;
-    };
-    return `<div class="rate-sheet-toolbar">${button('desktop')}${button('phone')}</div>`;
-}
-function closeRateSheetDownloadModal() { document.getElementById('rate_sheet_download_modal')?.remove(); }
-function openRateSheetDownloadModal(format) {
-    closeRateSheetDownloadModal();
-    const formatLabel = format === 'phone' ? 'Phone' : 'Desktop';
-    const modal = document.createElement('div');
-    modal.id = 'rate_sheet_download_modal';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="summary-modal" role="dialog" aria-modal="true" aria-labelledby="rate_sheet_download_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">${formatLabel} rate sheet</div><h2 id="rate_sheet_download_title">Choose image format</h2></div><button type="button" class="modal-close" onclick="closeRateSheetDownloadModal()" aria-label="Close">×</button></div>
-    <p class="form-note">Download the ${format === 'phone' ? 'portrait phone' : 'landscape desktop'} layout as a JPG or PNG image.</p>
-    <div class="form-actions"><button type="button" class="btn secondary" onclick="downloadRateSheetFromModal('${format}','jpg')">Download JPG</button><button type="button" class="btn" onclick="downloadRateSheetFromModal('${format}','png')">Download PNG</button></div>
-  </div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeRateSheetDownloadModal(); });
-    document.body.appendChild(modal);
-}
-function downloadRateSheetFromModal(format, imageType) {
-    closeRateSheetDownloadModal();
-    downloadRateSheetImage(format, imageType);
-}
-function rateSheetGoldGrades() {
-    return GOLD_GRADES.filter(grade => grade.key !== '24K' && grade.key !== '18K-BUO' && grade.key !== '73%');
-}
-function rateSheetSectionMargin(isPhone) {
-    return isPhone ? 56 : 30;
-}
-async function downloadRateSheetImage(format = 'auto', imageType = 'jpg') {
-    const resolvedFormat = format === 'auto' ? (window.matchMedia('(max-width: 700px)').matches ? 'phone' : 'desktop') : format;
-    const isPhone = resolvedFormat === 'phone';
-    const imageLabel = imageType.toUpperCase(), mimeType = imageType === 'png' ? 'image/png' : 'image/jpeg';
-    const button = document.getElementById(`rate_download_${resolvedFormat}`);
-    const label = button?.querySelector('.rate-download-label');
-    if (button) {
-        button.disabled = true;
-        button.setAttribute('aria-busy', 'true');
-    }
-    if (label)
-        label.textContent = 'Generating…';
-    try {
-        await document.fonts?.ready;
-        const canvas = document.createElement('canvas');
-        const width = isPhone ? 1080 : 1600, height = isPhone ? 2800 : 1120, pad = isPhone ? 44 : 28, columnGap = isPhone ? 16 : 7, cardHeight = isPhone ? 118 : 86;
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx)
-            throw new Error('Canvas is unavailable');
-        const colors = isPhone
-            ? { paper: '#FBF7ED', paper2: '#F2E8D2', card: '#FFFCF5', ink: '#292620', soft: '#514B40', line: '#CDBD93', gold: '#BA8317', goldDeep: '#654812', silver: '#687783', platinum: '#3F6F67', cream: '#FFF9ED', header: '#332E27' }
-            : { paper: '#F7F2E6', paper2: '#EFE7D3', card: '#FBF8EF', ink: '#1C1B19', soft: '#655E50', line: '#D8CAA5', gold: '#D19A27', goldDeep: '#7C5A17', silver: '#7C8792', platinum: '#4F7A73', cream: '#F7F2E6', header: '#1C1B19' };
-        ctx.fillStyle = colors.paper;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.textBaseline = 'alphabetic';
-        const roundedRect = (x, y, w, h, r = 5) => {
-            ctx.beginPath();
-            ctx.moveTo(x + r, y);
-            ctx.arcTo(x + w, y, x + w, y + h, r);
-            ctx.arcTo(x + w, y + h, x, y + h, r);
-            ctx.arcTo(x, y + h, x, y, r);
-            ctx.arcTo(x, y, x + w, y, r);
-            ctx.closePath();
-        };
-        const text = (value, x, y, font, color = colors.ink, align = 'left') => {
-            ctx.font = font;
-            ctx.fillStyle = color;
-            ctx.textAlign = align;
-            ctx.fillText(String(value), x, y);
-        };
-        const clippedText = (value, maxWidth, font) => {
-            ctx.font = font;
-            const source = String(value || '');
-            if (ctx.measureText(source).width <= maxWidth)
-                return source;
-            let clipped = source;
-            while (clipped && ctx.measureText(clipped + '…').width > maxWidth)
-                clipped = clipped.slice(0, -1);
-            return clipped + '…';
-        };
-        const money = value => Math.round(Number(value) || 0).toLocaleString('en-PH');
-        const logo = await new Promise(resolve => {
-            const image = new Image();
-            image.onload = () => resolve(image);
-            image.onerror = () => resolve(null);
-            image.src = '/zpp-logo.png';
-        });
-        const headerHeight = isPhone ? 200 : 132;
-        ctx.fillStyle = colors.header;
-        ctx.fillRect(0, 0, width, headerHeight);
-        ctx.fillStyle = colors.gold;
-        ctx.fillRect(0, headerHeight - 3, width, 3);
-        if (logo)
-            ctx.drawImage(logo, pad, isPhone ? 20 : 10, isPhone ? 154 : 108, isPhone ? 154 : 108);
-        text('ZPP GOLD TRADING', isPhone ? 220 : 154, isPhone ? 82 : 57, isPhone ? '700 46px Georgia, serif' : '700 31px Georgia, serif', colors.cream);
-        text('DAILY BUYING PRICE GUIDE', isPhone ? 222 : 155, isPhone ? 126 : 87, isPhone ? '700 22px Arial, sans-serif' : '700 12px Arial, sans-serif', colors.gold);
-        text('All prices shown in Philippine pesos per gram', isPhone ? 222 : 155, isPhone ? 158 : 108, isPhone ? '20px Arial, sans-serif' : '12px Arial, sans-serif', isPhone ? '#E1D6BE' : '#C9BE9F');
-        text(fmtDate(db.pricing.effectiveDate || todayStr()).toUpperCase(), width - pad, isPhone ? 72 : 59, isPhone ? '700 22px Arial, sans-serif' : '700 13px Arial, sans-serif', colors.cream, 'right');
-        text('CURRENT RATE SHEET', width - pad, isPhone ? 108 : 84, isPhone ? '18px Arial, sans-serif' : '11px Arial, sans-serif', isPhone ? '#E1D6BE' : '#C9BE9F', 'right');
-        const drawHeading = (metal, count, color, y) => {
-            const dotRadius = isPhone ? 9 : 6;
-            ctx.beginPath();
-            ctx.fillStyle = color;
-            ctx.arc(pad + dotRadius, y - (isPhone ? 10 : 6), dotRadius, 0, Math.PI * 2);
-            ctx.fill();
-            text(metal, pad + (isPhone ? 32 : 22), y, isPhone ? '700 34px Georgia, serif' : '700 21px Georgia, serif');
-            const nameWidth = ctx.measureText(metal).width;
-            text(`${count} GRADES`, pad + (isPhone ? 48 : 31) + nameWidth, y - (isPhone ? 4 : 2), isPhone ? '700 18px Arial, sans-serif' : '700 10px Arial, sans-serif', colors.soft);
-            ctx.beginPath();
-            ctx.strokeStyle = colors.line;
-            ctx.lineWidth = isPhone ? 2 : 1;
-            ctx.moveTo(pad + (isPhone ? 48 : 31) + nameWidth + (isPhone ? 132 : 80), y - (isPhone ? 11 : 7));
-            ctx.lineTo(width - pad, y - (isPhone ? 11 : 7));
-            ctx.stroke();
-        };
-        const drawBase = (x, y, label, rate, w = 250) => {
-            const boxHeight = isPhone ? 130 : 90;
-            roundedRect(x, y, w, boxHeight, isPhone ? 10 : 7);
-            ctx.fillStyle = colors.card;
-            ctx.fill();
-            ctx.strokeStyle = colors.gold;
-            ctx.lineWidth = isPhone ? 2 : 1.5;
-            ctx.stroke();
-            ctx.fillStyle = colors.gold;
-            ctx.fillRect(x, y + (isPhone ? 10 : 7), isPhone ? 6 : 4, boxHeight - (isPhone ? 20 : 14));
-            text(label.toUpperCase(), x + (isPhone ? 28 : 18), y + (isPhone ? 38 : 25), isPhone ? '700 20px Arial, sans-serif' : '700 10px Arial, sans-serif', colors.soft);
-            text('₱', x + (isPhone ? 28 : 18), y + (isPhone ? 94 : 64), isPhone ? '700 28px Georgia, serif' : '700 17px Georgia, serif', colors.goldDeep);
-            text(money(rate), x + (isPhone ? 66 : 39), y + (isPhone ? 96 : 65), isPhone ? '700 40px Arial, sans-serif' : '700 25px Arial, sans-serif');
-            text('PER GRAM', x + w - (isPhone ? 26 : 16), y + (isPhone ? 93 : 64), isPhone ? '700 17px Arial, sans-serif' : '700 9px Arial, sans-serif', colors.soft, 'right');
-        };
-        const drawFeatured = (x, y, w) => {
-            const boxHeight = isPhone ? 130 : 90;
-            roundedRect(x, y, w, boxHeight, isPhone ? 10 : 7);
-            ctx.fillStyle = isPhone ? colors.paper2 : colors.ink;
-            ctx.fill();
-            if (isPhone) {
-                ctx.strokeStyle = colors.line;
-                ctx.lineWidth = 2;
-                ctx.stroke();
-            }
-            text('FEATURED BUYING RANGE', x + (isPhone ? 28 : 20), y + (isPhone ? 38 : 24), isPhone ? '700 20px Arial, sans-serif' : '700 10px Arial, sans-serif', isPhone ? colors.soft : '#C9BE9F');
-            const featured = db.pricing.featured;
-            if (featured) {
-                const label = gradeLabel(featured.metal, featured.key);
-                text(label, x + (isPhone ? 28 : 20), y + (isPhone ? 96 : 64), isPhone ? '700 38px Georgia, serif' : '700 24px Georgia, serif', isPhone ? colors.ink : colors.cream);
-                const labelWidth = ctx.measureText(label).width;
-                text(`₱${money(featured.low)}–${money(featured.high)}`, x + (isPhone ? 48 : 34) + labelWidth, y + (isPhone ? 96 : 64), isPhone ? '700 38px Arial, sans-serif' : '700 24px Arial, sans-serif', isPhone ? colors.goldDeep : colors.gold);
-                if (featured.remarks) {
-                    const remarksFont = isPhone ? 'italic 17px Arial, sans-serif' : 'italic 10px Arial, sans-serif';
-                    text(clippedText(`Remarks: ${featured.remarks}`, w - (isPhone ? 56 : 40), remarksFont), x + (isPhone ? 28 : 20), y + (isPhone ? 121 : 83), remarksFont, isPhone ? colors.soft : '#C9BE9F');
-                }
-            }
-            else {
-                text('Featured buying range not set', x + (isPhone ? 28 : 20), y + (isPhone ? 91 : 61), isPhone ? 'italic 28px Georgia, serif' : 'italic 16px Georgia, serif', isPhone ? colors.soft : '#C9BE9F');
-            }
-        };
-        const drawGradeCard = (grade, metal, index, startY, columns) => {
-            const cardWidth = (width - pad * 2 - columnGap * (columns - 1)) / columns;
-            const col = index % columns, row = Math.floor(index / columns), x = pad + col * (cardWidth + columnGap), y = startY + row * (cardHeight + columnGap);
-            roundedRect(x, y, cardWidth, cardHeight, isPhone ? 10 : 6);
-            ctx.fillStyle = colors.card;
-            ctx.fill();
-            ctx.strokeStyle = colors.line;
-            ctx.lineWidth = isPhone ? 2 : 1;
-            ctx.stroke();
-            text(grade.label, x + (isPhone ? 24 : 15), y + (isPhone ? 34 : 23), isPhone ? '700 23px Arial, sans-serif' : '700 12px Arial, sans-serif', colors.soft);
-            if (metal === 'Gold') {
-                const pillWidth = isPhone ? 112 : 58, pillHeight = isPhone ? 34 : 20;
-                roundedRect(x + cardWidth - pillWidth - (isPhone ? 20 : 14), y + (isPhone ? 14 : 10), pillWidth, pillHeight, pillHeight / 2);
-                ctx.fillStyle = colors.paper2;
-                ctx.fill();
-                text(`×${configuredGradeMultiplier(metal, grade.key).toFixed(3)}`, x + cardWidth - pillWidth / 2 - (isPhone ? 20 : 14), y + (isPhone ? 38 : 24), isPhone ? '700 17px Arial, sans-serif' : '700 9px Arial, sans-serif', colors.soft, 'center');
-            }
-            text('₱', x + (isPhone ? 24 : 15), y + (isPhone ? 83 : 57), isPhone ? '700 22px Arial, sans-serif' : '700 13px Arial, sans-serif', colors.goldDeep);
-            text(money(metalRate(metal, grade.key)), x + (isPhone ? 54 : 34), y + (isPhone ? 85 : 58), isPhone ? '700 34px Arial, sans-serif' : '700 20px Arial, sans-serif');
-            const numberWidth = ctx.measureText(money(metalRate(metal, grade.key))).width;
-            text('/g', x + (isPhone ? 64 : 40) + numberWidth, y + (isPhone ? 85 : 58), isPhone ? '20px Arial, sans-serif' : '11px Arial, sans-serif', colors.soft);
-            text('BUYING RATE', x + (isPhone ? 24 : 15), y + (isPhone ? 108 : 76), isPhone ? '700 16px Arial, sans-serif' : '700 9px Arial, sans-serif', colors.goldDeep);
-        };
-        const goldGrades = rateSheetGoldGrades();
-        let y = isPhone ? 254 : 172;
-        drawHeading('Gold', goldGrades.length + 1, colors.gold, y);
-        y += 16;
-        if (isPhone) {
-            y += 14;
-            drawBase(pad, y, '24K rate — pure gold', configuredBaseRate('Gold'), width - pad * 2);
-            y += 146;
-            drawFeatured(pad, y, width - pad * 2);
-            y += 146;
-        }
-        else {
-            drawBase(pad, y, '24K rate — pure gold', configuredBaseRate('Gold'));
-            drawFeatured(pad + 258, y, 520);
-            y += 98;
-        }
-        const goldColumns = isPhone ? 2 : 6;
-        goldGrades.forEach((grade, index) => drawGradeCard(grade, 'Gold', index, y, goldColumns));
-        y += Math.ceil(goldGrades.length / goldColumns) * (cardHeight + columnGap) + (isPhone ? 30 : 18);
-        y += rateSheetSectionMargin(isPhone);
-        drawHeading('Silver', SILVER_GRADES.length, colors.silver, y);
-        y += 16;
-        if (isPhone) {
-            y += 14;
-            const halfWidth = (width - pad * 2 - columnGap) / 2;
-            drawBase(pad, y, '999 rate', configuredBaseRate('Silver'), halfWidth);
-            drawBase(pad + halfWidth + columnGap, y, '925 basis', configuredSilver925Rate(), halfWidth);
-            y += 146;
-        }
-        else {
-            drawBase(pad, y, '999 rate', configuredBaseRate('Silver'));
-            drawBase(pad + 258, y, '925 basis', configuredSilver925Rate(), 300);
-            y += 98;
-        }
-        const silverGrades = SILVER_GRADES.filter(grade => grade.key !== '999' && grade.key !== '925');
-        const otherColumns = isPhone ? 2 : 4;
-        silverGrades.forEach((grade, index) => drawGradeCard(grade, 'Silver', index, y, otherColumns));
-        y += Math.ceil(silverGrades.length / otherColumns) * (cardHeight + columnGap) + (isPhone ? 30 : 18);
-        y += rateSheetSectionMargin(isPhone);
-        drawHeading('Platinum', PLATINUM_GRADES.length, colors.platinum, y);
-        y += 16;
-        if (isPhone) {
-            y += 14;
-            drawBase(pad, y, '999 rate — pure platinum', configuredBaseRate('Platinum'), width - pad * 2);
-            y += 146;
-        }
-        else {
-            drawBase(pad, y, '999 rate — pure platinum', configuredBaseRate('Platinum'));
-            y += 98;
-        }
-        PLATINUM_GRADES.forEach((grade, index) => drawGradeCard(grade, 'Platinum', index, y, otherColumns));
-        ctx.beginPath();
-        ctx.strokeStyle = colors.line;
-        ctx.lineWidth = 1;
-        ctx.moveTo(pad, height - 31);
-        ctx.lineTo(width - pad, height - 31);
-        ctx.stroke();
-        text('ZPP GOLD TRADING  ·  DAILY BUYING PRICE GUIDE', pad, height - (isPhone ? 18 : 13), isPhone ? '700 16px Arial, sans-serif' : '700 9px Arial, sans-serif', colors.soft);
-        text(`Generated ${new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}`, width - pad, height - (isPhone ? 18 : 13), isPhone ? '16px Arial, sans-serif' : '10px Arial, sans-serif', colors.soft, 'right');
-        const blob = await new Promise(resolve => canvas.toBlob(resolve, mimeType, imageType === 'jpg' ? .94 : undefined));
-        if (!blob)
-            throw new Error(`${imageLabel} generation failed`);
-        const filename = `zpp-price-rates-${db.pricing.effectiveDate || todayStr()}-${resolvedFormat}.${imageType}`;
-        const file = new File([blob], filename, { type: mimeType });
-        if (isPhone && navigator.share && navigator.canShare?.({ files: [file] })) {
-            try {
-                await navigator.share({ files: [file], title: 'ZPP Gold Trading price rates' });
-                toast(`Phone ${imageLabel} opened — choose Save Image or Photos`);
-                return;
-            }
-            catch (error) {
-                if (error instanceof DOMException && error.name === 'AbortError') {
-                    toast(`Phone ${imageLabel} share cancelled`);
-                    return;
-                }
-            }
-        }
-        const url = URL.createObjectURL(blob), link = document.createElement('a');
-        link.href = url;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-        toast(`${isPhone ? 'Phone' : 'Desktop'} price rate ${imageLabel} downloaded${isPhone ? ' — open it and choose Save to Photos' : ''}`);
-    }
-    catch (error) {
-        console.error(`Price rate ${imageLabel} download failed`, error);
-        toast(`Could not generate the price rate ${imageLabel}`);
-    }
-    finally {
-        if (button) {
-            button.disabled = false;
-            button.removeAttribute('aria-busy');
-        }
-        if (label)
-            label.textContent = `${isPhone ? 'Phone' : 'Desktop'} Download`;
-    }
-}
-function renderGradeCard(metal, key, label) {
+function renderGradeCard(metal, key, label, mult) {
     const ov = isOverridden(metal, key);
     const editing = overrideEditors.has(overrideEditorId(metal, key));
     const rate = metalRate(metal, key);
+    const multTxt = (mult != null) ? `×${mult}` : `×${(parseInt(key, 10) / 999).toFixed(3)}`;
     const rateControl = editing || ov
         ? `<input data-rate-editor="${metal}-${key}" type="text" inputmode="decimal" value="${rate}" onchange="commitOverride('${metal}','${key}', this.value)">`
         : `<span class="gc-value">${rate}</span>`;
-    const rateAction = ov ? `<span class="ov-tag">overridden</span> · <button onclick="resetOverride('${metal}','${key}')">reset PHP rate</button>` : editing ? `<button onclick="cancelOverride('${metal}','${key}')">cancel override</button>` : `<button onclick="beginOverride('${metal}','${key}')">Override PHP rate</button>`;
     return `<div class="grade-card ${ov ? 'is-override' : ''}">
-    <div class="gc-top"><span>${esc(label)}</span>${metal === 'Gold' ? `<span>×${configuredGradeMultiplier(metal, key).toFixed(3)}</span>` : ''}</div>
+    <div class="gc-top"><span>${esc(label)}</span><span>${multTxt}</span></div>
     <div class="gc-rate"><span class="unit">₱</span>${rateControl}<span class="unit">/g</span></div>
-    <div class="gc-foot">${rateAction}</div>
+    <div class="gc-foot">${ov ? `<span class="ov-tag">overridden</span> · <button onclick="resetOverride('${metal}','${key}')">reset to live price</button>` : editing ? `<button onclick="cancelOverride('${metal}','${key}')">cancel override</button>` : `<button onclick="beginOverride('${metal}','${key}')">Override price</button>`}</div>
   </div>`;
-}
-let formulaEditTarget = null;
-function openDailyBaseEditor(metal) {
-    if (!adminEditGuard())
-        return;
-    if (!GRADES[metal])
-        return;
-    formulaEditTarget = { metal };
-    document.getElementById('formula_edit_modal')?.remove();
-    const liveBase = Number(bucketFor(metal).base) || 0, base = configuredBaseRate(metal), silver925 = configuredSilver925Rate(base);
-    const customized = Math.abs(base - liveBase) >= 0.005;
-    const modal = document.createElement('div');
-    modal.id = 'formula_edit_modal';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<form class="summary-modal" onsubmit="saveGradeFormula(event)" role="dialog" aria-modal="true" aria-labelledby="formula_edit_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">Daily rate setup</div><h2 id="formula_edit_title">Today's PHP base rate</h2></div><button type="button" class="modal-close" onclick="closeGradeFormulaEditor()" aria-label="Close">×</button></div>
-    <p class="form-note" style="margin:16px 0;">${metal === 'Silver' ? 'Set the independent 999 rate and the 925 basis used to calculate 900, 800, 75%, and 60%.' : 'This exact PHP base rate applies to all ' + esc(metal) + ' grades.'} Rates are rounded to whole pesos with no centavos.</p>
-    <div class="form-grid">
-      <div class="field"><label>Metal</label><select id="formula_metal" onchange="changeFormulaEditorMetal(this.value)">${Object.keys(GRADES).map(name => `<option value="${name}" ${name === metal ? 'selected' : ''}>${name}</option>`).join('')}</select></div>
-      <div class="field"><label>Live PHP base rate</label><input value="${roundPeso(liveBase)}" readonly></div>
-      <div class="field"><label>Today's ${metal === 'Silver' ? '999' : 'PHP base'} rate</label><input id="formula_base_rate" type="number" min="1" step="1" value="${roundPeso(base)}" oninput="updateGradeFormulaPreview()" required></div>
-      ${metal === 'Silver' ? `<div class="field"><label>Today's 925 basis rate</label><input id="formula_silver_925_rate" type="number" min="1" step="1" value="${silver925}" oninput="updateGradeFormulaPreview()" required><span class="hint">900, 800, 75%, and 60% calculate from this rate.</span></div>` : ''}
-    </div>
-    <div class="stat" style="margin-top:14px"><div class="label">Active rate${metal === 'Silver' ? 's' : ''} for today</div><div class="value" id="formula_preview">${metal === 'Silver' ? `999: ${fmtMoney(base)}/g · 925: ${fmtMoney(silver925)}/g` : fmtMoney(base) + '/g'}</div></div>
-    <div class="form-actions">${customized ? '<button type="button" class="btn secondary" onclick="resetGradeFormula()">Use live PHP base</button>' : ''}<button type="button" class="btn secondary" onclick="closeGradeFormulaEditor()">Cancel</button><button type="submit" class="btn">Save today's base rate</button></div>
-  </form>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeGradeFormulaEditor(); });
-    document.body.appendChild(modal);
-    document.getElementById('formula_base_rate')?.focus();
-}
-function changeFormulaEditorMetal(metal) { openDailyBaseEditor(metal); }
-function updateGradeFormulaPreview() {
-    if (!formulaEditTarget)
-        return;
-    const base = Number(val('formula_base_rate')), preview = document.getElementById('formula_preview');
-    const silver925 = Number(val('formula_silver_925_rate'));
-    if (preview)
-        preview.textContent = Number.isFinite(base) && base > 0 ? (formulaEditTarget.metal === 'Silver' && Number.isFinite(silver925) && silver925 > 0 ? `999: ${fmtMoney(base)}/g · 925: ${fmtMoney(silver925)}/g` : `${fmtMoney(base)}/g`) : 'Enter a valid PHP base rate';
-}
-function closeGradeFormulaEditor() { document.getElementById('formula_edit_modal')?.remove(); formulaEditTarget = null; }
-async function saveGradeFormula(event) {
-    event.preventDefault();
-    if (!formulaEditTarget || !adminEditGuard())
-        return;
-    const baseRate = roundPeso(Number(val('formula_base_rate')));
-    if (!Number.isFinite(baseRate) || baseRate <= 0) {
-        toast('Enter a valid PHP base rate');
-        return;
-    }
-    const { metal } = formulaEditTarget;
-    const silver925 = metal === 'Silver' ? roundPeso(Number(val('formula_silver_925_rate'))) : 0;
-    if (metal === 'Silver' && (!Number.isFinite(silver925) || silver925 <= 0)) {
-        toast('Enter a valid Silver 925 basis rate');
-        return;
-    }
-    if (db.pricing.dailyFormula.effectiveDate !== todayStr())
-        db.pricing.dailyFormula = { effectiveDate: todayStr(), baseRates: {} };
-    db.pricing.dailyFormula.baseRates[metal] = baseRate;
-    if (metal === 'Silver') {
-        db.pricing.dailyFormula.baseRates.Silver925 = silver925;
-        delete db.pricing.silver.overrides['925'];
-    }
-    closeGradeFormulaEditor();
-    if (await savePricingDB()) {
-        render();
-        toast(`${metal} PHP base rate updated for today`);
-    }
-}
-async function resetGradeFormula() {
-    if (!formulaEditTarget || !adminEditGuard())
-        return;
-    const { metal } = formulaEditTarget;
-    if (db.pricing.dailyFormula?.baseRates)
-        delete db.pricing.dailyFormula.baseRates[metal];
-    if (metal === 'Silver' && db.pricing.dailyFormula?.baseRates)
-        delete db.pricing.dailyFormula.baseRates.Silver925;
-    closeGradeFormulaEditor();
-    if (await savePricingDB()) {
-        render();
-        toast(`${metal} PHP base reset to the live rate`);
-    }
-}
-let featuredRemarksDraft = '';
-function closeFeaturedRemarksEditor() { document.getElementById('featured_remarks_modal')?.remove(); }
-function openFeaturedRemarksEditor() {
-    if (!isAdmin())
-        return;
-    closeFeaturedRemarksEditor();
-    const remarks = String(db.pricing.featured?.remarks ?? featuredRemarksDraft ?? '');
-    const modal = document.createElement('div');
-    modal.id = 'featured_remarks_modal';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<form class="summary-modal" onsubmit="saveFeaturedRemarks(event)" role="dialog" aria-modal="true" aria-labelledby="featured_remarks_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">Featured buying range</div><h2 id="featured_remarks_title">Remarks</h2></div><button type="button" class="modal-close" onclick="closeFeaturedRemarksEditor()" aria-label="Close">×</button></div>
-    <div class="field" style="margin-top:16px;"><label for="featured_remarks_text">Remark shown with the pinned range</label><textarea id="featured_remarks_text" maxlength="120" placeholder="Example: Clean items only">${esc(remarks)}</textarea><span class="hint">This remark also appears in downloaded JPG and PNG rate sheets.</span></div>
-    <div class="form-actions"><button type="button" class="btn secondary" onclick="closeFeaturedRemarksEditor()">Cancel</button><button type="submit" class="btn">Save remarks</button></div>
-  </form>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeFeaturedRemarksEditor(); });
-    document.body.appendChild(modal);
-    document.getElementById('featured_remarks_text')?.focus();
-}
-async function saveFeaturedRemarks(event) {
-    event.preventDefault();
-    const remarks = val('featured_remarks_text').trim();
-    if (db.pricing.featured) {
-        db.pricing.featured.remarks = remarks;
-        if (!await savePricingDB())
-            return;
-        closeFeaturedRemarksEditor();
-        render();
-        toast('Featured remarks saved');
-        return;
-    }
-    featuredRemarksDraft = remarks;
-    closeFeaturedRemarksEditor();
-    const button = document.getElementById('featured_remarks_button');
-    if (button)
-        button.textContent = remarks ? 'Remarks ✓' : 'Remarks';
-    toast(remarks ? 'Remarks ready to save with the pinned range' : 'Remarks cleared');
 }
 function renderFeaturedBox() {
     const f = db.pricing.featured;
@@ -1635,7 +750,6 @@ function renderFeaturedBox() {
         <select id="fx_key">${GRADES['Gold'].map(k => `<option value="${k}">${gradeLabel('Gold', k)}</option>`).join('')}</select>
         <input id="fx_low" type="text" inputmode="decimal" placeholder="Low">
         <input id="fx_high" type="text" inputmode="decimal" placeholder="High">
-        <button id="featured_remarks_button" class="btn small secondary" style="color:var(--cream-text);border-color:#45412F;" onclick="openFeaturedRemarksEditor()">Remarks${featuredRemarksDraft ? ' ✓' : ''}</button>
         <button class="btn small" onclick="saveFeaturedFromForm()">Pin</button>
       </div>
     </div>`;
@@ -1643,7 +757,6 @@ function renderFeaturedBox() {
     return `<div class="featured-box">
     <span class="fx-grade">${esc(gradeLabel(f.metal, f.key))}</span>
     <span class="fx-range">₱${Number(f.low).toLocaleString()}–${Number(f.high).toLocaleString()}</span>
-    ${f.remarks ? `<span class="fx-label">${esc(f.remarks)}</span>` : ''}
     <button class="btn small secondary" style="color:var(--cream-text);border-color:#45412F;" onclick="clearFeatured()">Unpin</button>
   </div>`;
 }
@@ -1653,15 +766,13 @@ function updateFxKeyOptions() {
     if (sel)
         sel.innerHTML = GRADES[m].map(k => `<option value="${k}">${gradeLabel(m, k)}</option>`).join('');
 }
-async function saveFeaturedFromForm() {
+function saveFeaturedFromForm() {
     const metal = val('fx_metal'), key = val('fx_key'), low = val('fx_low'), high = val('fx_high');
     if (low === '' || high === '') {
         toast('Enter both a low and high value');
         return;
     }
-    const remarks = featuredRemarksDraft;
-    featuredRemarksDraft = '';
-    await setFeatured(metal, key, low, high, remarks);
+    setFeatured(metal, key, low, high);
 }
 function val(id) { const e = document.getElementById(id); return e ? e.value : ''; }
 /* ============================= ADMIN EDIT MODALS ============================= */
@@ -1690,36 +801,6 @@ function adminEditGuard() { if (!isAdmin()) {
     toast('Administrator access required');
     return false;
 } return true; }
-let deleteConfirmationResolve = null;
-function closeDeleteConfirmation(confirmed = false) {
-    document.getElementById('delete_confirmation_modal')?.remove();
-    const resolve = deleteConfirmationResolve;
-    deleteConfirmationResolve = null;
-    if (resolve)
-        resolve(confirmed);
-}
-function confirmDeletion(title, message, details = []) {
-    closeDeleteConfirmation(false);
-    return new Promise(resolve => {
-        deleteConfirmationResolve = resolve;
-        const modal = document.createElement('div');
-        modal.id = 'delete_confirmation_modal';
-        modal.className = 'modal-backdrop delete-confirm-backdrop';
-        modal.innerHTML = `<div class="delete-confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete_confirmation_title" aria-describedby="delete_confirmation_message">
-      <div class="delete-confirm-icon" aria-hidden="true">!</div>
-      <div class="delete-confirm-copy"><div class="eyebrow">Administrator confirmation</div><h2 id="delete_confirmation_title">${esc(title)}</h2><p id="delete_confirmation_message">${esc(message)}</p></div>
-      ${details.length ? `<div class="delete-confirm-details">${details.map(detail => `<div><span>${esc(detail.label)}</span><strong>${esc(detail.value)}</strong></div>`).join('')}</div>` : ''}
-      <div class="delete-confirm-warning"><strong>This action cannot be undone.</strong><span>Please verify the record before continuing.</span></div>
-      <div class="form-actions delete-confirm-actions"><button class="btn secondary" onclick="closeDeleteConfirmation(false)">Cancel</button><button class="btn danger" id="confirm_delete_button" onclick="closeDeleteConfirmation(true)">Delete permanently</button></div>
-    </div>`;
-        modal.addEventListener('click', event => { if (event.target === modal)
-            closeDeleteConfirmation(false); });
-        modal.addEventListener('keydown', event => { if (event.key === 'Escape')
-            closeDeleteConfirmation(false); });
-        document.body.appendChild(modal);
-        requestAnimationFrame(() => modal.querySelector('.btn.secondary')?.focus());
-    });
-}
 /* ============================= CUSTOMERS ============================= */
 let custSearch = '', custOpen = null;
 function renderCustomers() {
@@ -1810,566 +891,94 @@ async function deleteCustomerRecord() {
     const customer = db.customers.find(c => c.id === editingCustomerId);
     if (!customer)
         return;
-    const history = db.stock.filter(item => item.customerId === customer.id);
-    const historyNote = history.length
-        ? `${history.length} existing purchase${history.length === 1 ? '' : 's'} will remain in transaction and inventory history under the saved customer name.`
-        : 'This customer has no purchase history.';
-    if (!await confirmDeletion('Delete customer?', `Permanently remove ${customer.name} from customer management. ${historyNote}`, [
-        { label: 'Customer', value: customer.name }, { label: 'Contact', value: customer.contact || 'No contact information' },
-        { label: 'Purchase history retained', value: String(history.length) }
-    ]))
+    if (db.stock.some(item => item.customerId === customer.id)) {
+        toast('This customer has purchase history and cannot be deleted');
         return;
-    const previousLinks = history.map(item => ({ item, customerId: item.customerId }));
-    history.forEach(item => { item.customerName = item.customerName || customer.name; delete item.customerId; });
+    }
+    if (!confirm(`Delete customer "${customer.name}"? This cannot be undone.`))
+        return;
     db.customers = db.customers.filter(c => c.id !== customer.id);
     closeAdminEditModal();
-    if (await saveDB()) {
-        render();
-        toast(history.length ? 'Customer deleted; purchase history retained' : 'Customer deleted');
-    }
-    else {
-        db.customers.push(customer);
-        previousLinks.forEach(({ item, customerId }) => { item.customerId = customerId; });
-        render();
-    }
+    await saveDB();
+    render();
+    toast('Customer deleted');
 }
 /* ============================= BUYING ============================= */
 let purchaseBatch = [];
-let buyingDraftForm = {};
-let buyingDraftSaveTimer = null;
-let buyingDraftSavedDate = '';
-let cashflowCardMinimized = false;
-function toggleCashflowCard() {
-    cashflowCardMinimized = !cashflowCardMinimized;
-    const card = document.getElementById('buying_cashflow_card');
-    if (card)
-        card.innerHTML = cashflowCardMarkup();
-}
-function cashflowCardMarkup() {
-    const cashflowDate = cashflowDateStr();
-    const snapshot = currentCashflow?.date === cashflowDate ? currentCashflow : null;
-    const configured = Boolean(snapshot?.configured) && snapshot?.cashOnHand !== null && Number.isFinite(Number(snapshot?.cashOnHand));
-    const balance = configured ? fmtMoney(snapshot.cashOnHand) : 'Not set';
-    const updated = snapshot?.setAt ? new Date(snapshot.setAt).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }) : '';
-    return `<section class="cashflow-card ${configured && Number(snapshot.cashOnHand) < 0 ? 'is-negative' : ''} ${cashflowCardMinimized ? 'is-minimized' : ''}">
-    <div class="cashflow-main">
-      <div class="cashflow-balance"><div class="cashflow-title-row"><span class="cashflow-eyebrow">Cash on hand · ${fmtDate(cashflowDate)}</span><button class="cashflow-toggle" onclick="toggleCashflowCard()" aria-expanded="${!cashflowCardMinimized}">${cashflowCardMinimized ? 'Expand' : 'Minimize'}</button></div><strong>${balance}</strong>${cashflowCardMinimized ? '' : `<small>${configured ? `Live balance after cash purchases for this cashflow day${updated ? ` · adjusted ${esc(updated)} by ${esc(snapshot.setBy || 'Admin')}` : ''}` : 'Waiting for an administrator to set the available cash'}</small>`}</div>
-      ${cashflowCardMinimized ? '' : `<div class="cashflow-actions"><button class="btn secondary" onclick="openCashflowDetails()">View cash flow</button>${isAdmin() ? `${configured ? '<button class="btn secondary" onclick="openCashflowResetConfirmation()">Reset IN / OUT</button>' : ''}<button class="btn cashflow-edit" onclick="openCashflowEditor()">${configured ? 'Edit cash on hand' : 'Set cash on hand'}</button>` : '<span class="cashflow-readonly">Admin controlled</span>'}</div>`}
-    </div>
-    <div class="cashflow-flow-strip"><strong>${new Date(cashflowDate + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: '2-digit' })}</strong><span class="cashflow-in">IN ${fmtMoney(snapshot?.cashIn || 0)}</span><span class="cashflow-out">OUT ${fmtMoney(snapshot?.cashOut || 0)}</span></div>
-    ${cashflowCardMinimized ? '' : `<div class="cashflow-stats">
-      <div><span>Bought today</span><strong>${fmtMoney(snapshot?.totalPurchases || 0)}</strong><small>${snapshot?.purchaseCount || 0} item${snapshot?.purchaseCount === 1 ? '' : 's'} · all payment methods</small></div>
-      <div><span>Cash paid today</span><strong>${fmtMoney(snapshot?.cashPurchases || 0)}</strong><small>Deducted from cash on hand</small></div>
-      <div><span>Non-cash today</span><strong>${fmtMoney(snapshot?.nonCashPurchases || 0)}</strong><small>Bank transfer and GCash</small></div>
-    </div>`}
-  </section>`;
-}
-async function syncCashflow() {
-    if (cashflowSyncBusy || !currentUser || !(location.protocol === 'http:' || location.protocol === 'https:'))
-        return;
-    cashflowSyncBusy = true;
-    try {
-        const requestedDate = cashflowDateStr();
-        const previousDate = currentCashflow?.date || '';
-        const response = await fetch(`/api/cashflow?date=${encodeURIComponent(requestedDate)}`, { cache: 'no-store' });
-        if (response.status === 401) {
-            showLogin();
-            return;
-        }
-        const result = await response.json().catch(() => null);
-        if (!response.ok)
-            throw new Error(result?.error || 'Cashflow sync failed');
-        if (!result || result.date !== requestedDate || (result.configured && (result.cashOnHand === null || !Number.isFinite(Number(result.cashOnHand)))))
-            throw new Error('Cashflow sync returned an invalid balance');
-        currentCashflow = result;
-        if (!cashflowHistoryDate || cashflowHistoryDate === previousDate || cashflowHistoryDate === requestedDate) {
-            cashflowHistoryDate = requestedDate;
-            cashflowHistorySnapshot = result;
-        }
-        const card = document.getElementById('buying_cashflow_card');
-        if (card)
-            card.innerHTML = cashflowCardMarkup();
-        renderCashflowDetailsContent();
-        renderCashflowAdjustmentDetailsContent();
-    }
-    catch (error) {
-        console.error('Cashflow sync failed', error);
-    }
-    finally {
-        cashflowSyncBusy = false;
-    }
-}
-function closeCashflowEditor() { document.getElementById('cashflow_editor_modal')?.remove(); }
-function closeCashflowResetConfirmation() { document.getElementById('cashflow_reset_modal')?.remove(); }
-function closeCashflowDetails() { document.getElementById('cashflow_details_modal')?.remove(); }
-function cashflowDetailSnapshot() { return cashflowHistorySnapshot || currentCashflow || {}; }
-function cashflowTime(value) {
-    if (!value)
-        return 'Time unavailable';
-    return new Date(value).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' });
-}
-function cashflowPagination(kind, total, page) {
-    const pages = Math.max(1, Math.ceil(total / CASHFLOW_PAGE_SIZE));
-    if (pages <= 1)
-        return '';
-    return `<div class="cashflow-pagination"><span>Page ${page} of ${pages} · ${total} records</span><div><button class="btn secondary small" onclick="changeCashflowPage('${kind}',-1)" ${page <= 1 ? 'disabled' : ''}>Previous</button><button class="btn secondary small" onclick="changeCashflowPage('${kind}',1)" ${page >= pages ? 'disabled' : ''}>Next</button></div></div>`;
-}
-function changeCashflowPage(kind, direction) {
-    const total = kind === 'purchases' ? filteredCashflowTransactions().length : filteredCashflowAdjustments().length;
-    const pages = Math.max(1, Math.ceil(total / CASHFLOW_PAGE_SIZE));
-    if (kind === 'purchases')
-        cashflowPurchasePage = Math.min(Math.max(cashflowPurchasePage + direction, 1), pages);
-    else
-        cashflowAdjustmentPage = Math.min(Math.max(cashflowAdjustmentPage + direction, 1), pages);
-    if (kind === 'purchases')
-        renderCashflowDetailsContent();
-    else
-        renderCashflowAdjustmentDetailsContent();
-}
-function cashflowMatches(values) {
-    const query = cashflowSearch.trim().toLowerCase();
-    return !query || values.filter(value => value != null).join(' ').toLowerCase().includes(query);
-}
-function filteredCashflowTransactions() {
-    return (cashflowDetailSnapshot().transactions || []).filter(transaction => cashflowMatches([
-        cashflowTime(transaction.recordedAt), transaction.customerName, transaction.paymentMethod, transaction.payout,
-        fmtMoney(transaction.payout), transaction.itemCount, ...(transaction.items || []),
-        String(transaction.paymentMethod).toLowerCase() === 'cash' ? 'cash deduction' : 'no cash effect'
-    ]));
-}
-function filteredCashflowAdjustments() {
-    const labels = { set: 'Set balance', add: 'Cash added', deduct: 'Cash deducted', reset: 'IN / OUT reset' };
-    const query = cashflowAdjustmentSearch.trim().toLowerCase();
-    return (cashflowDetailSnapshot().adjustments || []).filter(adjustment => !query || [
-        cashflowTime(adjustment.createdAt), labels[adjustment.operation], adjustment.operation, adjustment.note,
-        adjustment.createdBy, adjustment.amount, fmtMoney(adjustment.amount), adjustment.balanceAfter, fmtMoney(adjustment.balanceAfter)
-    ].filter(value => value != null).join(' ').toLowerCase().includes(query));
-}
-function updateCashflowSearch(value) {
-    cashflowSearch = String(value || '');
-    cashflowPurchasePage = 1;
-    cashflowAdjustmentPage = 1;
-    renderCashflowDetailsContent();
-    requestAnimationFrame(() => { const input = document.getElementById('cashflow_search'); if (input) {
-        input.focus();
-        input.setSelectionRange?.(input.value.length, input.value.length);
-    } });
-}
-function updateCashflowAdjustmentSearch(value) {
-    cashflowAdjustmentSearch = String(value || '');
-    cashflowAdjustmentPage = 1;
-    renderCashflowAdjustmentDetailsContent();
-    requestAnimationFrame(() => { const input = document.getElementById('cashflow_adjustment_search'); if (input) {
-        input.focus();
-        input.setSelectionRange?.(input.value.length, input.value.length);
-    } });
-}
-function cashflowDetailRows() {
-    const snapshot = cashflowDetailSnapshot();
-    const transactions = filteredCashflowTransactions();
-    if (!transactions.length)
-        return `<div class="empty-note">${cashflowSearch ? 'No buying transactions match your search.' : `No buying transactions recorded on ${fmtDate(cashflowHistoryDate || cashflowDateStr())}.`}</div>`;
-    const matchingIds = new Set(transactions.map(transaction => transaction.id));
-    let running = Number(snapshot.cashOnHand);
-    const setAt = Date.parse(snapshot.setAt || '');
-    const prepared = snapshot.transactions.map(transaction => {
-        const isCash = String(transaction.paymentMethod).toLowerCase() === 'cash';
-        const recordedAt = Date.parse(transaction.recordedAt || '');
-        const afterLatestSet = isCash && snapshot.configured && Number.isFinite(recordedAt) && Number.isFinite(setAt) && recordedAt > setAt;
-        const balanceAfter = afterLatestSet ? running : null;
-        if (afterLatestSet)
-            running = roundMoney(running + Number(transaction.payout));
-        return { transaction, isCash, afterLatestSet, balanceAfter };
-    }).filter(entry => matchingIds.has(entry.transaction.id));
-    const pages = Math.max(1, Math.ceil(prepared.length / CASHFLOW_PAGE_SIZE));
-    cashflowPurchasePage = Math.min(Math.max(cashflowPurchasePage, 1), pages);
-    const start = (cashflowPurchasePage - 1) * CASHFLOW_PAGE_SIZE;
-    const rows = prepared.slice(start, start + CASHFLOW_PAGE_SIZE).map(({ transaction, isCash, afterLatestSet, balanceAfter }) => `<tr><td>${esc(cashflowTime(transaction.recordedAt))}</td><td><strong>${esc(transaction.customerName)}</strong><br><span class="hint">${esc(transaction.items.join(' · '))} · ${transaction.itemCount} item${transaction.itemCount === 1 ? '' : 's'}</span></td><td>${esc(transaction.paymentMethod)}</td><td class="num">${fmtMoney(transaction.payout)}</td><td class="num ${isCash ? 'cashflow-out' : 'cashflow-no-effect'}">${isCash ? `−${fmtMoney(transaction.payout)}` : 'No cash effect'}</td><td class="num">${afterLatestSet ? fmtMoney(balanceAfter) : (isCash && snapshot.configured ? 'Included in latest set' : '—')}</td></tr>`).join('');
-    return `<div class="table-wrap cashflow-ledger"><table><thead><tr><th>Time</th><th>Buying transaction</th><th>Payment</th><th class="num-head">Purchased</th><th class="num-head">Cash movement</th><th class="num-head">Cash remaining</th></tr></thead><tbody>${rows}</tbody></table></div>${cashflowPagination('purchases', prepared.length, cashflowPurchasePage)}`;
-}
-function cashflowAdjustmentRows() {
-    const adjustments = filteredCashflowAdjustments();
-    if (!adjustments.length)
-        return `<div class="empty-note">${cashflowAdjustmentSearch ? 'No Admin cash adjustments match your search.' : `No cash adjustments recorded on ${fmtDate(cashflowHistoryDate || cashflowDateStr())}.`}</div>`;
-    const labels = { set: 'Set balance', add: 'Cash added', deduct: 'Cash deducted', reset: 'IN / OUT reset' };
-    const pages = Math.max(1, Math.ceil(adjustments.length / CASHFLOW_PAGE_SIZE));
-    cashflowAdjustmentPage = Math.min(Math.max(cashflowAdjustmentPage, 1), pages);
-    const start = (cashflowAdjustmentPage - 1) * CASHFLOW_PAGE_SIZE;
-    const rows = adjustments.slice(start, start + CASHFLOW_PAGE_SIZE).map(adjustment => `<tr><td>${esc(cashflowTime(adjustment.createdAt))}</td><td><span class="pill ${adjustment.operation === 'deduct' ? 'cashflow-deduct-pill' : adjustment.operation === 'add' ? 'cashflow-add-pill' : ''}">${esc(labels[adjustment.operation] || adjustment.operation)}</span></td><td>${esc(adjustment.note || '—')}</td><td>${esc(adjustment.createdBy || 'Admin')}</td><td class="num ${adjustment.operation === 'deduct' ? 'cashflow-out' : adjustment.operation === 'add' ? 'cashflow-in' : ''}">${adjustment.operation === 'add' ? '+' : adjustment.operation === 'deduct' ? '−' : ''}${fmtMoney(adjustment.amount)}</td><td class="num">${fmtMoney(adjustment.balanceAfter)}</td></tr>`).join('');
-    return `<div class="table-wrap cashflow-adjustment-ledger"><table><thead><tr><th>Time</th><th>Action</th><th>Notes</th><th>Admin</th><th class="num-head">Amount</th><th class="num-head">Balance after</th></tr></thead><tbody>${rows}</tbody></table></div>${cashflowPagination('adjustments', adjustments.length, cashflowAdjustmentPage)}`;
-}
-function renderCashflowDetailsContent() {
-    const container = document.getElementById('cashflow_details_content');
-    if (!container)
-        return;
-    const snapshot = cashflowDetailSnapshot(), viewDate = cashflowHistoryDate || cashflowDateStr(), currentDate = cashflowDateStr();
-    const title = document.getElementById('cashflow_details_title');
-    if (title)
-        title.textContent = `Cash movement · ${fmtDate(viewDate)}`;
-    const adjustmentTitle = document.getElementById('cashflow_adjustment_details_title');
-    if (adjustmentTitle)
-        adjustmentTitle.textContent = `Admin cash adjustments · ${fmtDate(viewDate)}`;
-    container.innerHTML = `<div class="cashflow-history-picker"><button class="btn secondary small" onclick="changeCashflowHistoryDay(-1)">Previous day</button><div class="field"><label for="cashflow_history_date">Retrieve cashflow date</label><input id="cashflow_history_date" type="date" max="${currentDate}" value="${esc(viewDate)}" onchange="changeCashflowHistoryDate(this.value)"></div><button class="btn secondary small" onclick="changeCashflowHistoryDay(1)" ${viewDate >= currentDate ? 'disabled' : ''}>Next day</button></div>
-  ${cashflowHistoryLoading ? '<div class="empty-note">Loading saved cashflow…</div>' : `<div class="stat-row cashflow-modal-stats">
-    <div class="stat"><div class="label">Cash on hand</div><div class="value">${snapshot.configured ? fmtMoney(snapshot.cashOnHand) : 'Not set'}</div></div>
-    <div class="stat"><div class="label">Bought on this date</div><div class="value">${fmtMoney(snapshot.totalPurchases || 0)}</div><div class="sub">${snapshot.purchaseCount || 0} item${snapshot.purchaseCount === 1 ? '' : 's'}</div></div>
-    <div class="stat"><div class="label">Cash paid</div><div class="value">${fmtMoney(snapshot.cashPurchases || 0)}</div></div>
-    <div class="stat"><div class="label">Non-cash</div><div class="value">${fmtMoney(snapshot.nonCashPurchases || 0)}</div></div>
-  </div>
-  <div class="cashflow-modal-flow"><span>Daily physical cash movement</span><div><strong class="cashflow-in">IN ${fmtMoney(snapshot.cashIn || 0)}</strong><strong class="cashflow-out">OUT ${fmtMoney(snapshot.cashOut || 0)}</strong></div><small>IN is Admin-added cash. OUT is Cash buying payouts plus manual deductions.</small></div>
-  ${snapshot.configured ? `<div class="cashflow-set-note"><strong>Cash-on-hand formula:</strong> ${fmtMoney(snapshot.balanceBase)} latest balance − ${fmtMoney(snapshot.cashPurchasesAfterSetting || 0)} Cash purchases after ${esc(cashflowTime(snapshot.setAt))} = ${fmtMoney(snapshot.cashOnHand)}. Purchases marked “Included in latest set” are not deducted again.</div>` : '<div class="cashflow-set-note"><strong>Cash on hand is not set.</strong> An administrator must enter the current physical cash before a running balance can be shown.</div>'}
-  <div class="cashflow-search"><div class="field"><label for="cashflow_search">Search buying transactions</label><input id="cashflow_search" type="search" autocomplete="off" value="${esc(cashflowSearch)}" placeholder="Seller, item, payment, amount, or time" oninput="updateCashflowSearch(this.value)"></div>${cashflowSearch ? '<button class="btn secondary small" onclick="updateCashflowSearch(\'\')">Clear</button>' : ''}</div>
-  <h3 class="cashflow-ledger-title">Buying transactions</h3>${cashflowDetailRows()}
-  <div class="cashflow-adjustment-launch"><div><strong>Admin cash adjustments</strong><span>Review cash added, deducted, or reconciled separately.</span></div><button class="btn secondary" onclick="openCashflowAdjustmentDetails()">View adjustments <span class="badge-count">${snapshot.adjustments?.length || 0}</span></button></div>`}`;
-}
-async function changeCashflowHistoryDate(date) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > cashflowDateStr()) {
-        toast('Choose the current cashflow day or an earlier date');
-        return;
-    }
-    const previousDate = cashflowHistoryDate, previousSnapshot = cashflowHistorySnapshot;
-    cashflowHistoryDate = date;
-    cashflowPurchasePage = 1;
-    cashflowAdjustmentPage = 1;
-    cashflowSearch = '';
-    cashflowAdjustmentSearch = '';
-    cashflowHistoryLoading = true;
-    renderCashflowDetailsContent();
-    try {
-        const response = await fetch(`/api/cashflow?date=${encodeURIComponent(date)}`, { cache: 'no-store' });
-        if (response.status === 401) {
-            showLogin();
-            return;
-        }
-        const result = await response.json().catch(() => null);
-        if (!response.ok)
-            throw new Error(result?.error || 'Could not retrieve cashflow');
-        if (!result || result.date !== date)
-            throw new Error('Cashflow history returned an invalid date');
-        cashflowHistorySnapshot = result;
-    }
-    catch (error) {
-        cashflowHistoryDate = previousDate;
-        cashflowHistorySnapshot = previousSnapshot;
-        toast(error.message || 'Could not retrieve cashflow');
-    }
-    finally {
-        cashflowHistoryLoading = false;
-        renderCashflowDetailsContent();
-        renderCashflowAdjustmentDetailsContent();
-    }
-}
-function changeCashflowHistoryDay(offset) {
-    const current = cashflowHistoryDate || cashflowDateStr(), next = dateKeyPlusDays(current, offset);
-    if (next <= cashflowDateStr())
-        changeCashflowHistoryDate(next);
-}
-async function openCashflowDetails() {
-    closeCashflowDetails();
-    const cashflowDate = cashflowDateStr();
-    cashflowPurchasePage = 1;
-    cashflowAdjustmentPage = 1;
-    cashflowSearch = '';
-    cashflowAdjustmentSearch = '';
-    cashflowHistoryDate = cashflowDate;
-    cashflowHistorySnapshot = currentCashflow;
-    const modal = document.createElement('div');
-    modal.id = 'cashflow_details_modal';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="cashflow_details_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">Buying cashflow history</div><h2 id="cashflow_details_title">Cash movement · ${fmtDate(cashflowDate)}</h2><p class="form-note">Daily totals start a new day at 4:00 AM Manila time. Earlier cashflow days remain available here.</p></div><button class="modal-close" onclick="closeCashflowDetails()" aria-label="Close">×</button></div>
-    <div id="cashflow_details_content"></div>
-    <div class="form-actions" style="justify-content:flex-end;"><button class="btn secondary" onclick="changeCashflowHistoryDate(cashflowHistoryDate||cashflowDateStr())">Refresh</button><button class="btn" onclick="closeCashflowDetails()">Close</button></div>
-  </div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeCashflowDetails(); });
-    document.body.appendChild(modal);
-    renderCashflowDetailsContent();
-    await changeCashflowHistoryDate(cashflowDate);
-}
-function closeCashflowAdjustmentDetails() { document.getElementById('cashflow_adjustment_details_modal')?.remove(); }
-function renderCashflowAdjustmentDetailsContent() {
-    const container = document.getElementById('cashflow_adjustment_details_content');
-    if (!container)
-        return;
-    container.innerHTML = `<div class="cashflow-search"><div class="field"><label for="cashflow_adjustment_search">Search adjustments</label><input id="cashflow_adjustment_search" type="search" autocomplete="off" value="${esc(cashflowAdjustmentSearch)}" placeholder="Action, amount, note, Admin, balance, or time" oninput="updateCashflowAdjustmentSearch(this.value)"></div>${cashflowAdjustmentSearch ? '<button class="btn secondary small" onclick="updateCashflowAdjustmentSearch(\'\')">Clear</button>' : ''}</div>${cashflowAdjustmentRows()}`;
-}
-function openCashflowAdjustmentDetails() {
-    closeCashflowAdjustmentDetails();
-    cashflowAdjustmentPage = 1;
-    cashflowAdjustmentSearch = '';
-    const modal = document.createElement('div');
-    modal.id = 'cashflow_adjustment_details_modal';
-    modal.className = 'modal-backdrop cashflow-adjustment-backdrop';
-    modal.innerHTML = `<div class="inventory-move-modal cashflow-adjustment-modal" role="dialog" aria-modal="true" aria-labelledby="cashflow_adjustment_details_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">Cashflow history</div><h2 id="cashflow_adjustment_details_title">Admin cash adjustments · ${fmtDate(cashflowHistoryDate || cashflowDateStr())}</h2><p class="form-note">Cash added is green, cash deducted is red, and exact balance reconciliation is neutral.</p></div><button class="modal-close" onclick="closeCashflowAdjustmentDetails()" aria-label="Close">×</button></div>
-    <div id="cashflow_adjustment_details_content"></div>
-    <div class="form-actions" style="justify-content:flex-end;"><button class="btn secondary" onclick="changeCashflowHistoryDate(cashflowHistoryDate||cashflowDateStr())">Refresh</button><button class="btn" onclick="closeCashflowAdjustmentDetails()">Close</button></div>
-  </div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeCashflowAdjustmentDetails(); });
-    document.body.appendChild(modal);
-    renderCashflowAdjustmentDetailsContent();
-}
-function openCashflowEditor() {
-    if (!isAdmin())
-        return;
-    closeCashflowEditor();
-    const current = currentCashflow?.configured ? Number(currentCashflow.cashOnHand) : NaN;
-    const modal = document.createElement('div');
-    modal.id = 'cashflow_editor_modal';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<form class="summary-modal" onsubmit="saveCashflowOverride(event)" role="dialog" aria-modal="true" aria-labelledby="cashflow_editor_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">Admin cash control</div><h2 id="cashflow_editor_title">Edit cash on hand</h2></div><button type="button" class="modal-close" onclick="closeCashflowEditor()" aria-label="Close">×</button></div>
-    <p class="form-note" style="margin:16px 0;">Set the exact physical balance, add incoming cash, or record a cash deduction. Buying transactions paid by Cash continue to deduct automatically.</p>
-    <div class="form-grid">
-      <div class="field"><label>Action</label><select id="cashflow_operation" onchange="updateCashflowEditorFields()"><option value="set">Set exact balance</option>${currentCashflow?.configured ? '<option value="add">Add cash</option><option value="deduct">Deduct cash</option>' : ''}</select></div>
-      <div class="field"><label id="cashflow_amount_label">Current cash on hand (PHP)</label><input id="cashflow_amount" type="number" min="0" step="0.01" value="${Number.isFinite(current) ? current : ''}" placeholder="0" required><span class="hint" id="cashflow_action_hint">Replace the current balance with this exact amount.</span></div>
-      <div class="field span-2"><label>Notes <span class="hint">(optional)</span></label><textarea id="cashflow_note" maxlength="500" placeholder="Example: Added cash from business reserve, petty cash expense, bank withdrawal"></textarea><span class="hint">The note, amount, time, and Admin name will appear in cashflow history.</span></div>
-    </div>
-    <div class="cashflow-current-line">Current cash on hand: <strong>${currentCashflow?.configured ? fmtMoney(currentCashflow.cashOnHand) : 'Not set'}</strong></div>
-    <div class="form-actions"><button type="button" class="btn secondary" onclick="closeCashflowEditor()">Cancel</button><button type="submit" class="btn">Save cash adjustment</button></div>
-  </form>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeCashflowEditor(); });
-    document.body.appendChild(modal);
-    document.getElementById('cashflow_amount')?.focus();
-}
-function openCashflowResetConfirmation() {
-    if (!isAdmin() || !currentCashflow?.configured)
-        return;
-    closeCashflowResetConfirmation();
-    const modal = document.createElement('div');
-    modal.id = 'cashflow_reset_modal';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="summary-modal" role="dialog" aria-modal="true" aria-labelledby="cashflow_reset_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">Admin cash control</div><h2 id="cashflow_reset_title">Reset IN and OUT to PHP 0</h2></div><button type="button" class="modal-close" onclick="closeCashflowResetConfirmation()" aria-label="Close">×</button></div>
-    <p class="form-note" style="margin:16px 0;">This starts new IN and OUT counters from this moment. It does not delete buying transactions, adjustment history, or inventory, and it does not change Cash on Hand.</p>
-    <div class="move-confirmation-summary"><div><span>Cash on hand</span><strong>${fmtMoney(currentCashflow.cashOnHand)}</strong></div><div><span>Current IN</span><strong class="cashflow-in">${fmtMoney(currentCashflow.cashIn || 0)}</strong></div><div><span>Current OUT</span><strong class="cashflow-out">${fmtMoney(currentCashflow.cashOut || 0)}</strong></div></div>
-    <div class="form-actions"><button type="button" class="btn secondary" onclick="closeCashflowResetConfirmation()">Cancel</button><button type="button" class="btn" onclick="resetCashflowMovements()">Confirm reset</button></div>
-  </div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeCashflowResetConfirmation(); });
-    document.body.appendChild(modal);
-}
-async function resetCashflowMovements() {
-    if (!isAdmin())
-        return;
-    try {
-        const cashflowDate = cashflowDateStr();
-        const response = await fetch('/api/cashflow', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: cashflowDate, operation: 'reset', amount: 0, note: 'IN and OUT counters reset' }) });
-        const result = await response.json().catch(() => null);
-        if (!response.ok)
-            throw new Error(result?.error || 'Could not reset IN and OUT');
-        currentCashflow = result;
-        closeCashflowResetConfirmation();
-        if (!cashflowHistoryDate || cashflowHistoryDate === cashflowDate) {
-            cashflowHistoryDate = cashflowDate;
-            cashflowHistorySnapshot = result;
-            renderCashflowDetailsContent();
-            renderCashflowAdjustmentDetailsContent();
-        }
-        const card = document.getElementById('buying_cashflow_card');
-        if (card)
-            card.innerHTML = cashflowCardMarkup();
-        toast('IN and OUT reset to PHP 0');
-    }
-    catch (error) {
-        toast(error.message || 'Could not reset IN and OUT');
-    }
-}
-function updateCashflowEditorFields() {
-    const operation = val('cashflow_operation'), label = document.getElementById('cashflow_amount_label'), hint = document.getElementById('cashflow_action_hint'), input = document.getElementById('cashflow_amount');
-    const copy = { set: ['Exact cash balance (PHP)', 'Replace the current balance with this exact amount.'], add: ['Cash to add (PHP)', 'Increase cash on hand by this amount.'], deduct: ['Cash to deduct (PHP)', 'Decrease cash on hand by this amount.'] };
-    if (label)
-        label.textContent = copy[operation][0];
-    if (hint)
-        hint.textContent = copy[operation][1];
-    if (input) {
-        input.value = operation === 'set' && currentCashflow?.configured ? String(currentCashflow.cashOnHand) : '';
-        input.focus();
-    }
-}
-async function saveCashflowOverride(event) {
-    event.preventDefault();
-    if (!isAdmin())
-        return;
-    const operation = val('cashflow_operation'), amount = Number(val('cashflow_amount')), note = val('cashflow_note').trim();
-    if (!Number.isFinite(amount) || amount < 0) {
-        toast('Enter a valid non-negative cash amount');
-        return;
-    }
-    try {
-        const cashflowDate = cashflowDateStr();
-        const response = await fetch('/api/cashflow', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: cashflowDate, operation, amount, note }) });
-        const result = await response.json().catch(() => null);
-        if (!response.ok)
-            throw new Error(result?.error || 'Could not save cash on hand');
-        currentCashflow = result;
-        closeCashflowEditor();
-        if (!cashflowHistoryDate || cashflowHistoryDate === cashflowDate) {
-            cashflowHistoryDate = cashflowDate;
-            cashflowHistorySnapshot = result;
-            renderCashflowDetailsContent();
-            renderCashflowAdjustmentDetailsContent();
-        }
-        const card = document.getElementById('buying_cashflow_card');
-        if (card)
-            card.innerHTML = cashflowCardMarkup();
-        toast(operation === 'add' ? 'Cash added' : operation === 'deduct' ? 'Cash deducted' : 'Cash on hand updated');
-    }
-    catch (error) {
-        toast(error.message || 'Could not save cash on hand');
-    }
-}
-function buyingDraftValue(key, fallback = '') {
-    const element = document.getElementById(key);
-    return element ? element.value : String(buyingDraftForm[key] ?? fallback);
-}
-function captureBuyingDraftForm() {
-    ['b_seller_name', 'b_date', 'b_pay', 'b_metal', 'b_itemtype', 'b_karat', 'b_custom_purity', 'b_gross', 'b_ded', 'b_rate', 'b_payout', 'b_staff', 'b_status', 'b_remarks'].forEach(key => {
-        const element = document.getElementById(key);
-        if (element)
-            buyingDraftForm[key] = element.value;
-    });
-}
-async function loadBuyingDraft() {
-    try {
-        const response = await fetch('/api/buying-draft', { cache: 'no-store' });
-        if (!response.ok)
-            return;
-        const draft = await response.json();
-        purchaseBatch = Array.isArray(draft.items) ? draft.items : [];
-        buyingDraftForm = draft.form && typeof draft.form === 'object' ? draft.form : {};
-        buyingDraftSavedDate = String(draft.savedDate || buyingDraftForm.b_date || '');
-        rollDefaultBuyingDraftDateForward();
-    }
-    catch (error) {
-        console.error('Buying draft load failed', error);
-    }
-}
-function rollDefaultBuyingDraftDateForward() {
-    const today = todayStr(), draftDate = String(buyingDraftForm.b_date || '');
-    if (!draftDate || draftDate !== buyingDraftSavedDate || draftDate === today)
-        return false;
-    buyingDraftForm.b_date = today;
-    buyingDraftSavedDate = today;
-    return true;
-}
-async function saveBuyingDraft() {
-    captureBuyingDraftForm();
-    try {
-        const response = await fetch('/api/buying-draft', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: purchaseBatch, form: buyingDraftForm }) });
-        if (!response.ok)
-            throw new Error('Draft save failed');
-        const result = await response.json().catch(() => null);
-        buyingDraftSavedDate = String(result?.savedDate || todayStr());
-    }
-    catch (error) {
-        console.error('Buying draft save failed', error);
-        toast('Could not save the current payout draft');
-    }
-}
-function scheduleBuyingDraftSave() {
-    captureBuyingDraftForm();
-    clearTimeout(buyingDraftSaveTimer);
-    buyingDraftSaveTimer = setTimeout(() => saveBuyingDraft(), 450);
-}
-async function clearBuyingDraft() {
-    clearTimeout(buyingDraftSaveTimer);
-    buyingDraftForm = {};
-    buyingDraftSavedDate = '';
-    try {
-        await fetch('/api/buying-draft', { method: 'DELETE' });
-    }
-    catch (error) {
-        console.error('Buying draft clear failed', error);
-    }
-}
 function renderBuying() {
-    rollDefaultBuyingDraftDateForward();
-    const sellerName = buyingDraftValue('b_seller_name');
-    const savedCustomer = db.customers.find(customer => String(customer.name).trim().toLowerCase() === sellerName.trim().toLowerCase());
-    const customerStatus = !sellerName ? 'Leave blank for a walk-in seller.' : savedCustomer ? `Using saved customer: ${savedCustomer.name}` : `No exact match — “${sellerName}” will be saved as a new customer.`;
-    const metal = buyingDraftValue('b_metal', 'Gold') || 'Gold';
+    const selectedCustomer = val('b_customer');
+    const metal = val('b_metal') || 'Gold';
     const karats = distinctKarats(metal);
-    const requestedKarat = buyingDraftValue('b_karat');
-    const customPurityValue = buyingDraftValue('b_custom_purity');
-    const customSelected = requestedKarat === '__custom__';
-    const karatSelection = customSelected ? '__custom__' : (karats.includes(requestedKarat) ? requestedKarat : karats[0]) || '';
-    const karat = customSelected ? customPurityGradeKey(customPurityValue) : karatSelection;
+    const requestedKarat = val('b_karat');
+    const karat = (karats.includes(requestedKarat) ? requestedKarat : karats[0]) || '';
     const rateObj = karat ? activeRate(metal, karat) : null;
-    const grossValue = buyingDraftValue('b_gross'), deductionValue = buyingDraftValue('b_ded');
-    const gross = parseFloat(grossValue) || 0, ded = parseFloat(deductionValue) || 0;
+    const gross = parseFloat(val('b_gross')) || 0, ded = parseFloat(val('b_ded')) || 0;
     const net = Math.max(roundWeight(gross - ded), 0);
-    const systemRate = rateObj ? roundPeso(rateObj.rate) : 0;
-    const enteredRate = buyingDraftValue('b_rate');
-    const parsedRate = Number(enteredRate);
-    const savedRateOverride = buyingDraftForm.b_rate_overridden === 'true';
-    const rate = savedRateOverride && enteredRate !== '' && Number.isFinite(parsedRate) ? roundPeso(parsedRate) : systemRate;
-    const rateOverridden = Boolean(rateObj && savedRateOverride && rate !== systemRate);
-    const suggested = roundPeso(net * rate);
+    const rate = rateObj ? rateObj.rate : 0;
+    const suggested = roundMoney(net * rate);
     return `
-  <div id="buying_cashflow_card">${cashflowCardMarkup()}</div>
   <section class="block buying-workflow">
-    <div class="buying-step" id="buying_customer_step">
+    <div class="buying-step">
       <div class="step-number">1</div>
       <div class="step-content">
-        <h2>Customer Information</h2>
-        <p>Start typing a name. Matching saved customers will appear automatically.</p>
+        <h2>Who is selling?</h2>
+        <p>Select a saved customer or add a new name.</p>
         <div class="form-grid buying-customer-grid">
-          <div class="field customer-combobox"><label for="b_seller_name">Customer name <span class="hint">(optional)</span></label><input id="b_seller_name" value="${esc(sellerName)}" placeholder="Type a customer name" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="b_customer_suggestions" aria-expanded="false" oninput="updateBuyingCustomerSuggestions(this.value);scheduleBuyingDraftSave()" onfocus="updateBuyingCustomerSuggestions(this.value)" onblur="closeBuyingCustomerSuggestionsSoon()"><div id="b_customer_suggestions" class="customer-suggestions is-hidden" role="listbox"></div><span id="b_customer_match_status" class="customer-match-status ${savedCustomer ? 'is-existing' : sellerName ? 'is-new' : ''}">${esc(customerStatus)}</span></div>
-          <div class="field"><label>Purchase date</label><input id="b_date" type="date" value="${esc(buyingDraftValue('b_date', todayStr()) || todayStr())}" onchange="scheduleBuyingDraftSave()"></div>
-          <div class="field"><label>Payment method</label><select id="b_pay" onchange="scheduleBuyingDraftSave()">${['Cash', 'Bank transfer', 'GCash'].map(method => `<option ${buyingDraftValue('b_pay', 'Cash') === method ? 'selected' : ''}>${method}</option>`).join('')}</select></div>
+          <div class="field"><label>Customer</label>
+            <select id="b_customer" onchange="toggleNewCustomerField()">
+              <option value="">Select customer</option>
+              ${db.customers.map(c => `<option value="${c.id}" ${selectedCustomer === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+              <option value="__new__" ${selectedCustomer === '__new__' ? 'selected' : ''}>+ New customer</option>
+            </select>
+          </div>
+          <div class="field ${selectedCustomer === '__new__' ? '' : 'is-hidden'}" id="b_new_customer_field"><label>New customer name</label><input id="b_newcust" placeholder="Full name"></div>
+          <div class="field"><label>Date</label><input id="b_date" type="date" value="${val('b_date') || todayStr()}"></div>
+          <div class="field"><label>Payment</label><select id="b_pay"><option>Cash</option><option>Bank transfer</option><option>GCash</option></select></div>
         </div>
       </div>
     </div>
 
-    <div class="buying-step buying-item-step">
+    <div class="buying-step">
       <div class="step-number">2</div>
       <div class="step-content">
         <h2>Add an item</h2>
         <p>Choose the grade and enter its weight. The amount calculates automatically.</p>
         <div class="form-grid buying-item-grid">
       <div class="field"><label>Metal</label>
-        <select id="b_metal" onchange="updateBuyingGrades();scheduleBuyingDraftSave()">
+        <select id="b_metal" onchange="updateBuyingGrades()">
           <option value="Gold" ${metal === 'Gold' ? 'selected' : ''}>Gold</option>
           <option value="Silver" ${metal === 'Silver' ? 'selected' : ''}>Silver</option>
           <option value="Platinum" ${metal === 'Platinum' ? 'selected' : ''}>Platinum</option>
         </select>
       </div>
       <div class="field"><label>Item type</label>
-        <select id="b_itemtype" onchange="scheduleBuyingDraftSave()">${['Scrap', 'Jewelry'].map(type => `<option ${buyingDraftValue('b_itemtype', 'Scrap') === type ? 'selected' : ''}>${type}</option>`).join('')}</select>
+        <select id="b_itemtype"><option>Scrap</option><option>Jewelry</option></select>
       </div>
       <div class="field"><label>Karat / purity</label>
-        <select id="b_karat" onchange="handleBuyingGradeChange();scheduleBuyingDraftSave()">
-          ${karats.length ? karats.map(k => `<option value="${k}" ${k === karatSelection ? 'selected' : ''}>${esc(gradeLabel(metal, k))}</option>`).join('') : `<option value="">No rate set</option>`}
-          <option value="__custom__" ${customSelected ? 'selected' : ''}>Custom purity (%)</option>
+        <select id="b_karat" onchange="recalcBuying()">
+          ${karats.length ? karats.map(k => `<option value="${k}" ${k === karat ? 'selected' : ''}>${esc(gradeLabel(metal, k))}</option>`).join('') : `<option value="">No rate set</option>`}
         </select>
-        <div id="b_custom_purity_field" class="custom-purity-field ${customSelected ? '' : 'is-hidden'}">
-          <label for="b_custom_purity">Custom ${esc(metal)} purity (%)</label>
-          <div class="custom-purity-input"><input id="b_custom_purity" type="number" min="0.01" max="100" step="0.01" value="${esc(customPurityValue)}" placeholder="Example: 89" oninput="resetBuyingRate();scheduleBuyingDraftSave()"><span>%</span></div>
-          <span class="hint">Example: 89% uses 0.89 × today's ${esc(metal)} base rate.</span>
-        </div>
         ${!karats.length ? `<span class="hint">Add a buying rate for ${metal} first.</span>` : ''}
       </div>
-      <div class="field"><label>Gross weight (g)</label><input id="b_gross" type="number" min="0" step="0.01" value="${esc(grossValue)}" oninput="recalcBuying();scheduleBuyingDraftSave()"></div>
-      <div class="field"><label>Deductions (g)</label><input id="b_ded" type="number" min="0" step="0.01" value="${esc(deductionValue)}" oninput="recalcBuying();scheduleBuyingDraftSave()"></div>
+      <div class="field"><label>Gross weight (g)</label><input id="b_gross" type="number" min="0" step="0.01" value="${val('b_gross')}" oninput="recalcBuying()"></div>
+      <div class="field"><label>Deductions (g)</label><input id="b_ded" type="number" min="0" step="0.01" value="${val('b_ded')}" oninput="recalcBuying()"></div>
         </div>
 
         <div class="payout-calculator">
           <div><span>Net weight</span><strong id="b_net_display">${fmtWeight(net)}</strong></div>
-          <div class="buying-rate ${rateOverridden ? 'is-overridden' : ''}" id="b_rate_panel"><label id="b_rate_label" for="b_rate">Buying rate (Daily Rate Setup)</label><div><span>₱</span><input id="b_rate" type="number" min="1" step="1" value="${rateObj ? rate : ''}" placeholder="0" oninput="markBuyingRateOverride();recalcBuying();scheduleBuyingDraftSave()"><span>/g</span></div><button type="button" id="b_rate_reset" class="rate-reset ${rateOverridden ? '' : 'is-hidden'}" onclick="resetBuyingRate();scheduleBuyingDraftSave()">Use daily rate</button></div>
+          <div><span id="b_rate_label">Buying rate (${Number(db.pricing.auto.payoutPct)}%)</span><strong id="b_rate_display">${rateObj ? fmtMoney(rate) + '/g' : 'No active rate'}</strong></div>
           <div class="suggested"><span>Calculated amount</span><strong id="b_suggested_display">${fmtMoney(suggested)}</strong></div>
-          <div class="final-payout"><label for="b_payout">Final payout</label><div><span>₱</span><input id="b_payout" type="number" min="0" step="1" value="${esc(buyingDraftValue('b_payout'))}" placeholder="${suggested}" oninput="scheduleBuyingDraftSave()"></div></div>
+          <div class="final-payout"><label for="b_payout">Final payout</label><div><span>₱</span><input id="b_payout" type="number" min="0" step="0.01" placeholder="${suggested.toFixed(2)}" oninput="togglePayoutOverride()"></div></div>
         </div>
+        <div class="field override-reason is-hidden" id="b_override_field"><label>Why is the final payout different?</label><input id="b_override" placeholder="Enter a short reason"></div>
 
         <details class="buying-more">
           <summary>More details <span>optional</span></summary>
           <div class="form-grid buying-more-grid">
-            <div class="field"><label>Staff member</label><input id="b_staff" value="${esc(buyingDraftValue('b_staff'))}" placeholder="Name" oninput="scheduleBuyingDraftSave()"></div>
-            <div class="field"><label>Initial status</label><select id="b_status" onchange="scheduleBuyingDraftSave()">${['Available', 'For Refining', 'On Hold'].map(status => `<option ${buyingDraftValue('b_status', 'Available') === status ? 'selected' : ''}>${status}</option>`).join('')}</select></div>
-            <div class="field"><label>Remarks</label><textarea id="b_remarks" placeholder="Optional notes" oninput="scheduleBuyingDraftSave()">${esc(buyingDraftValue('b_remarks'))}</textarea></div>
+            <div class="field"><label>Staff member</label><input id="b_staff" placeholder="Name"></div>
+            <div class="field"><label>Initial status</label><select id="b_status"><option>For Selling</option><option>For Refining</option><option>On Hold</option></select></div>
+            <div class="field"><label>Storage location / tray</label><input id="b_location" placeholder="e.g. Vault A · Tray 2"></div>
+            <div class="field"><label>Remarks</label><textarea id="b_remarks" placeholder="Optional notes"></textarea></div>
           </div>
         </details>
 
@@ -2379,98 +988,62 @@ function renderBuying() {
         </div>
       </div>
     </div>
-
   </section>
 
   <section class="block" id="purchase_batch_panel">${renderPurchaseBatchPanelMarkup()}</section>
 
+  <section class="block recent-purchases">
+    <h2 class="block-title">Recent purchases</h2>
+    ${tableOrEmpty(db.stock.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10), s => `<tr><td data-label="Date">${fmtDate(s.date)}</td><td data-label="Customer">${esc(s.customerName)}</td><td data-label="Metal / karat"><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)}</td>
+      <td data-label="Type">${esc(s.itemType)}</td><td data-label="Net weight" class="num">${fmtWeight(s.netWeight)}</td><td data-label="Payout" class="num">${fmtMoney(s.payout)}</td><td data-label="Staff">${esc(s.staff || '—')}</td><td data-label="Status">${statusPill(s.status)}</td><td data-label="Actions"><div class="form-actions"><button class="btn secondary small" onclick="openPurchaseReceipt('${s.batchId || s.id}')">Receipt</button>${adminEditButton('Inventory', s.id)}</div></td></tr>`, ['Date', 'Customer', 'Metal / karat', 'Type', 'Net weight', 'Payout', 'Staff', 'Status', 'Actions'], 'No purchases recorded yet.')}
+  </section>
   `;
 }
-function matchingBuyingCustomers(query) {
-    const normalized = String(query || '').trim().toLowerCase();
-    if (!normalized)
-        return [];
-    return db.customers.filter(customer => String(customer.name || '').toLowerCase().includes(normalized)).sort((a, b) => String(a.name).localeCompare(String(b.name))).slice(0, 6);
-}
-function updateBuyingCustomerSuggestions(value) {
-    const query = String(value || '').trim(), matches = matchingBuyingCustomers(query), suggestions = document.getElementById('b_customer_suggestions'), input = document.getElementById('b_seller_name'), status = document.getElementById('b_customer_match_status');
-    const exact = db.customers.find(customer => String(customer.name).trim().toLowerCase() === query.toLowerCase());
-    if (status) {
-        status.textContent = !query ? 'Leave blank for a walk-in seller.' : exact ? `Using saved customer: ${exact.name}` : `No exact match — “${query}” will be saved as a new customer.`;
-        status.className = `customer-match-status ${exact ? 'is-existing' : query ? 'is-new' : ''}`;
-    }
-    if (!suggestions || !input)
-        return;
-    suggestions.innerHTML = query && matches.length ? matches.map(customer => `<button type="button" role="option" onclick="selectBuyingCustomer('${esc(customer.id)}')"><strong>${esc(customer.name)}</strong><span>Saved customer</span></button>`).join('') : query ? '<div class="customer-no-match">No saved customer matches. Continue typing to create a new customer.</div>' : '';
-    const visible = Boolean(query);
-    suggestions.classList.toggle('is-hidden', !visible);
-    input.setAttribute('aria-expanded', String(visible));
-}
-function selectBuyingCustomer(customerId) {
-    const customer = db.customers.find(item => item.id === customerId), input = document.getElementById('b_seller_name');
-    if (!customer || !input)
-        return;
-    input.value = customer.name;
-    updateBuyingCustomerSuggestions(customer.name);
-    closeBuyingCustomerSuggestions();
-    scheduleBuyingDraftSave();
-}
-function closeBuyingCustomerSuggestions() {
-    document.getElementById('b_customer_suggestions')?.classList.add('is-hidden');
-    document.getElementById('b_seller_name')?.setAttribute('aria-expanded', 'false');
-}
-function closeBuyingCustomerSuggestionsSoon() { setTimeout(closeBuyingCustomerSuggestions, 160); }
 function updateBuyingGrades() {
     const metal = val('b_metal'), select = document.getElementById('b_karat'), grades = distinctKarats(metal);
-    select.innerHTML = grades.map(k => `<option value="${k}">${esc(gradeLabel(metal, k))}</option>`).join('') + '<option value="__custom__">Custom purity (%)</option>';
-    document.getElementById('b_custom_purity_field')?.classList.add('is-hidden');
-    resetBuyingRate();
-}
-function handleBuyingGradeChange() {
-    const custom = val('b_karat') === '__custom__';
-    document.getElementById('b_custom_purity_field')?.classList.toggle('is-hidden', !custom);
-    resetBuyingRate();
-    if (custom)
-        document.getElementById('b_custom_purity')?.focus();
-}
-function selectedBuyingGrade() {
-    if (val('b_karat') === '__custom__')
-        return customPurityGradeKey(val('b_custom_purity'));
-    return val('b_karat');
-}
-function markBuyingRateOverride() { buyingDraftForm.b_rate_overridden = 'true'; }
-function resetBuyingRate() {
-    const metal = val('b_metal'), karat = selectedBuyingGrade(), active = karat ? activeRate(metal, karat) : null, input = document.getElementById('b_rate');
-    if (input)
-        input.value = active ? String(roundPeso(active.rate)) : '';
-    buyingDraftForm.b_rate_overridden = 'false';
+    select.innerHTML = grades.map(k => `<option value="${k}">${esc(gradeLabel(metal, k))}</option>`).join('');
     recalcBuying();
 }
+function toggleNewCustomerField() {
+    const field = document.getElementById('b_new_customer_field'), input = document.getElementById('b_newcust');
+    const isNew = val('b_customer') === '__new__';
+    field?.classList.toggle('is-hidden', !isNew);
+    if (isNew)
+        input?.focus();
+    else if (input)
+        input.value = '';
+}
 function recalcBuying() {
-    const metal = val('b_metal'), karat = selectedBuyingGrade(), gross = parseFloat(val('b_gross')) || 0, ded = parseFloat(val('b_ded')) || 0;
-    const net = Math.max(roundWeight(gross - ded), 0), rateObj = karat ? activeRate(metal, karat) : null, systemRate = rateObj ? roundPeso(rateObj.rate) : 0;
-    const rateInput = document.getElementById('b_rate'), enteredRate = Number(rateInput?.value), rate = rateInput?.value !== '' && Number.isFinite(enteredRate) ? roundPeso(enteredRate) : 0;
-    const rateOverridden = Boolean(rateObj && Number.isFinite(rate) && rate !== systemRate);
-    buyingDraftForm.b_rate_overridden = rateOverridden ? 'true' : 'false';
-    const netEl = document.getElementById('b_net_display'), rateLabel = document.getElementById('b_rate_label'), ratePanel = document.getElementById('b_rate_panel'), rateReset = document.getElementById('b_rate_reset'), suggestedEl = document.getElementById('b_suggested_display'), payoutEl = document.getElementById('b_payout');
+    const metal = val('b_metal'), karat = val('b_karat'), gross = parseFloat(val('b_gross')) || 0, ded = parseFloat(val('b_ded')) || 0;
+    const net = Math.max(roundWeight(gross - ded), 0), rateObj = karat ? activeRate(metal, karat) : null, rate = rateObj ? rateObj.rate : 0;
+    const netEl = document.getElementById('b_net_display'), rateEl = document.getElementById('b_rate_display'), rateLabel = document.getElementById('b_rate_label'), suggestedEl = document.getElementById('b_suggested_display'), payoutEl = document.getElementById('b_payout');
     if (netEl)
         netEl.textContent = fmtWeight(net);
+    if (rateEl)
+        rateEl.textContent = rateObj ? fmtMoney(rate) + '/g' : 'No active rate';
     if (rateLabel)
-        rateLabel.textContent = rateOverridden ? 'Buying rate (overridden)' : karat && customPurityFromKey(karat) !== null ? `Buying rate (${gradeLabel(metal, karat)} × ${metal} base)` : 'Buying rate (Daily Rate Setup)';
-    ratePanel?.classList.toggle('is-overridden', rateOverridden);
-    rateReset?.classList.toggle('is-hidden', !rateOverridden);
-    const suggested = roundPeso(net * rate);
+        rateLabel.textContent = `Buying rate (${Number(db.pricing.auto.payoutPct)}%)`;
+    const suggested = roundMoney(net * rate);
     if (suggestedEl)
         suggestedEl.textContent = fmtMoney(suggested);
     if (payoutEl)
-        payoutEl.placeholder = String(suggested);
+        payoutEl.placeholder = suggested.toFixed(2);
+    togglePayoutOverride();
+}
+function togglePayoutOverride() {
+    const payout = val('b_payout'), field = document.getElementById('b_override_field');
+    if (!field)
+        return;
+    if (!payout) {
+        field.classList.add('is-hidden');
+        return;
+    }
+    const metal = val('b_metal'), karat = val('b_karat'), gross = parseFloat(val('b_gross')) || 0, ded = parseFloat(val('b_ded')) || 0;
+    const active = karat ? activeRate(metal, karat) : null, suggested = roundMoney(Math.max(roundWeight(gross - ded), 0) * (active ? active.rate : 0));
+    field.classList.toggle('is-hidden', Math.abs(parseFloat(payout) - suggested) < 0.005);
 }
 function purchaseItemFromForm() {
-    const metal = val('b_metal'), karat = selectedBuyingGrade();
-    if (val('b_karat') === '__custom__' && !karat) {
-        toast(`Enter a custom ${metal} purity between 0.01% and 100%`);
-        return null;
-    }
+    const metal = val('b_metal'), karat = val('b_karat');
     if (!karat) {
         toast('Add a buying rate for this metal first');
         return null;
@@ -2482,52 +1055,36 @@ function purchaseItemFromForm() {
         return null;
     }
     const rateObj = activeRate(metal, karat);
-    const systemRate = rateObj ? roundPeso(rateObj.rate) : 0;
-    const rate = roundPeso(Number(val('b_rate')));
-    if (!Number.isFinite(rate) || rate <= 0) {
-        toast('Enter a valid buying rate');
-        return null;
-    }
-    const rateOverridden = Boolean(rateObj && rate !== systemRate);
-    const suggested = roundPeso(net * rate);
+    const rate = rateObj ? rateObj.rate : 0;
+    const suggested = roundMoney(net * rate);
     const payoutInput = val('b_payout');
-    const payout = payoutInput ? roundPeso(parseFloat(payoutInput)) : suggested;
-    const payoutOverridden = payout !== suggested;
+    const payout = payoutInput ? roundMoney(parseFloat(payoutInput)) : suggested;
+    const overrideReason = (payout !== suggested) ? val('b_override').trim() : '';
     if (!Number.isFinite(payout) || payout < 0) {
         toast('Enter a valid final payout');
         return null;
     }
+    if (payout !== suggested && !overrideReason) {
+        toast('Enter an override reason — payout differs from suggested');
+        return null;
+    }
     return { id: uid('line'), metal, itemType: val('b_itemtype'), karat, grossWeight: gross, deductions: ded,
-        netWeight: net, currentWeight: net, rate, systemRate, rateOverridden, payoutOverridden, suggestedAmount: suggested, payout, overrideReason: '' };
+        netWeight: net, currentWeight: net, rate, suggestedAmount: suggested, payout, overrideReason };
 }
-async function addPurchaseItem() {
+function addPurchaseItem() {
     const item = purchaseItemFromForm();
     if (!item)
         return;
-    captureBuyingDraftForm();
     purchaseBatch.push(item);
-    ['b_gross', 'b_ded', 'b_payout'].forEach(id => { const e = document.getElementById(id); if (e)
+    ['b_gross', 'b_ded', 'b_payout', 'b_override'].forEach(id => { const e = document.getElementById(id); if (e)
         e.value = ''; });
-    buyingDraftForm.b_gross = '';
-    buyingDraftForm.b_ded = '';
-    buyingDraftForm.b_payout = '';
-    resetBuyingRate();
+    recalcBuying();
     renderPurchaseBatchPanel();
-    await saveBuyingDraft();
-    toast(`${item.metal} ${gradeLabel(item.metal, item.karat)} added to current payout`);
+    toast(`${gradeLabel(item.metal, item.karat)} added to payout`);
 }
-function continueAddingPurchaseItems() {
-    document.querySelector('.buying-item-step')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    setTimeout(() => document.getElementById('b_gross')?.focus(), 250);
-}
-async function requestPurchaseItemRemoval(id) {
-    const item = purchaseBatch.find(line => line.id === id);
-    if (!item)
-        return;
-    purchaseBatch = purchaseBatch.filter(line => line.id !== id);
+function removePurchaseItem(id) {
+    purchaseBatch = purchaseBatch.filter(item => item.id !== id);
     renderPurchaseBatchPanel();
-    await saveBuyingDraft();
-    toast(`${item.metal} ${gradeLabel(item.metal, item.karat)} removed from the current payout`);
 }
 function renderPurchaseBatchPanel() {
     const panel = document.getElementById('purchase_batch_panel');
@@ -2537,26 +1094,23 @@ function renderPurchaseBatchPanel() {
 function renderPurchaseBatchPanelMarkup() {
     const total = roundMoney(purchaseBatch.reduce((sum, item) => sum + Number(item.payout), 0));
     if (!purchaseBatch.length)
-        return `<h2 class="block-title">Current payout</h2><div class="empty-note">Add the first item above. Every added item will remain visible here.</div>`;
-    return `<section class="current-payout-card"><div class="current-payout-compact"><div><span>Current payout · ${purchaseBatch.length} item${purchaseBatch.length === 1 ? '' : 's'}</span><strong>${fmtMoney(total)}</strong></div></div>
-    <div class="purchase-batch-list"><h3>Items in this payout</h3><div class="table-wrap"><table class="purchase-batch-table"><thead><tr><th>Item</th><th>Metal / grade</th><th class="num-col">Net weight</th><th class="num-col">Rate</th><th class="num-col">Payout</th><th></th></tr></thead><tbody>
-    ${purchaseBatch.map((item, index) => `<tr><td>${index + 1}</td><td><span class="metal-tag ${item.metal.toLowerCase()}">${item.metal}</span> ${esc(gradeLabel(item.metal, item.karat))} · ${esc(item.itemType)}</td><td class="num">${fmtWeight(item.netWeight)}</td><td class="num">${fmtMoney(item.rate)}/g${item.rateOverridden ? '<br><span class="override-note">Overridden</span>' : ''}</td><td class="num">${fmtMoney(item.payout)}</td><td><button class="btn secondary small" onclick="requestPurchaseItemRemoval('${item.id}')">Remove</button></td></tr>`).join('')}
-    </tbody></table></div></div>
-    <div class="form-actions purchase-batch-actions"><button class="btn secondary" onclick="continueAddingPurchaseItems()">Add another item</button><button class="btn" onclick="openPurchaseSummary()">Proceed to payout</button></div></section>`;
+        return `<h2 class="block-title">Current payout</h2><div class="empty-note">Add the customer's gold or other metal items above. The combined total will appear here.</div>`;
+    return `<div class="batch-head"><div><h2 class="block-title">Current payout · ${purchaseBatch.length} item${purchaseBatch.length === 1 ? '' : 's'}</h2><div class="batch-total">${fmtMoney(total)}</div></div><button class="btn" onclick="openPurchaseSummary()">Review total</button></div>
+    <div class="table-wrap"><table class="purchase-batch-table"><thead><tr><th>Item</th><th>Metal / grade</th><th class="num-col">Net weight</th><th class="num-col">Rate</th><th class="num-col">Payout</th><th></th></tr></thead><tbody>
+    ${purchaseBatch.map((item, index) => `<tr><td>${index + 1}</td><td><span class="metal-tag ${item.metal.toLowerCase()}">${item.metal}</span> ${esc(gradeLabel(item.metal, item.karat))} · ${esc(item.itemType)}</td><td class="num">${fmtWeight(item.netWeight)}</td><td class="num">${fmtMoney(item.rate)}/g</td><td class="num">${fmtMoney(item.payout)}</td><td><button class="btn secondary small" onclick="removePurchaseItem('${item.id}')">Remove</button></td></tr>`).join('')}
+    </tbody></table></div>`;
 }
 function purchaseCustomer() {
-    const name = val('b_seller_name').trim();
-    if (!name)
-        return { id: '', name: '', isNew: false };
-    const existing = db.customers.find(customer => customer.name.trim().toLowerCase() === name.toLowerCase());
-    if (existing)
-        return { id: existing.id, name, isNew: false };
-    return { id: '', name, isNew: true };
-}
-function focusPurchaseSeller() {
-    closePurchaseSummary();
-    document.getElementById('buying_customer_step')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setTimeout(() => document.getElementById('b_seller_name')?.focus(), 250);
+    const newName = val('b_newcust').trim(), customerId = val('b_customer');
+    if (newName)
+        return { id: '', name: newName, isNew: true };
+    if (customerId) {
+        const customer = db.customers.find(c => c.id === customerId);
+        if (customer)
+            return { id: customer.id, name: customer.name, isNew: false };
+    }
+    toast('Select or enter a customer');
+    return null;
 }
 function openPurchaseSummary() {
     if (!purchaseBatch.length) {
@@ -2564,6 +1118,8 @@ function openPurchaseSummary() {
         return;
     }
     const customer = purchaseCustomer();
+    if (!customer)
+        return;
     closePurchaseSummary();
     const total = roundMoney(purchaseBatch.reduce((sum, item) => sum + Number(item.payout), 0));
     const totalWeight = purchaseBatch.reduce((sum, item) => sum + Number(item.netWeight), 0);
@@ -2571,10 +1127,10 @@ function openPurchaseSummary() {
     modal.id = 'purchase_summary_modal';
     modal.className = 'modal-backdrop';
     modal.innerHTML = `<div class="summary-modal" role="dialog" aria-modal="true" aria-labelledby="purchase_summary_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">Combined payout</div><h2 id="purchase_summary_title">${customer.name ? esc(customer.name) : 'Walk-in seller'}</h2></div><button class="modal-close" onclick="closePurchaseSummary()" aria-label="Close">×</button></div>
+    <div class="summary-modal-head"><div><div class="eyebrow">Combined customer payout</div><h2 id="purchase_summary_title">${esc(customer.name)}</h2></div><button class="modal-close" onclick="closePurchaseSummary()" aria-label="Close">×</button></div>
     <div class="summary-lines">${purchaseBatch.map((item, index) => `<div class="summary-line"><div><strong>${index + 1}. ${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))}</strong><span>${esc(item.itemType)} · ${fmtWeight(item.netWeight)} × ${fmtMoney(item.rate)}/g</span></div><strong>${fmtMoney(item.payout)}</strong></div>`).join('')}</div>
     <div class="summary-grand"><div><span>${purchaseBatch.length} item${purchaseBatch.length === 1 ? '' : 's'} · ${fmtWeight(totalWeight)}</span><strong>Grand total</strong></div><div>${fmtMoney(total)}</div></div>
-    <div class="summary-meta">Seller: ${customer.name ? esc(customer.name) : '<strong>Not provided</strong>'} · ${fmtDate(val('b_date') || todayStr())} · ${esc(val('b_pay'))}${val('b_staff').trim() ? ` · Staff: ${esc(val('b_staff').trim())}` : ''}</div>
+    <div class="summary-meta">${fmtDate(val('b_date') || todayStr())} · ${esc(val('b_pay'))}${val('b_staff').trim() ? ` · Staff: ${esc(val('b_staff').trim())}` : ''}</div>
     <div class="form-actions"><button class="btn secondary" onclick="closePurchaseSummary()">Back to items</button><button class="btn secondary" onclick="commitPurchaseBatch(false)">Record only</button><button class="btn" onclick="commitPurchaseBatch(true)">Confirm &amp; view receipt</button></div>
   </div>`;
     modal.addEventListener('click', event => { if (event.target === modal)
@@ -2585,71 +1141,38 @@ function closePurchaseSummary() { document.getElementById('purchase_summary_moda
 async function commitPurchaseBatch(printAfter = false) {
     if (!purchaseBatch.length)
         return;
-    captureBuyingDraftForm();
     const customer = purchaseCustomer();
-    const previousCustomerCount = db.customers.length, previousStockCount = db.stock.length;
-    let customerId = customer.id, newCustomer = null;
+    if (!customer)
+        return;
+    let customerId = customer.id;
     if (customer.isNew) {
         customerId = uid('cust');
-        newCustomer = { id: customerId, name: customer.name, contact: '', notes: '' };
-        db.customers.push(newCustomer);
+        db.customers.push({ id: customerId, name: customer.name, contact: '', notes: '' });
     }
     const batchId = uid('buy');
-    const shared = { date: val('b_date') || todayStr(), recordedAt: new Date().toISOString(), customerId, customerName: customer.name, paymentMethod: val('b_pay'), staff: val('b_staff').trim(),
-        status: val('b_status'), remarks: val('b_remarks').trim(), batchId };
-    const newItems = purchaseBatch.map(item => ({ ...item, ...shared, id: uid('stk'), cost: item.payout }));
-    db.stock.push(...newItems);
+    const shared = { date: val('b_date') || todayStr(), customerId, customerName: customer.name, paymentMethod: val('b_pay'), staff: val('b_staff').trim(),
+        status: val('b_status'), location: val('b_location').trim(), remarks: val('b_remarks').trim(), batchId };
+    purchaseBatch.forEach(item => db.stock.push({ ...item, ...shared, id: uid('stk'), cost: item.payout }));
     const count = purchaseBatch.length, total = roundMoney(purchaseBatch.reduce((sum, item) => sum + Number(item.payout), 0));
-    const saved = await savePurchaseRecords(newCustomer, newItems);
-    if (!saved) {
-        db.customers.splice(previousCustomerCount);
-        db.stock.splice(previousStockCount);
-        toast('The purchase was not recorded. Your payout draft is still saved.');
-        return;
-    }
     purchaseBatch = [];
     closePurchaseSummary();
-    await clearBuyingDraft();
+    await saveDB();
     render();
-    await syncCashflow();
     if (printAfter)
         openPurchaseReceipt(batchId);
     toast(`${count} items recorded · ${fmtMoney(total)}`);
 }
-async function savePurchaseRecords(customer, items) {
-    if (!(location.protocol === 'http:' || location.protocol === 'https:'))
-        return saveDB();
-    try {
-        const response = await fetch('/api/purchases', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customer, items }) });
-        if (response.status === 401) {
-            showLogin();
-            throw new Error('Session expired');
-        }
-        const result = await response.json().catch(() => null);
-        if (!response.ok)
-            throw new Error(result?.error || `Database server returned HTTP ${response.status}`);
-        if (Number.isInteger(result?.revision))
-            db._revision = result.revision;
-        return true;
-    }
-    catch (error) {
-        console.error('Purchase save failed', error);
-        toast(error instanceof Error ? error.message : 'Could not record the purchase');
-        return false;
-    }
+function receiptNumber(value) {
+    return Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-function receiptWeightNumber(value) { return Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 2 }); }
-function receiptMoneyNumber(value) { return Math.round(Number(value) || 0).toLocaleString('en-PH', { maximumFractionDigits: 0 }); }
 function purchaseReceiptMarkup(items) {
     const first = items[0], total = roundMoney(items.reduce((sum, item) => sum + Number(item.payout), 0));
-    const transactionNumber = first.batchId || first.id;
-    const itemLines = items.map(item => `<tr class="receipt-item"><td class="receipt-description">${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))} · ${esc(item.itemType)}<small class="receipt-item-rate">Rate: PHP ${receiptMoneyNumber(item.rate)}/g</small></td><td class="receipt-qty">1</td><td class="receipt-weight">${receiptWeightNumber(item.netWeight)}g</td><td class="receipt-amount">${receiptMoneyNumber(item.payout)}</td></tr>`).join('');
-    return `<header class="receipt-header"><div class="receipt-shop">ZP GOLD &amp; SILVER</div><div class="receipt-address">Barcelona St, Zone II<br>Zamboanga City</div></header><div class="receipt-rule"></div>
-    <div class="receipt-meta"><span>Date:</span><strong>${esc(fmtDate(first.date))}</strong><span>Customer:</span><strong>${esc(first.customerName || 'Walk-in')}</strong><span>Transaction No.:</span><strong>${esc(transactionNumber)}</strong>${first.staff ? `<span>Staff:</span><strong>${esc(first.staff)}</strong>` : ''}</div><div class="receipt-rule"></div>
-    <table class="receipt-items"><colgroup><col class="receipt-col-description"><col class="receipt-col-qty"><col class="receipt-col-weight"><col class="receipt-col-amount"></colgroup><thead><tr><th>ITEM / DESCRIPTION</th><th>QTY</th><th>WEIGHT</th><th>AMOUNT</th></tr></thead><tbody>${itemLines}</tbody></table>
-    <div class="receipt-rule receipt-rule-strong"></div><div class="receipt-total"><span>TOTAL</span><span>PHP ${receiptMoneyNumber(total)}</span></div><div class="receipt-rule"></div>
-    <div class="receipt-payment"><span>PAID:</span><strong>PHP ${receiptMoneyNumber(total)}</strong><span>CHANGE:</span><strong>PHP 0</strong><span>METHOD:</span><strong>${esc(first.paymentMethod || '—')}</strong></div>
-    <div class="receipt-thanks">Thank you!</div><div class="receipt-quote">“Because gold is honest money it is disliked by dishonest men.”</div>`;
+    const itemLines = items.map(item => `<div class="receipt-item"><div class="receipt-item-name">${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))} · ${esc(item.itemType)}</div><div class="receipt-calc">${receiptNumber(item.netWeight)}g × ${receiptNumber(item.rate)} = ${receiptNumber(item.payout)}</div></div>`).join('');
+    return `<header><div class="receipt-shop">ZP GOLD &amp; SILVER</div><div class="receipt-address">Barcelona St, Zone II<br>Zamboanga City</div></header><div class="receipt-rule"></div>
+    <div class="receipt-meta"><span>Date:</span><strong>${esc(fmtDate(first.date))}</strong><span>Client:</span><strong>${esc(first.customerName || 'Walk-in')}</strong></div><div class="receipt-rule"></div>
+    ${itemLines}<div class="receipt-total"><span>TOTAL</span><span>PHP ${receiptNumber(total)}</span></div><div class="receipt-rule"></div>
+    <div class="receipt-meta"><span>Paid:</span><strong>${esc(first.paymentMethod || '—')}</strong>${first.staff ? `<span>Staff:</span><strong>${esc(first.staff)}</strong>` : ''}</div>
+    <div class="receipt-reference">Ref: ${esc(first.batchId || first.id)}</div><div class="receipt-thanks">Thank you.</div>`;
 }
 function cleanupThermalPrintState() {
     document.body.classList.remove('printing-thermal-receipt');
@@ -2659,10 +1182,6 @@ function closePurchaseReceipt() { cleanupThermalPrintState(); document.getElemen
 function setReceiptPaperSize(value) {
     const receipt = document.getElementById('receipt_preview_paper');
     receipt?.classList.toggle('paper-80', String(value) === '80');
-    try {
-        localStorage.setItem('thermalReceiptPaperWidth', String(value) === '80' ? '80' : '58');
-    }
-    catch { }
 }
 function openPurchaseReceipt(batchId) {
     const items = db.stock.filter(item => (item.batchId || item.id) === batchId);
@@ -2671,64 +1190,18 @@ function openPurchaseReceipt(batchId) {
         return;
     }
     closePurchaseReceipt();
-    let savedPaperWidth = '58';
-    try {
-        savedPaperWidth = localStorage.getItem('thermalReceiptPaperWidth') === '80' ? '80' : '58';
-    }
-    catch { }
     const modal = document.createElement('div');
     modal.id = 'purchase_receipt_modal';
     modal.className = 'modal-backdrop';
     modal.innerHTML = `<div class="receipt-preview-modal" role="dialog" aria-modal="true" aria-labelledby="receipt_preview_title">
     <div class="summary-modal-head"><div><div class="eyebrow">Thermal receipt preview</div><h2 id="receipt_preview_title">Buying receipt</h2></div><button class="modal-close" onclick="closePurchaseReceipt()" aria-label="Close">×</button></div>
-    <div class="receipt-preview-stage"><div class="thermal-receipt ${savedPaperWidth === '80' ? 'paper-80' : ''}" id="receipt_preview_paper">${purchaseReceiptMarkup(items)}</div></div>
-    <div class="receipt-preview-controls"><div class="field"><label for="receipt_paper_size">Thermal paper width</label><select id="receipt_paper_size" onchange="setReceiptPaperSize(this.value)"><option value="58" ${savedPaperWidth === '58' ? 'selected' : ''}>58 mm (VOZY P50)</option><option value="80" ${savedPaperWidth === '80' ? 'selected' : ''}>80 mm</option></select></div>
+    <div class="receipt-preview-stage"><div class="thermal-receipt" id="receipt_preview_paper">${purchaseReceiptMarkup(items)}</div></div>
+    <div class="receipt-preview-controls"><div class="field"><label for="receipt_paper_size">Thermal paper width</label><select id="receipt_paper_size" onchange="setReceiptPaperSize(this.value)"><option value="58">58 mm</option><option value="80">80 mm</option></select></div>
     <div class="form-actions"><button class="btn secondary" onclick="closePurchaseReceipt()">Close</button><button class="btn" onclick="printPurchaseReceipt('${batchId}')">Print receipt</button></div></div>
   </div>`;
     modal.addEventListener('click', event => { if (event.target === modal)
         closePurchaseReceipt(); });
     document.body.appendChild(modal);
-}
-function measureThermalReceiptHeight(receipt, paperWidth, receiptWidth, paperPadding) {
-    const probe = receipt.cloneNode(true);
-    probe.removeAttribute('id');
-    probe.setAttribute('aria-hidden', 'true');
-    probe.classList.toggle('paper-80', paperWidth === 80);
-    Object.assign(probe.style, { position: 'fixed', left: '-10000px', top: '0', visibility: 'hidden', boxSizing: 'border-box', width: `${receiptWidth}mm`, maxWidth: 'none', height: 'auto', minHeight: '0', margin: '0', padding: `${paperPadding}mm`, boxShadow: 'none', fontFamily: '"Courier New", Courier, monospace', fontSize: '9px', fontWeight: '700', lineHeight: '1.2', transform: 'none', writingMode: 'horizontal-tb' });
-    const table = probe.querySelector('.receipt-items');
-    if (table)
-        table.style.fontSize = paperWidth === 80 ? '9.5px' : '8px';
-    const total = probe.querySelector('.receipt-total');
-    if (total)
-        total.style.fontSize = paperWidth === 80 ? '13px' : '11px';
-    document.body.appendChild(probe);
-    const contentHeight = Math.ceil(probe.getBoundingClientRect().height * 25.4 / 96 + 2);
-    probe.remove();
-    return Math.max(35, contentHeight);
-}
-function thermalReceiptPrintDocument(markup, paperWidth, receiptHeight) {
-    const receiptWidth = paperWidth === 80 ? 72 : 48, paperPadding = paperWidth === 80 ? 2 : 1;
-    return `<!doctype html><html><head><meta charset="UTF-8"><title>ZP Gold &amp; Silver receipt</title><style>
-    @page{size:${paperWidth}mm ${receiptHeight}mm;margin:0}
-    *{box-sizing:border-box}
-    html,body{width:${paperWidth}mm;height:auto;min-height:0;margin:0!important;padding:0!important;background:#fff;color:#000}
-    body{font-family:"Courier New",Courier,monospace;font-size:${paperWidth === 80 ? 10 : 9}px;font-weight:700;line-height:1.18;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-    .thermal-receipt{width:${receiptWidth}mm;height:auto;min-height:0;margin:0!important;padding:${paperPadding}mm!important;background:#fff;color:#000;transform:none!important;rotate:none!important;writing-mode:horizontal-tb!important;direction:ltr!important}
-    .receipt-header,.receipt-meta,.receipt-total,.receipt-payment,.receipt-thanks,.receipt-quote,.receipt-item{break-inside:avoid;page-break-inside:avoid}
-    .receipt-shop{text-align:center;font-size:${paperWidth === 80 ? 16 : 14}px;font-weight:900;letter-spacing:.1px;line-height:1.05}
-    .receipt-address{text-align:center;font-size:${paperWidth === 80 ? 10 : 8}px;line-height:1.15;margin-top:1px}
-    .receipt-rule{border-top:1px dashed #000;margin:3px 0}.receipt-rule-strong{border-top-style:solid}
-    .receipt-meta,.receipt-payment{display:grid;grid-template-columns:max-content minmax(0,1fr);column-gap:4px;row-gap:1px;align-items:start}
-    .receipt-meta span,.receipt-payment span{white-space:nowrap}.receipt-meta strong{min-width:0;overflow-wrap:anywhere}.receipt-payment strong{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
-    .receipt-items{width:100%;border-collapse:collapse;table-layout:fixed;font-size:${paperWidth === 80 ? 9 : 7.5}px;line-height:1.12;font-variant-numeric:tabular-nums}
-    .receipt-col-description{width:34%}.receipt-col-qty{width:8%}.receipt-col-weight{width:24%}.receipt-col-amount{width:34%}
-    .receipt-items th{padding:0 1px 2px;text-align:right;vertical-align:bottom;font-size:${paperWidth === 80 ? 8 : 6.5}px;line-height:1;white-space:normal}.receipt-items th:first-child{text-align:left}
-    .receipt-items td{padding:3px 1px;vertical-align:top;border-bottom:1px dotted #555}.receipt-description{text-align:left;font-weight:900;overflow-wrap:anywhere;word-break:normal}
-    .receipt-item-rate{display:block;margin-top:1px;font-size:${paperWidth === 80 ? 8 : 6.5}px;font-weight:700;line-height:1.05;white-space:nowrap}
-    .receipt-qty,.receipt-weight,.receipt-amount{text-align:right;white-space:nowrap}
-    .receipt-total{display:flex;justify-content:space-between;align-items:baseline;gap:3px;font-size:${paperWidth === 80 ? 13 : 11}px;font-weight:900}.receipt-total span:last-child{margin-left:auto;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
-    .receipt-thanks{text-align:center;font-weight:900;margin-top:5px}.receipt-quote{margin-top:4px;padding-top:3px;border-top:1px dashed #000;text-align:center;font-size:${paperWidth === 80 ? 8 : 7}px;font-style:italic;line-height:1.15}
-  </style></head><body><main class="thermal-receipt">${markup}</main></body></html>`;
 }
 function printPurchaseReceipt(batchId) {
     const items = db.stock.filter(item => (item.batchId || item.id) === batchId);
@@ -2737,1017 +1210,55 @@ function printPurchaseReceipt(batchId) {
         return;
     }
     const paperWidth = Number(val('receipt_paper_size')) === 80 ? 80 : 58;
-    const receiptWidth = paperWidth === 80 ? 72 : 48;
-    const paperPadding = paperWidth === 80 ? 2 : 1;
-    const receipt = document.getElementById('receipt_preview_paper');
-    if (!receipt) {
-        toast('Receipt preview is not available');
-        return;
-    }
-    const receiptHeight = measureThermalReceiptHeight(receipt, paperWidth, receiptWidth, paperPadding);
-    const printWindow = window.open('', 'zpp_thermal_receipt', 'popup,width=480,height=720');
-    if (!printWindow) {
-        toast('Allow the receipt print window, then try again');
-        return;
-    }
-    printWindow.document.open();
-    printWindow.document.write(thermalReceiptPrintDocument(purchaseReceiptMarkup(items), paperWidth, receiptHeight));
-    printWindow.document.close();
-    printWindow.focus();
-    window.setTimeout(() => { printWindow.print(); printWindow.close(); }, 150);
+    document.getElementById('thermal_print_page_style')?.remove();
+    const pageStyle = document.createElement('style');
+    pageStyle.id = 'thermal_print_page_style';
+    pageStyle.textContent = `@page{size:${paperWidth}mm auto;margin:2mm}`;
+    document.head.appendChild(pageStyle);
+    document.body.classList.add('printing-thermal-receipt');
+    window.addEventListener('afterprint', cleanupThermalPrintState, { once: true });
+    window.print();
 }
 /* ============================= INVENTORY ============================= */
 let invFilter = { metal: 'All', karat: 'All', type: 'All', status: 'All' };
-let inventoryBulkStatus = 'Available';
-let inventoryWeekOffset = 0;
-let inventorySelectedDate = 'All';
-let inventorySearch = '';
-const inventoryMoveSelection = new Set();
-let pendingInventoryMove = null;
-let pendingLiquidationBatchSetup = null;
-let combineLiquidationMetal = '';
-const combineLiquidationDates = new Set();
-const POOLED_LIQUIDATION_METALS = ['Gold', 'Silver'];
-const LOW_KARAT_GOLD_KEYS = new Set(['17K', '16K', '14K', '12K', '10K', '9K', '8K', '5K', '73%']);
-function inventoryWeekRange(offset = inventoryWeekOffset) {
-    const today = new Date(todayStr() + 'T00:00:00');
-    const mondayIndex = (today.getDay() + 6) % 7;
-    const start = new Date(today);
-    start.setDate(today.getDate() - mondayIndex + (offset * 7));
-    const end = new Date(start);
-    end.setDate(start.getDate() + 6);
-    const asKey = date => { const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000); return local.toISOString().slice(0, 10); };
-    return { start: asKey(start), end: asKey(end) };
-}
-function clearInventoryLiquidationSelection() { inventoryMoveSelection.clear(); }
-function dateKeyPlusDays(dateKey, days) {
-    const date = new Date(dateKey + 'T00:00:00');
-    date.setDate(date.getDate() + days);
-    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-    return local.toISOString().slice(0, 10);
-}
-function changeInventoryWeek(delta) {
-    inventoryWeekOffset += delta;
-    inventorySelectedDate = inventoryWeekRange().start;
-    render();
-}
-function selectInventoryDate(date) {
-    inventorySelectedDate = date;
-    render();
-    requestAnimationFrame(() => openInventoryFilterModal());
-}
-function selectAllInventoryDates() {
-    inventorySelectedDate = 'All';
-    inventoryMoveSelection.clear();
-    render();
-    requestAnimationFrame(() => document.getElementById('inventory_stock_list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-}
-function inventoryDateScope(item) { return inventorySelectedDate === 'All' || item.date === inventorySelectedDate; }
-function inventoryDateLabel() { return inventorySelectedDate === 'All' ? 'all purchase dates' : fmtDate(inventorySelectedDate); }
-function inventorySearchText(item) {
-    return [item.date, fmtDate(item.date), item.customerName, item.metal, item.karat, gradeLabel(item.metal, item.karat), item.itemType, item.status, item.remarks, item.staff]
-        .filter(Boolean).join(' ').toLowerCase();
-}
-function inventorySearchMatch(item) { const query = inventorySearch.trim().toLowerCase(); return !query || inventorySearchText(item).includes(query); }
-function updateInventorySearch(value) {
-    inventorySearch = String(value || '');
-    render();
-    requestAnimationFrame(() => {
-        const input = document.getElementById('inventory_stock_search');
-        if (input) {
-            input.focus();
-            input.setSelectionRange?.(input.value.length, input.value.length);
-        }
-    });
-}
-function closeInventoryFilterModal() { document.getElementById('inventory_filter_modal')?.remove(); }
-function activeInventoryRecord(item) { return Number(item.currentWeight) > 0 && !['For Liquidation', 'Liquidated', 'Refined', 'Sold'].includes(item.status); }
-function inventoryFilterKaratsForDate(metal) {
-    return Array.from(new Set(db.stock.filter(item => inventoryDateScope(item) && activeInventoryRecord(item) && (metal === 'All' || item.metal === metal)).map(item => item.karat)));
-}
-function updateInventoryFilterModalKarats() {
-    const metal = val('modal_inv_metal'), select = document.getElementById('modal_inv_karat');
-    if (!select)
-        return;
-    const current = select.value || invFilter.karat, karats = inventoryFilterKaratsForDate(metal);
-    select.innerHTML = `<option value="All">All purities</option>${karats.map(karat => `<option value="${esc(karat)}">${esc(karat)}</option>`).join('')}`;
-    select.value = karats.includes(current) ? current : 'All';
-}
-function openInventoryFilterModal() {
-    closeInventoryFilterModal();
-    const dayStock = db.stock.filter(item => inventoryDateScope(item) && activeInventoryRecord(item));
-    const available = dayStock.filter(selectableInventory);
-    const karats = inventoryFilterKaratsForDate(invFilter.metal);
-    const modal = document.createElement('div');
-    modal.id = 'inventory_filter_modal';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="summary-modal inventory-filter-modal" role="dialog" aria-modal="true" aria-labelledby="inventory_filter_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">${inventorySelectedDate === 'All' ? 'Complete current inventory' : `${new Date(inventorySelectedDate + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'long' })} · ${fmtDate(inventorySelectedDate)}`}</div><h2 id="inventory_filter_title">Filter ${inventorySelectedDate === 'All' ? 'all stock' : "this day's stock"}</h2></div><button class="modal-close" onclick="closeInventoryFilterModal()" aria-label="Close">×</button></div>
-    <p class="move-confirmation-intro">This view has <strong>${dayStock.length} stock record${dayStock.length === 1 ? '' : 's'}</strong>, with <strong>${available.length} currently available</strong>. Choose what you want to see.</p>
-    <div class="form-grid inventory-filter-modal-grid">
-      <div class="field"><label for="modal_inv_metal">Metal</label><select id="modal_inv_metal" onchange="updateInventoryFilterModalKarats()">${['All', 'Gold', 'Silver', 'Platinum'].map(metal => `<option value="${metal}" ${invFilter.metal === metal ? 'selected' : ''}>${metal === 'All' ? 'All metals' : metal}</option>`).join('')}</select></div>
-      <div class="field"><label for="modal_inv_karat">Karat / purity</label><select id="modal_inv_karat"><option value="All">All purities</option>${karats.map(karat => `<option value="${esc(karat)}" ${invFilter.karat === karat ? 'selected' : ''}>${esc(karat)}</option>`).join('')}</select></div>
-      <div class="field"><label for="modal_inv_type">Item type</label><select id="modal_inv_type">${['All', 'Jewelry', 'Scrap'].map(type => `<option value="${type}" ${invFilter.type === type ? 'selected' : ''}>${type === 'All' ? 'All item types' : type}</option>`).join('')}</select></div>
-      <div class="field"><label for="modal_inv_status">Status</label><select id="modal_inv_status">${['All', 'Available', 'For Refining', 'On Hold'].map(status => `<option value="${status}" ${invFilter.status === status ? 'selected' : ''}>${status === 'All' ? 'All statuses' : status}</option>`).join('')}</select></div>
-    </div>
-    <div class="inventory-filter-help"><strong>Tip:</strong> Choose “All” to include every current record from ${inventoryDateLabel()}.</div>
-    <div class="form-actions inventory-filter-modal-actions"><button class="btn secondary" onclick="showAllInventoryForSelectedDate()">Show all stock</button><button class="btn" onclick="applyInventoryDateFilters()">Apply filters</button></div>
-  </div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeInventoryFilterModal(); });
-    document.body.appendChild(modal);
-}
-function finishInventoryDateFilter() {
-    closeInventoryFilterModal();
-    render();
-    requestAnimationFrame(() => document.getElementById('inventory_stock_list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-}
-function showAllInventoryForSelectedDate() {
-    invFilter = { metal: 'All', karat: 'All', type: 'All', status: 'All' };
-    finishInventoryDateFilter();
-}
-function applyInventoryDateFilters() {
-    invFilter = { metal: val('modal_inv_metal'), karat: val('modal_inv_karat'), type: val('modal_inv_type'), status: val('modal_inv_status') };
-    finishInventoryDateFilter();
-}
-function selectInventoryMetalCategory(metal) {
-    invFilter.metal = metal;
-    invFilter.karat = 'All';
-    inventoryMoveSelection.clear();
-    render();
-}
-function showTodayInventoryTotals(metal) {
-    inventoryWeekOffset = 0;
-    inventorySelectedDate = todayStr();
-    invFilter = { metal, karat: 'All', type: 'All', status: 'All' };
-    inventorySearch = '';
-    inventoryMoveSelection.clear();
-    render();
-    requestAnimationFrame(() => document.getElementById('inventory_daily_totals')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-}
-function purchaseTotalsByPurity(records) {
-    const groups = new Map();
-    records.forEach(item => {
-        const key = `${item.metal}|${item.karat}`;
-        const entry = groups.get(key) || { metal: item.metal, karat: item.karat, count: 0, purchasedWeight: 0, payout: 0, remainingWeight: 0 };
-        entry.count += 1;
-        entry.purchasedWeight += Number(item.netWeight || 0);
-        entry.payout += Number(item.payout || 0);
-        entry.remainingWeight += Number(item.currentWeight || 0);
-        groups.set(key, entry);
-    });
-    return Array.from(groups.values()).sort((a, b) => a.metal.localeCompare(b.metal) || (GRADE_META[a.metal]?.findIndex(grade => grade.key === a.karat) ?? 99) - (GRADE_META[b.metal]?.findIndex(grade => grade.key === b.karat) ?? 99));
-}
-function selectableInventory(item) { return Number(item.currentWeight) > 0 && !item.inventoryPoolId && (item.status === 'Available' || item.status === 'For Refining'); }
-function movableInventory(item) { return selectableInventory(item); }
-function categorizableInventory(item) { return activeInventoryRecord(item) && !item.inventoryPoolId; }
-function lowKaratGoldInventory(item) { return item.metal === 'Gold' && LOW_KARAT_GOLD_KEYS.has(item.karat) && activeInventoryRecord(item); }
-function selectedInventoryForCategory() { return db.stock.filter(item => inventoryMoveSelection.has(item.id) && categorizableInventory(item)); }
-function selectedInventoryForMove() { return db.stock.filter(item => inventoryMoveSelection.has(item.id) && movableInventory(item)); }
-function inventoryPercentagePool() {
-    return db.stock.filter(item => inventoryDateScope(item) && movableInventory(item) &&
-        (invFilter.metal === 'All' || item.metal === invFilter.metal) &&
-        (invFilter.karat === 'All' || item.karat === invFilter.karat) &&
-        (invFilter.type === 'All' || item.itemType === invFilter.type) &&
-        (invFilter.status === 'All' || item.status === invFilter.status));
-}
-function percentageStockCount(percentage, total) { return total ? Math.max(1, Math.ceil(total * (Number(percentage) / 100))) : 0; }
-function toggleInventoryForLiquidation(id, checked) {
-    const item = db.stock.find(stock => stock.id === id);
-    if (!item || !categorizableInventory(item))
-        return;
-    if (checked)
-        inventoryMoveSelection.add(id);
-    else
-        inventoryMoveSelection.delete(id);
-    const selected = selectedInventoryForCategory();
-    const buttons = document.querySelectorAll('.inventory-move-liquidation');
-    const count = document.getElementById('inventory_liq_count');
-    buttons.forEach(button => button.disabled = !inventoryPercentagePool().length);
-    document.querySelectorAll('[data-inventory-selection-required]').forEach(button => { button.disabled = !selected.length; });
-    const moveButton = document.getElementById('inventory_move_selected');
-    if (moveButton)
-        moveButton.disabled = !selected.length || selected.some(record => !movableInventory(record));
-    const poolButton = document.getElementById('inventory_pool_selected');
-    if (poolButton) {
-        const poolItems = selectedInventoryForPool();
-        poolButton.disabled = poolItems.length < 2 || new Set(poolItems.map(item => item.metal)).size !== 1 || new Set(poolItems.map(item => item.karat)).size !== 1;
-    }
-    if (count)
-        count.textContent = String(selected.length);
-}
-function syncInventoryMoveCheckboxes() {
-    document.querySelectorAll('[data-inventory-move-id]').forEach(input => {
-        input.checked = inventoryMoveSelection.has(input.dataset.inventoryMoveId);
-    });
-    const count = document.getElementById('inventory_liq_count');
-    const selected = selectedInventoryForCategory();
-    document.querySelectorAll('[data-inventory-selection-required]').forEach(button => { button.disabled = !selected.length; });
-    const moveButton = document.getElementById('inventory_move_selected');
-    if (moveButton)
-        moveButton.disabled = !selected.length || selected.some(record => !movableInventory(record));
-    const poolButton = document.getElementById('inventory_pool_selected');
-    if (poolButton) {
-        const poolItems = selectedInventoryForPool();
-        poolButton.disabled = poolItems.length < 2 || new Set(poolItems.map(item => item.metal)).size !== 1 || new Set(poolItems.map(item => item.karat)).size !== 1;
-    }
-    if (count)
-        count.textContent = String(selected.length);
-}
-function visibleInventoryRecords() {
-    return db.stock.filter(item => inventoryDateScope(item) && activeInventoryRecord(item) &&
-        (invFilter.metal === 'All' || item.metal === invFilter.metal) &&
-        (invFilter.karat === 'All' || item.karat === invFilter.karat) &&
-        (invFilter.type === 'All' || item.itemType === invFilter.type) &&
-        (invFilter.status === 'All' || item.status === invFilter.status) && inventorySearchMatch(item));
-}
-function selectAllVisibleInventory() {
-    visibleInventoryRecords().filter(categorizableInventory).forEach(item => inventoryMoveSelection.add(item.id));
-    render();
-}
-function selectAllLowKaratGold() {
-    if (!adminEditGuard())
-        return;
-    const records = db.stock.filter(item => lowKaratGoldInventory(item) && categorizableInventory(item));
-    if (!records.length) {
-        toast('There are no available low-karat Gold items to select');
-        return;
-    }
-    inventoryMoveSelection.clear();
-    records.forEach(item => inventoryMoveSelection.add(item.id));
-    inventoryBulkStatus = 'For Refining';
-    inventorySelectedDate = 'All';
-    invFilter = { ...invFilter, metal: 'Gold', karat: 'All', status: 'All' };
-    render();
-    requestAnimationFrame(() => document.getElementById('inventory_stock_list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-    toast(`${records.length} low-karat Gold ${records.length === 1 ? 'item' : 'items'} selected across all dates`);
-}
-function clearInventorySelection() { inventoryMoveSelection.clear(); render(); }
-async function categorizeCheckedInventory() {
-    if (!adminEditGuard())
-        return;
-    const selected = selectedInventoryForCategory(), status = val('inventory_bulk_status');
-    if (!selected.length) {
-        toast('Select at least one inventory record');
-        return;
-    }
-    if (!['Available', 'For Refining', 'On Hold'].includes(status)) {
-        toast('Choose a valid category');
-        return;
-    }
-    if (!confirm(`Change ${selected.length} selected inventory ${selected.length === 1 ? 'record' : 'records'} to “${status}”?`))
-        return;
-    selected.forEach(item => { item.status = status; });
-    inventoryMoveSelection.clear();
-    await saveDB();
-    render();
-    toast(`${selected.length} inventory ${selected.length === 1 ? 'record' : 'records'} changed to ${status}`);
-}
-function closeInventoryMoveConfirmation() {
-    document.getElementById('inventory_move_confirmation')?.remove();
-    pendingInventoryMove = null;
-}
-function moveInventorySelectionToLiquidation(percentage) {
-    const portion = Number(percentage);
-    if (![50, 100].includes(portion)) {
-        toast('Choose Move 50% or Move 100%');
-        return;
-    }
-    const pool = inventoryPercentagePool();
-    const required = percentageStockCount(portion, pool.length);
-    if (!pool.length) {
-        toast('There are no eligible stock records for this date and filter');
-        return;
-    }
-    inventoryMoveSelection.clear();
-    pool.slice(0, required).forEach(item => inventoryMoveSelection.add(item.id));
-    const selected = selectedInventoryForMove();
-    if (selected.length !== required) {
-        toast('The requested stock records are no longer available. Refresh Inventory and try again.');
-        return;
-    }
-    if (selected.some(item => !pool.some(poolItem => poolItem.id === item.id))) {
-        toast('All selected records must belong to the displayed date and filter');
-        return;
-    }
-    syncInventoryMoveCheckboxes();
-    requestAnimationFrame(() => requestAnimationFrame(() => openInventoryMoveReview(selected, { percentage: portion, total: pool.length, automatic: true })));
-}
-function moveCheckedInventoryToLiquidation() {
-    const checked = selectedInventoryForCategory();
-    if (!checked.length) {
-        toast('Check at least one inventory record first');
-        return;
-    }
-    if (checked.some(item => !movableInventory(item))) {
-        toast('On Hold records must be categorized as Available or For Refining before liquidation');
-        return;
-    }
-    const selected = checked;
-    openInventoryMoveReview(selected, { total: selected.length, automatic: false });
-}
-function availableCombineDates(metal) {
-    const groups = new Map();
-    db.stock.filter(item => movableInventory(item) && item.metal === metal).forEach(item => {
-        const group = groups.get(item.date) || { date: item.date, count: 0, weight: 0, cost: 0 };
-        group.count += 1;
-        group.weight += Number(item.currentWeight);
-        group.cost += Number(item.cost);
-        groups.set(item.date, group);
-    });
-    return Array.from(groups.values()).sort((a, b) => b.date.localeCompare(a.date));
-}
-function closeCombineLiquidationDateSelection() {
-    document.getElementById('combine_liquidation_dates')?.remove();
-    combineLiquidationDates.clear();
-}
-function toggleCombineLiquidationDate(date, checked) {
-    if (checked)
-        combineLiquidationDates.add(date);
-    else
-        combineLiquidationDates.delete(date);
-    renderCombineLiquidationDateChoices();
-}
-function changeCombineLiquidationMetal(metal) {
-    combineLiquidationMetal = metal;
-    combineLiquidationDates.clear();
-    const choices = availableCombineDates(metal);
-    if (choices.some(choice => choice.date === inventorySelectedDate))
-        combineLiquidationDates.add(inventorySelectedDate);
-    renderCombineLiquidationDateChoices();
-}
-function renderCombineLiquidationDateChoices() {
-    const container = document.getElementById('combine_liquidation_date_choices');
-    if (!container)
-        return;
-    const choices = availableCombineDates(combineLiquidationMetal);
-    const chosen = choices.filter(choice => combineLiquidationDates.has(choice.date));
-    const count = chosen.reduce((sum, choice) => sum + choice.count, 0);
-    const weight = chosen.reduce((sum, choice) => sum + choice.weight, 0);
-    container.innerHTML = `
-    <div class="combine-date-list">
-      ${choices.map(choice => `<label class="combine-date-option ${combineLiquidationDates.has(choice.date) ? 'selected' : ''}">
-        <input type="checkbox" ${combineLiquidationDates.has(choice.date) ? 'checked' : ''} onchange="toggleCombineLiquidationDate('${choice.date}',this.checked)">
-        <span><strong>${new Date(choice.date + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'long' })}</strong><small>${fmtDate(choice.date)}</small></span>
-        <span class="num"><strong>${choice.count} record${choice.count === 1 ? '' : 's'}</strong><small>${fmtWeight(choice.weight)} · ${fmtMoney(choice.cost)}</small></span>
-      </label>`).join('') || '<div class="empty-note">No eligible inventory dates are available for this metal.</div>'}
-    </div>
-    <div class="move-confirmation-summary combine-date-summary">
-      <div><span>Dates selected</span><strong>${chosen.length}</strong></div>
-      <div><span>Stock records</span><strong>${count}</strong></div>
-      <div><span>Total weight</span><strong>${fmtWeight(weight)}</strong></div>
-    </div>`;
-    const button = document.getElementById('confirm_combine_dates');
-    if (button)
-        button.disabled = !chosen.length;
-}
-function openCombineLiquidationDateSelection() {
-    const available = db.stock.filter(movableInventory);
-    if (!available.length) {
-        toast('There are no eligible inventory records to combine');
-        return;
-    }
-    const selected = selectedInventoryForMove();
-    const selectedMetals = Array.from(new Set(selected.map(item => item.metal)));
-    const metals = Array.from(new Set(available.map(item => item.metal)));
-    combineLiquidationMetal = selectedMetals.length === 1 ? selectedMetals[0] : (invFilter.metal !== 'All' && metals.includes(invFilter.metal) ? invFilter.metal : metals[0]);
-    combineLiquidationDates.clear();
-    selected.filter(item => item.metal === combineLiquidationMetal).forEach(item => combineLiquidationDates.add(item.date));
-    const choices = availableCombineDates(combineLiquidationMetal);
-    if (!combineLiquidationDates.size) {
-        if (choices.some(choice => choice.date === inventorySelectedDate))
-            combineLiquidationDates.add(inventorySelectedDate);
-        else if (choices[0])
-            combineLiquidationDates.add(choices[0].date);
-    }
-    const modal = document.createElement('div');
-    modal.id = 'combine_liquidation_dates';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="inventory-move-modal combine-date-modal" role="dialog" aria-modal="true" aria-labelledby="combine_liquidation_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">Combine for liquidation</div><h2 id="combine_liquidation_title">Select purchase dates</h2></div><button class="modal-close" onclick="closeCombineLiquidationDateSelection()" aria-label="Close">×</button></div>
-    <p class="move-confirmation-intro">Choose one or more dates. The system will automatically select every available stock record for the chosen metal on those dates and combine them into one liquidation batch.</p>
-    <div class="field combine-metal-field"><label for="combine_liquidation_metal">Metal</label><select id="combine_liquidation_metal" onchange="changeCombineLiquidationMetal(this.value)">${metals.map(metal => `<option value="${esc(metal)}" ${metal === combineLiquidationMetal ? 'selected' : ''}>${esc(metal)}</option>`).join('')}</select></div>
-    <div id="combine_liquidation_date_choices"></div>
-    <div class="move-confirmation-note"><strong>Nothing is sold yet.</strong><span>You can review every automatically selected item before creating the Liquidation batch.</span></div>
-    <div class="form-actions"><button class="btn secondary" onclick="closeCombineLiquidationDateSelection()">Cancel</button><button class="btn" id="confirm_combine_dates" onclick="confirmCombineLiquidationDates()">Review selected dates</button></div>
-  </div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeCombineLiquidationDateSelection(); });
-    document.body.appendChild(modal);
-    renderCombineLiquidationDateChoices();
-}
-function confirmCombineLiquidationDates() {
-    const dates = new Set(combineLiquidationDates);
-    if (!dates.size) {
-        toast('Select at least one purchase date');
-        return;
-    }
-    const selected = db.stock.filter(item => movableInventory(item) && item.metal === combineLiquidationMetal && dates.has(item.date));
-    if (!selected.length) {
-        toast('The chosen dates no longer have eligible stock records');
-        return;
-    }
-    inventoryMoveSelection.clear();
-    selected.forEach(item => inventoryMoveSelection.add(item.id));
-    closeCombineLiquidationDateSelection();
-    openInventoryMoveReview(selected, { total: selected.length, automatic: true, combineDates: true });
-}
-function inventoryPoolItems(pool) {
-    const ids = new Set(pool?.itemIds || []);
-    return db.stock.filter(item => ids.has(item.id));
-}
-function inventoryPoolSnapshot(pool) {
-    const items = inventoryPoolItems(pool);
-    const weight = roundWeight(items.reduce((sum, item) => sum + Number(item.currentWeight || 0), 0));
-    const cost = roundMoney(items.reduce((sum, item) => sum + Number(item.cost || 0), 0));
-    return { items, weight, cost, averageCost: weight ? cost / weight : 0 };
-}
-function inventoryPoolStatus(pool, snapshot = inventoryPoolSnapshot(pool)) {
-    if (snapshot.weight <= 0)
-        return 'FULLY LIQUIDATED';
-    if (pool.onHold)
-        return 'ON HOLD';
-    if (snapshot.weight < Number(pool.originalWeight || snapshot.weight) - 0.005)
-        return 'PARTIALLY LIQUIDATED';
-    return 'ACTIVE';
-}
-function syncInventoryPool(pool) {
-    const snapshot = inventoryPoolSnapshot(pool);
-    pool.remainingWeight = snapshot.weight;
-    pool.remainingCost = snapshot.cost;
-    pool.status = inventoryPoolStatus(pool, snapshot);
-    pool.updatedAt = pool.updatedAt || pool.createdAt || new Date().toISOString();
-    return snapshot;
-}
-function syncAllInventoryPools() {
-    (db.inventoryPools || []).forEach(pool => syncInventoryPool(pool));
-}
-function poolableInventoryItem(item) {
-    return activeInventoryRecord(item) && !item.inventoryPoolId && !item.liquidationBatchId;
-}
-function selectedInventoryForPool() { return db.stock.filter(item => inventoryMoveSelection.has(item.id) && poolableInventoryItem(item)); }
-function inventoryPoolComposition(items) {
-    const metals = Array.from(new Set(items.map(item => String(item.metal || ''))));
-    const grades = Array.from(new Set(items.map(item => String(item.karat || ''))));
-    const mixedMetals = metals.length !== 1, mixedPurities = grades.length !== 1;
-    const metal = mixedMetals ? 'Mixed' : metals[0] || 'Mixed';
-    const karat = mixedMetals || mixedPurities ? 'Mixed' : grades[0] || 'Mixed';
-    const label = mixedMetals ? 'Mixed metals / purities' : mixedPurities ? `${metal} · Mixed purities` : `${metal} ${gradeLabel(metal, karat)}`;
-    return { metal, karat, label };
-}
-function preparePooledInventoryAllocation(items, requestedWeight) {
-    const weight = roundWeight(Number(requestedWeight));
-    const totalWeight = roundWeight(items.reduce((sum, item) => sum + Number(item.currentWeight || 0), 0));
-    const totalCost = roundMoney(items.reduce((sum, item) => sum + Number(item.cost || 0), 0));
-    if (!weight || weight < 0.01 || weight > totalWeight)
-        return null;
-    const cost = roundMoney(totalCost * (weight / totalWeight));
-    const averageCost = totalCost / totalWeight;
-    let weightLeft = weight, costAssigned = 0;
-    const allocations = [];
-    for (const item of items) {
-        if (weightLeft <= 0)
-            break;
-        const portion = roundWeight(Math.min(Number(item.currentWeight || 0), weightLeft));
-        if (portion <= 0)
-            continue;
-        weightLeft = roundWeight(weightLeft - portion);
-        const portionCost = weightLeft <= 0 ? roundMoney(cost - costAssigned) : roundMoney(averageCost * portion);
-        costAssigned = roundMoney(costAssigned + portionCost);
-        allocations.push({ itemId: item.id, previousStatus: item.status, weight: portion, cost: portionCost, pooledAllocation: true });
-    }
-    if (weightLeft > 0.005)
-        return null;
-    return { weight, cost, totalWeight, totalCost, averageCost, remainingWeight: roundWeight(totalWeight - weight), remainingCost: roundMoney(totalCost - cost), allocations };
-}
-function applyPooledInventoryAllocation(prepared) {
-    if (!prepared)
-        return false;
-    const resolved = prepared.allocations.map(line => ({ line, item: db.stock.find(stock => stock.id === line.itemId) }));
-    if (resolved.some(({ line, item }) => !item || Number(item.currentWeight) + 0.005 < Number(line.weight)))
-        return false;
-    for (const { line, item } of resolved) {
-        item.currentWeight = roundWeight(Number(item.currentWeight) - Number(line.weight));
-    }
-    const pooledIds = new Set(prepared.allocations.map(line => line.itemId));
-    const sourceItems = db.stock.filter(item => pooledIds.has(item.id) || prepared.sourceIds?.includes(item.id));
-    const poolItems = prepared.poolItems || sourceItems;
-    const remainingItems = poolItems.filter(item => Number(item.currentWeight) > 0);
-    let assignedCost = 0;
-    poolItems.filter(item => Number(item.currentWeight) <= 0).forEach(item => { item.cost = 0; });
-    remainingItems.forEach((item, index) => {
-        const cost = index === remainingItems.length - 1 ? roundMoney(prepared.remainingCost - assignedCost) : roundMoney(prepared.remainingCost * (Number(item.currentWeight) / prepared.remainingWeight));
-        item.cost = Math.max(0, cost);
-        assignedCost = roundMoney(assignedCost + item.cost);
-    });
-    return true;
-}
-function restorePooledLiquidationLine(line) {
-    const item = db.stock.find(stock => stock.id === line.itemId);
-    if (!item)
-        return false;
-    item.currentWeight = roundWeight(Number(item.currentWeight) + Number(line.weight || 0));
-    item.cost = roundMoney(Number(item.cost) + Number(line.cost ?? line.costPortion ?? 0));
-    if (item.currentWeight > 0 && ['Liquidated', 'Refined', 'Sold'].includes(item.status))
-        item.status = line.previousStatus || 'Available';
-    return true;
-}
-function closeInventoryPoolModal() { document.getElementById('inventory_pool_modal')?.remove(); }
-function openManualInventoryPoolModal() {
-    if (!adminEditGuard())
-        return;
-    const items = selectedInventoryForPool();
-    if (items.length < 2) {
-        toast('Select at least two unpooled inventory items');
-        return;
-    }
-    const weight = items.reduce((sum, item) => sum + Number(item.currentWeight || 0), 0), cost = items.reduce((sum, item) => sum + Number(item.cost || 0), 0);
-    const nextId = nextSequenceId('POOL', db.inventoryPools), composition = inventoryPoolComposition(items);
-    const modal = document.createElement('div');
-    modal.id = 'inventory_pool_modal';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="inventory_pool_title"><div class="summary-modal-head"><div><div class="eyebrow">Manual inventory grouping</div><h2 id="inventory_pool_title">Create ${esc(nextId)}</h2></div><button class="modal-close" onclick="closeInventoryPoolModal()" aria-label="Close">×</button></div><p class="move-confirmation-intro">Only the inventory records you selected will belong to this pool. Metals, purities, and purchase dates do not restrict the grouping.</p><div class="form-grid"><div class="field"><label>Pool name (optional)</label><input id="inventory_pool_name" placeholder="${esc(composition.label)} pool"></div><div class="field"><label>Starting status</label><select id="inventory_pool_status"><option value="ACTIVE">Active</option><option value="ON HOLD" selected>On Hold</option></select></div><div class="field span-2"><label>Notes</label><input id="inventory_pool_notes" placeholder="Optional"></div></div><div class="move-confirmation-summary"><div><span>Selected records</span><strong>${items.length}</strong></div><div><span>Pool contents</span><strong>${esc(composition.label)}</strong></div><div><span>Total weight</span><strong>${fmtWeight(weight)}</strong></div><div><span>Total cost</span><strong>${fmtMoneyExact(cost)}</strong></div></div><div class="table-wrap move-confirmation-items"><table><thead><tr><th>Item</th><th>Seller</th><th>Date</th><th class="num-head">Weight</th><th class="num-head">Cost</th></tr></thead><tbody>${items.map(item => `<tr><td>${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))}</td><td>${esc(item.customerName || '—')}</td><td>${fmtDate(item.date)}</td><td class="num">${fmtWeight(item.currentWeight)}</td><td class="num">${fmtMoneyExact(item.cost)}</td></tr>`).join('')}</tbody></table></div><div class="form-actions"><button class="btn secondary" onclick="closeInventoryPoolModal()">Cancel</button><button class="btn" onclick="createManualInventoryPool()">Create Pool</button></div></div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeInventoryPoolModal(); });
-    document.body.appendChild(modal);
-}
-async function createManualInventoryPool() {
-    const items = selectedInventoryForPool();
-    if (items.length < 2) {
-        closeInventoryPoolModal();
-        toast('The selected inventory changed. Select at least two items again.');
-        return;
-    }
-    const beforeState = JSON.parse(JSON.stringify(db)), id = nextSequenceId('POOL', db.inventoryPools);
-    const composition = inventoryPoolComposition(items);
-    const originalItems = items.map(item => ({ itemId: item.id, originalWeight: roundWeight(item.currentWeight), originalCost: roundMoney(item.cost), statusAtPooling: item.status }));
-    const originalWeight = roundWeight(originalItems.reduce((sum, item) => sum + item.originalWeight, 0)), originalCost = roundMoney(originalItems.reduce((sum, item) => sum + item.originalCost, 0));
-    const pool = { id, name: val('inventory_pool_name').trim() || `${composition.label} pool`, metal: composition.metal, karat: composition.karat, itemIds: items.map(item => item.id), originalItems, originalWeight, originalCost, onHold: val('inventory_pool_status') === 'ON HOLD', notes: val('inventory_pool_notes').trim(), createdAt: new Date().toISOString(), createdBy: currentUser?.displayName || '' };
-    items.forEach(item => { item.inventoryPoolId = id; });
-    db.inventoryPools.push(pool);
-    syncInventoryPool(pool);
-    if (!await saveDB()) {
-        db = beforeState;
-        render();
-        toast('The inventory pool was not created');
-        return;
-    }
-    inventoryMoveSelection.clear();
-    closeInventoryPoolModal();
-    render();
-    toast(`${id} created from ${items.length} selected items`);
-}
-async function toggleInventoryPoolHold(id) {
-    const pool = db.inventoryPools.find(item => item.id === id);
-    if (!pool || inventoryPoolStatus(pool) === 'FULLY LIQUIDATED' || !adminEditGuard())
-        return;
-    const before = pool.onHold;
-    pool.onHold = !pool.onHold;
-    pool.updatedAt = new Date().toISOString();
-    syncInventoryPool(pool);
-    if (!await saveDB()) {
-        pool.onHold = before;
-        syncInventoryPool(pool);
-        render();
-        return;
-    }
-    render();
-    toast(`${pool.id} is now ${pool.status}`);
-}
-function closePoolLiquidationModal() { document.getElementById('pool_liquidation_modal')?.remove(); }
-function poolLiquidationRequestedWeight(pool) {
-    const snapshot = inventoryPoolSnapshot(pool), type = document.querySelector('input[name="pool_liquidation_type"]:checked')?.value || 'partial';
-    return type === 'entire' ? snapshot.weight : roundWeight(Number(val('pool_liquidation_weight')) || 0);
-}
-function updatePoolLiquidationPreview() {
-    const pool = db.inventoryPools.find(item => item.id === val('pool_liquidation_id'));
-    if (!pool)
-        return;
-    const snapshot = inventoryPoolSnapshot(pool), entire = document.querySelector('input[name="pool_liquidation_type"]:checked')?.value === 'entire';
-    const input = document.getElementById('pool_liquidation_weight');
-    if (input) {
-        input.disabled = entire;
-        if (entire)
-            input.value = String(snapshot.weight);
-    }
-    const requested = poolLiquidationRequestedWeight(pool), prepared = preparePooledInventoryAllocation(snapshot.items, requested);
-    const values = {
-        pool_liquidation_available: fmtWeight(snapshot.weight), pool_liquidation_average: snapshot.weight ? `${fmtMoneyExact(snapshot.averageCost)}/g` : '—', pool_liquidation_cost: prepared ? fmtMoneyExact(prepared.cost) : '—', pool_liquidation_remaining: prepared ? `${fmtWeight(prepared.remainingWeight)} · ${fmtMoneyExact(prepared.remainingCost)}` : `${fmtWeight(snapshot.weight)} · ${fmtMoneyExact(snapshot.cost)}`
-    };
-    Object.entries(values).forEach(([id, value]) => { const element = document.getElementById(id); if (element)
-        element.textContent = value; });
-    const button = document.getElementById('confirm_pool_liquidation');
-    if (button)
-        button.disabled = !prepared;
-}
-function openPoolLiquidationModal(id, initialType = 'partial') {
-    const pool = db.inventoryPools.find(item => item.id === id);
-    if (!pool || !adminEditGuard())
-        return;
-    const snapshot = inventoryPoolSnapshot(pool);
-    if (!snapshot.weight) {
-        toast('This pool is fully liquidated');
-        return;
-    }
-    const entire = initialType === 'entire';
-    closePoolLiquidationModal();
-    const modal = document.createElement('div');
-    modal.id = 'pool_liquidation_modal';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="summary-modal" role="dialog" aria-modal="true" aria-labelledby="pool_liquidation_title"><div class="summary-modal-head"><div><div class="eyebrow">${esc(pool.id)} · ${esc(inventoryPoolStatus(pool, snapshot))}</div><h2 id="pool_liquidation_title">Liquidate ${esc(pool.name)}</h2></div><button class="modal-close" onclick="closePoolLiquidationModal()" aria-label="Close">×</button></div><input id="pool_liquidation_id" type="hidden" value="${esc(pool.id)}"><div class="field"><label>Liquidation type</label><div class="pool-liquidation-types"><label><input type="radio" name="pool_liquidation_type" value="partial" onchange="updatePoolLiquidationPreview()" ${entire ? '' : 'checked'}> Partial Liquidation</label><label><input type="radio" name="pool_liquidation_type" value="entire" onchange="updatePoolLiquidationPreview()" ${entire ? 'checked' : ''}> Liquidate Entire Pool</label></div></div><div class="form-grid"><div class="field"><label>Weight / quantity (g)</label><input id="pool_liquidation_weight" type="number" min="0.01" max="${snapshot.weight}" step="0.01" oninput="updatePoolLiquidationPreview()"></div><div class="field"><label>Cost basis (automatic)</label><output id="pool_liquidation_cost">—</output></div><div class="field"><label>Selling price / proceeds</label><input id="pool_liquidation_proceeds" inputmode="decimal" oninput="formatMoneyEntry(this)"></div><div class="field"><label>Buyer / refiner</label><input id="pool_liquidation_buyer" placeholder="Buyer name"></div><div class="field span-2"><label>Notes</label><textarea id="pool_liquidation_notes"></textarea></div></div><div class="move-confirmation-summary"><div><span>Available in pool</span><strong id="pool_liquidation_available">${fmtWeight(snapshot.weight)}</strong></div><div><span>Mean cost / g</span><strong id="pool_liquidation_average">${fmtMoneyExact(snapshot.averageCost)}/g</strong></div><div><span>Remaining after sale</span><strong id="pool_liquidation_remaining">—</strong></div></div><div class="form-actions"><button class="btn secondary" onclick="closePoolLiquidationModal()">Cancel</button><button class="btn" id="confirm_pool_liquidation" onclick="confirmPoolLiquidation()" disabled>Confirm Liquidation</button></div></div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closePoolLiquidationModal(); });
-    document.body.appendChild(modal);
-    updatePoolLiquidationPreview();
-}
-async function confirmPoolLiquidation() {
-    const pool = db.inventoryPools.find(item => item.id === val('pool_liquidation_id'));
-    if (!pool)
-        return;
-    const snapshot = inventoryPoolSnapshot(pool), requested = poolLiquidationRequestedWeight(pool), prepared = preparePooledInventoryAllocation(snapshot.items, requested);
-    const proceeds = parseMoneyEntry(val('pool_liquidation_proceeds')), buyer = val('pool_liquidation_buyer').trim();
-    if (!prepared) {
-        toast(`Enter a weight between 0.01 g and ${snapshot.weight.toFixed(2)} g`);
-        return;
-    }
-    if (proceeds <= 0) {
-        toast('Enter the selling price / proceeds');
-        return;
-    }
-    if (!buyer) {
-        toast('Enter the buyer / refiner');
-        return;
-    }
-    prepared.poolItems = snapshot.items;
-    const beforeState = JSON.parse(JSON.stringify(db));
-    if (!applyPooledInventoryAllocation(prepared)) {
-        toast('The pool balance changed. Review it and try again.');
-        return;
-    }
-    let assignedProceeds = 0;
-    const lines = prepared.allocations.map((line, index) => { const source = db.stock.find(item => item.id === line.itemId); const amount = index === prepared.allocations.length - 1 ? roundMoney(proceeds - assignedProceeds) : roundMoney(proceeds * (line.weight / prepared.weight)); assignedProceeds = roundMoney(assignedProceeds + amount); return { ...line, metal: source?.metal || pool.metal, assay: source?.karat || pool.karat, costPortion: line.cost, sellingAmount: amount, proceeds: amount, sellingRate: roundMoney(amount / line.weight) }; });
-    const remaining = syncInventoryPool(pool), id = nextSequenceId('L', db.liquidations), recordedAt = new Date().toISOString();
-    pool.updatedAt = recordedAt;
-    db.liquidations.push({ id, poolId: pool.id, poolName: pool.name, date: todayStr(), recordedAt, metal: pool.metal, buyer, itemCount: lines.length, releasedWeight: prepared.weight, cost: prepared.cost, proceeds: roundMoney(proceeds), margin: roundMoney(proceeds - prepared.cost), profitMargin: prepared.cost ? roundMoney((proceeds - prepared.cost) / prepared.cost * 100) : 0, paymentStatus: 'Paid', lines, originalPoolWeight: pool.originalWeight, originalPoolCost: pool.originalCost, remainingPoolWeight: remaining.weight, remainingPoolCost: remaining.cost, remarks: val('pool_liquidation_notes').trim(), createdBy: currentUser?.displayName || '' });
-    if (!await saveDB()) {
-        db = beforeState;
-        render();
-        toast('The pool liquidation was not recorded');
-        return;
-    }
-    closePoolLiquidationModal();
-    render();
-    toast(`${id} recorded · ${fmtWeight(prepared.weight)} liquidated`);
-}
-function renderInventoryPools() {
-    const pools = (db.inventoryPools || []).slice().sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
-    return `<section class="block inventory-pools"><div class="batch-head"><div><p class="eyebrow">Manual groups only</p><h2 class="block-title">Inventory Pools</h2><p class="form-note">Pools contain only the records you manually select. Metals, purities, dates, and purchase periods do not restrict grouping.</p></div></div>${pools.length ? `<div class="inventory-pool-grid">${pools.map(pool => { const snapshot = inventoryPoolSnapshot(pool), status = inventoryPoolStatus(pool, snapshot), liquidated = roundWeight(Number(pool.originalWeight || 0) - snapshot.weight), partiallyLiquidated = liquidated > 0 && snapshot.weight > 0, composition = inventoryPoolComposition(snapshot.items); return `<article class="inventory-pool-card"><div class="inventory-pool-head"><div><div class="pool-status-row"><span class="pool-status ${status.toLowerCase().replaceAll(' ', '-')}">${esc(status)}</span>${partiallyLiquidated && status !== 'PARTIALLY LIQUIDATED' ? '<span class="pool-status partially-liquidated">PARTIALLY LIQUIDATED</span>' : ''}</div><h3>${esc(pool.name)}</h3><p>${esc(pool.id)} · ${esc(composition.label)}</p></div><div class="form-actions">${status !== 'FULLY LIQUIDATED' ? `<button class="btn secondary small" onclick="toggleInventoryPoolHold('${pool.id}')">${pool.onHold ? 'Set Active' : 'Put On Hold'}</button><button class="btn small" onclick="openPoolLiquidationModal('${pool.id}','partial')">Partial liquidation</button><button class="btn secondary small" onclick="openPoolLiquidationModal('${pool.id}','entire')">Entire pool</button>` : ''}</div></div><div class="liquidation-batch-compact-summary"><span><small>Original weight</small><strong>${fmtWeight(pool.originalWeight)}</strong></span><span><small>Liquidated</small><strong>${fmtWeight(liquidated)}</strong></span><span><small>Remaining weight</small><strong>${fmtWeight(snapshot.weight)}</strong></span><span><small>Remaining cost</small><strong>${fmtMoneyExact(snapshot.cost)}</strong></span></div><p class="form-note">${(pool.itemIds || []).length} original inventory record${(pool.itemIds || []).length === 1 ? '' : 's'} remain traceable${pool.notes ? ` · ${esc(pool.notes)}` : ''}.</p></article>`; }).join('')}</div>` : '<div class="empty-note">No manual inventory pools yet. Select at least two inventory records below and click <strong>Pool selected</strong>.</div>'}</section>`;
-}
-function closeInventoryItemLiquidationModal() { document.getElementById('inventory_item_liquidation_modal')?.remove(); }
-function inventoryItemLiquidationRequestedWeight(item) {
-    return val('inventory_item_liquidation_type') === 'entire' ? roundWeight(item.currentWeight) : roundWeight(Number(val('inventory_item_liquidation_weight')) || 0);
-}
-function updateInventoryItemLiquidationPreview() {
-    const item = db.stock.find(stock => stock.id === val('inventory_item_liquidation_id'));
-    if (!item)
-        return;
-    const entire = val('inventory_item_liquidation_type') === 'entire', input = document.getElementById('inventory_item_liquidation_weight');
-    if (input) {
-        input.disabled = entire;
-        if (entire)
-            input.value = String(item.currentWeight);
-    }
-    const prepared = preparePooledInventoryAllocation([item], inventoryItemLiquidationRequestedWeight(item));
-    const values = {
-        inventory_item_liquidation_cost: prepared ? fmtMoneyExact(prepared.cost) : '—',
-        inventory_item_liquidation_remaining_weight: prepared ? fmtWeight(prepared.remainingWeight) : fmtWeight(item.currentWeight),
-        inventory_item_liquidation_remaining_cost: prepared ? fmtMoneyExact(prepared.remainingCost) : fmtMoneyExact(item.cost)
-    };
-    Object.entries(values).forEach(([id, value]) => { const element = document.getElementById(id); if (element)
-        element.textContent = value; });
-    const button = document.getElementById('create_inventory_item_liquidation');
-    if (button)
-        button.disabled = !prepared;
-}
-function liquidateInventoryItem(id) {
-    const item = db.stock.find(stock => stock.id === id);
-    if (!item || !movableInventory(item)) {
-        toast('This inventory item is no longer available');
-        return;
-    }
-    closeInventoryItemLiquidationModal();
-    const modal = document.createElement('div');
-    modal.id = 'inventory_item_liquidation_modal';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="summary-modal" role="dialog" aria-modal="true" aria-labelledby="inventory_item_liquidation_title"><div class="summary-modal-head"><div><div class="eyebrow">${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))} · ${esc(item.id)}</div><h2 id="inventory_item_liquidation_title">Move item to Liquidation</h2></div><button class="modal-close" onclick="closeInventoryItemLiquidationModal()" aria-label="Close">×</button></div><p class="move-confirmation-intro">Choose only the weight you want to move. This creates an open liquidation batch; it does not record the item as sold.</p><input id="inventory_item_liquidation_id" type="hidden" value="${esc(item.id)}"><div class="form-grid"><div class="field"><label>Liquidation type</label><select id="inventory_item_liquidation_type" onchange="updateInventoryItemLiquidationPreview()"><option value="partial" selected>Partial liquidation</option><option value="entire">Entire item</option></select></div><div class="field"><label>Weight for liquidation (g)</label><input id="inventory_item_liquidation_weight" type="number" min="0.01" max="${item.currentWeight}" step="0.01" oninput="updateInventoryItemLiquidationPreview()" placeholder="Maximum ${item.currentWeight}"></div><div class="field"><label>Assigned buyer</label><input id="inventory_item_liquidation_buyer" placeholder="Buyer name"></div><div class="field"><label>Batch name</label><input id="inventory_item_liquidation_name" value="${esc(gradeLabel(item.metal, item.karat))} partial batch"></div><div class="field span-2"><label>Notes</label><input id="inventory_item_liquidation_notes" placeholder="Optional"></div></div><div class="move-confirmation-summary"><div><span>Available weight</span><strong>${fmtWeight(item.currentWeight)}</strong></div><div><span>Available cost</span><strong>${fmtMoneyExact(item.cost)}</strong></div><div><span>Cost for liquidation</span><strong id="inventory_item_liquidation_cost">—</strong></div><div><span>Weight remaining</span><strong id="inventory_item_liquidation_remaining_weight">${fmtWeight(item.currentWeight)}</strong></div><div><span>Cost remaining</span><strong id="inventory_item_liquidation_remaining_cost">${fmtMoneyExact(item.cost)}</strong></div></div><div class="form-actions"><button class="btn secondary" onclick="closeInventoryItemLiquidationModal()">Cancel</button><button class="btn" id="create_inventory_item_liquidation" onclick="createInventoryItemLiquidationBatch()" disabled>Create liquidation batch</button></div></div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeInventoryItemLiquidationModal(); });
-    document.body.appendChild(modal);
-    updateInventoryItemLiquidationPreview();
-    document.getElementById('inventory_item_liquidation_weight')?.focus();
-}
-async function createInventoryItemLiquidationBatch() {
-    const item = db.stock.find(stock => stock.id === val('inventory_item_liquidation_id'));
-    if (!item || !movableInventory(item)) {
-        closeInventoryItemLiquidationModal();
-        toast('This inventory item is no longer available');
-        render();
-        return;
-    }
-    const prepared = preparePooledInventoryAllocation([item], inventoryItemLiquidationRequestedWeight(item));
-    const buyer = val('inventory_item_liquidation_buyer').trim(), name = val('inventory_item_liquidation_name').trim(), notes = val('inventory_item_liquidation_notes').trim();
-    if (!prepared) {
-        toast(`Enter a weight between 0.01 g and ${Number(item.currentWeight).toFixed(2)} g`);
-        return;
-    }
-    if (!buyer || !name) {
-        toast('Enter a batch name and assigned buyer');
-        return;
-    }
-    const result = await saveInventoryItemLiquidationBatch(item, prepared, { buyer, name, notes });
-    if (!result)
-        return;
-    inventoryMoveSelection.clear();
-    closeInventoryItemLiquidationModal();
-    goTab('liquidation');
-    toast(`${fmtWeight(prepared.weight)} moved to ${result.batch.id} at ${fmtMoneyExact(prepared.cost)} cost`);
-}
-async function saveInventoryItemLiquidationBatch(item, prepared, details) {
-    if (typeof location !== 'undefined' && (location.protocol === 'http:' || location.protocol === 'https:')) {
-        try {
-            const response = await fetch('/api/partial-liquidation-batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itemId: item.id, weight: prepared.weight, buyer: details.buyer, name: details.name, notes: details.notes }) });
-            if (response.status === 401) {
-                showLogin();
-                throw new Error('Session expired');
-            }
-            const result = await response.json().catch(() => null);
-            if (!response.ok)
-                throw new Error(result?.error || `Database server returned HTTP ${response.status}`);
-            Object.assign(item, result.item);
-            db.liquidationBatches = db.liquidationBatches.filter(batch => batch.id !== result.batch.id);
-            db.liquidationBatches.push(result.batch);
-            if (Number.isInteger(result.revision))
-                db._revision = result.revision;
-            return { item: result.item, batch: result.batch };
-        }
-        catch (error) {
-            console.error('Partial liquidation batch save failed', error);
-            toast(error instanceof Error ? error.message : 'Liquidation batch could not be created');
-            return null;
-        }
-    }
-    prepared.poolItems = [item];
-    const beforeState = JSON.parse(JSON.stringify(db));
-    if (!applyPooledInventoryAllocation(prepared)) {
-        toast('The inventory balance changed. Review it and try again.');
-        return null;
-    }
-    const batch = { id: nextSequenceId('LB', db.liquidationBatches), name: details.name, buyer: details.buyer, metal: item.metal, lines: prepared.allocations, notes: details.notes, pooledAverageCost: roundMoney(prepared.averageCost), createdAt: new Date().toISOString(), createdBy: currentUser?.displayName || '' };
-    db.liquidationBatches.push(batch);
-    if (!await saveDB()) {
-        db = beforeState;
-        render();
-        toast('The liquidation batch was not created');
-        return null;
-    }
-    return { item, batch };
-}
-function openInventoryMoveReview(selected, context) {
-    const metals = Array.from(new Set(selected.map(item => item.metal)));
-    const dates = Array.from(new Set(selected.map(item => item.date))).sort();
-    const dateLabel = dates.length === 1 ? fmtDate(dates[0]) : `${fmtDate(dates[0])} – ${fmtDate(dates[dates.length - 1])}`;
-    const selectionLabel = context.individual ? 'Individual item' : context.automatic ? `${context.percentage}% · ${selected.length} of ${context.total}` : `${selected.length} selected record${selected.length === 1 ? '' : 's'}`;
-    const mode = context.individual ? 'individual' : dates.length > 1 ? 'combined' : 'selected';
-    pendingInventoryMove = { percentage: context.percentage ?? null, total: context.total, ids: selected.map(item => item.id), dates, metals, mode };
-    const totalWeight = selected.reduce((sum, item) => sum + Number(item.currentWeight), 0);
-    const totalCost = selected.reduce((sum, item) => sum + Number(item.cost), 0);
-    const modal = document.createElement('div');
-    modal.id = 'inventory_move_confirmation';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="inventory_move_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">Review inventory movement</div><h2 id="inventory_move_title">Move ${selected.length} stock record${selected.length === 1 ? '' : 's'}?</h2></div><button class="modal-close" onclick="closeInventoryMoveConfirmation()" aria-label="Close">×</button></div>
-    <p class="move-confirmation-intro">${metals.length > 1 ? `The selected ${metals.map(esc).join(' and ')} records will stay together in one mixed-metal batch.` : context.combineDates ? `The system automatically selected every eligible ${esc(metals[0])} stock record from the ${dates.length} chosen purchase date${dates.length === 1 ? '' : 's'}.` : context.automatic ? `The system automatically selected ${selected.length} eligible stock record${selected.length === 1 ? '' : 's'} for this percentage.` : context.individual ? 'This item will be prepared as an individual liquidation.' : dates.length > 1 ? 'Items from different purchase dates will be combined into one liquidation batch.' : 'The checked records will be combined into one liquidation batch.'} Review the items below before confirming. This step does not sell the stock or deduct its weight.</p>
-    <div class="move-confirmation-summary">
-      <div><span>Purchase date${dates.length === 1 ? '' : 's'}</span><strong>${dateLabel}</strong></div>
-      <div><span>Selection</span><strong>${selectionLabel}</strong></div>
-      <div><span>Total weight</span><strong>${fmtWeight(totalWeight)}</strong></div>
-      <div><span>Inventory cost</span><strong>${fmtMoney(totalCost)}</strong></div>
-    </div>
-    <div class="table-wrap move-confirmation-items"><table><thead><tr><th>Inventory item</th><th>Customer</th><th>Status</th><th class="num-head">Weight moving</th><th class="num-head">Cost</th></tr></thead><tbody>
-      ${selected.map(item => `<tr><td><strong>${esc(item.metal)} ${esc(item.karat)}</strong><br><span class="form-note">${esc(item.itemType)}${item.remarks ? ' · ' + esc(item.remarks) : ''}</span></td><td>${esc(item.customerName || '—')}</td><td>${statusPill(item.status)}</td><td class="num"><strong>${fmtWeight(item.currentWeight)}</strong><br><span class="form-note">full available weight</span></td><td class="num">${fmtMoney(item.cost)}</td></tr>`).join('')}
-    </tbody></table></div>
-    <div class="move-confirmation-note"><strong>What happens next?</strong><span>Assign a name and buyer to the batch. Gold, Silver, and Platinum items may remain together. The records will then become For Liquidation and leave Current Inventory until sold or returned.</span></div>
-    <div class="form-actions"><button class="btn secondary" onclick="closeInventoryMoveConfirmation()">Cancel</button><button class="btn" onclick="confirmInventoryMoveToLiquidation()">Continue to batch details</button></div>
-  </div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeInventoryMoveConfirmation(); });
-    document.body.appendChild(modal);
-    modal.querySelector('.btn:last-child')?.focus();
-}
-function confirmInventoryMoveToLiquidation() {
-    const pending = pendingInventoryMove;
-    if (!pending) {
-        closeInventoryMoveConfirmation();
-        return;
-    }
-    const selected = pending.ids.map(id => db.stock.find(item => item.id === id)).filter(item => item && selectableInventory(item));
-    if (selected.length !== pending.ids.length) {
-        closeInventoryMoveConfirmation();
-        toast('One or more selected records are no longer available. Review the inventory again.');
-        render();
-        return;
-    }
-    const metals = Array.from(new Set(selected.map(item => item.metal)));
-    const groups = [{ metal: metals.length === 1 ? metals[0] : 'Mixed', ids: selected.map(item => item.id) }];
-    pendingLiquidationBatchSetup = { groups };
-    closeInventoryMoveConfirmation();
-    openLiquidationBatchSetup();
-}
-function closeLiquidationBatchSetup() { document.getElementById('liquidation_batch_setup')?.remove(); pendingLiquidationBatchSetup = null; }
-function suggestedLiquidationBatchName(items) {
-    const metals = Array.from(new Set(items.map(item => item.metal)));
-    const grades = Array.from(new Set(items.map(item => gradeLabel(item.metal, item.karat))));
-    return `${metals.length > 1 ? 'Mixed' : grades.length === 1 ? grades[0] : items[0]?.metal || 'Liquidation'} batch`;
-}
-function liquidationLinesForItems(items) {
-    return items.map(item => ({ itemId: item.id, previousStatus: item.status, weight: roundWeight(item.currentWeight), cost: roundMoney(item.cost) }));
-}
-function appendItemsToLiquidationBatch(batch, items) {
-    const existingIds = new Set((batch.lines || []).map(line => line.itemId));
-    const appendedItems = [];
-    items.forEach(item => {
-        if (!item?.id || existingIds.has(item.id))
-            return;
-        existingIds.add(item.id);
-        appendedItems.push(item);
-    });
-    batch.lines = [...(batch.lines || []), ...liquidationLinesForItems(appendedItems)];
-    appendedItems.forEach(item => { item.status = 'For Liquidation'; item.liquidationBatchId = batch.id; });
-    const batchMetals = Array.from(new Set((batch.lines || []).map(line => db.stock.find(stock => stock.id === line.itemId)?.metal).filter(Boolean)));
-    if (batchMetals.length)
-        batch.metal = batchMetals.length === 1 ? batchMetals[0] : 'Mixed';
-    return appendedItems;
-}
-function openLiquidationBatchSetup() {
-    const pending = pendingLiquidationBatchSetup;
-    if (!pending)
-        return;
-    const groups = pending.groups.map(group => ({ ...group, items: group.ids.map(id => db.stock.find(item => item.id === id)).filter(Boolean) }));
-    if (groups.some(group => group.items.length !== group.ids.length)) {
-        closeLiquidationBatchSetup();
-        toast('One or more selected records are no longer available');
-        render();
-        return;
-    }
-    const modal = document.createElement('div');
-    modal.id = 'liquidation_batch_setup';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="liquidation_batch_setup_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">Create liquidation batch</div><h2 id="liquidation_batch_setup_title">Assign batch details</h2></div><button class="modal-close" onclick="closeLiquidationBatchSetup()" aria-label="Close">×</button></div>
-    <p class="move-confirmation-intro">Complete the batch details below. Mixed Gold, Silver, and Platinum items are accepted.</p>
-    ${groups.map((group, index) => {
-        const totalWeight = group.items.reduce((sum, item) => sum + Number(item.currentWeight), 0), totalCost = group.items.reduce((sum, item) => sum + Number(item.cost), 0);
-        const metals = Array.from(new Set(group.items.map(item => item.metal)));
-        return `<section class="move-confirmation-note"><strong>${esc(metals.join(' / '))} batch · ${group.items.length} item${group.items.length === 1 ? '' : 's'}</strong><div class="form-grid" style="margin-top:12px;"><div class="field"><label>Batch name</label><input id="new_liquidation_batch_name_${index}" value="${esc(suggestedLiquidationBatchName(group.items))}" required></div><div class="field"><label>Assigned buyer</label><input id="new_liquidation_batch_buyer_${index}" placeholder="Buyer name" required></div><div class="field span-2"><label>Notes</label><input id="new_liquidation_batch_notes_${index}" placeholder="Optional"></div></div><div class="move-confirmation-summary"><div><span>Metal${metals.length === 1 ? '' : 's'}</span><strong>${esc(metals.join(' / '))}</strong></div><div><span>Items</span><strong>${group.items.length}</strong></div><div><span>Total weight</span><strong>${fmtWeight(totalWeight)}</strong></div><div><span>Carrying cost</span><strong>${fmtMoney(totalCost)}</strong></div></div></section>`;
-    }).join('')}
-    <div class="form-actions"><button class="btn secondary" onclick="closeLiquidationBatchSetup()">Cancel</button><button class="btn" onclick="createLiquidationBatch()">Create ${groups.length === 1 ? 'batch' : groups.length + ' batches'}</button></div>
-  </div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeLiquidationBatchSetup(); });
-    document.body.appendChild(modal);
-    document.getElementById('new_liquidation_batch_buyer_0')?.focus();
-}
-async function createLiquidationBatch() {
-    const pending = pendingLiquidationBatchSetup;
-    if (!pending)
-        return;
-    const prepared = pending.groups.map((group, index) => ({
-        metal: group.metal,
-        name: val(`new_liquidation_batch_name_${index}`).trim(),
-        buyer: val(`new_liquidation_batch_buyer_${index}`).trim(),
-        notes: val(`new_liquidation_batch_notes_${index}`).trim(),
-        items: group.ids.map(id => db.stock.find(item => item.id === id)).filter(item => item && selectableInventory(item))
-    }));
-    if (prepared.some(group => !group.name || !group.buyer)) {
-        toast('Enter a batch name and assigned buyer');
-        return;
-    }
-    if (prepared.some((group, index) => group.items.length !== pending.groups[index].ids.length)) {
-        closeLiquidationBatchSetup();
-        toast('One or more selected records are no longer available');
-        render();
-        return;
-    }
-    const beforeState = JSON.parse(JSON.stringify(db));
-    prepared.forEach(group => {
-        const id = nextSequenceId('LB', db.liquidationBatches);
-        const batch = { id, name: group.name, buyer: group.buyer, metal: group.metal, lines: [], notes: group.notes, createdAt: new Date().toISOString(), createdBy: currentUser?.displayName || '' };
-        appendItemsToLiquidationBatch(batch, group.items);
-        db.liquidationBatches.push(batch);
-    });
-    const saved = await saveDB();
-    if (!saved) {
-        db = beforeState;
-        render();
-        toast(`Liquidation ${prepared.length === 1 ? 'batch was' : 'batches were'} not created`);
-        return;
-    }
-    inventoryMoveSelection.clear();
-    closeLiquidationBatchSetup();
-    goTab('liquidation');
-    toast(`${prepared.length} liquidation ${prepared.length === 1 ? 'batch' : 'batches'} created`);
-}
 function renderInventory() {
-    const week = inventoryWeekRange();
-    if (inventorySelectedDate !== 'All' && (inventorySelectedDate < week.start || inventorySelectedDate > week.end))
-        inventorySelectedDate = week.start;
-    const dates = Array.from({ length: 7 }, (_, index) => dateKeyPlusDays(week.start, index));
-    const dailyRows = dates.map(date => {
-        const purchases = db.stock.filter(item => item.date === date && !item.sourceRefiningBatchId);
-        const stock = purchases.filter(activeInventoryRecord), available = stock.filter(selectableInventory);
-        return { date, purchases, stock, available, weight: available.reduce((sum, item) => sum + Number(item.currentWeight), 0), cost: available.reduce((sum, item) => sum + Number(item.cost), 0) };
-    });
-    const allActiveStock = db.stock.filter(activeInventoryRecord);
-    const allAvailableStock = allActiveStock.filter(selectableInventory);
-    const selectedDay = inventorySelectedDate === 'All'
-        ? { date: 'All', stock: allActiveStock, available: allAvailableStock, weight: allAvailableStock.reduce((sum, item) => sum + Number(item.currentWeight), 0), cost: allAvailableStock.reduce((sum, item) => sum + Number(item.cost), 0) }
-        : dailyRows.find(day => day.date === inventorySelectedDate) || dailyRows[0];
-    const percentagePool = inventoryPercentagePool();
-    const selectedMoveCount = selectedInventoryForCategory().length;
-    const selectedRecords = selectedInventoryForCategory();
-    const selectedMovableCount = selectedInventoryForMove().length;
-    const canMoveSelected = selectedMoveCount > 0 && selectedMovableCount === selectedMoveCount;
-    const selectedPoolItems = selectedInventoryForPool();
-    const canPoolSelected = selectedPoolItems.length >= 2;
-    const activeFilterLabels = [invFilter.metal, invFilter.karat, invFilter.type, invFilter.status].filter(value => value !== 'All');
-    const rows = selectedDay.stock.filter(s => (invFilter.metal === 'All' || s.metal === invFilter.metal) &&
+    const karats = Array.from(new Set(db.stock.map(s => s.karat)));
+    const rows = db.stock.filter(s => (invFilter.metal === 'All' || s.metal === invFilter.metal) &&
         (invFilter.karat === 'All' || s.karat === invFilter.karat) &&
         (invFilter.type === 'All' || s.itemType === invFilter.type) &&
-        (invFilter.status === 'All' || s.status === invFilter.status) &&
-        inventorySearchMatch(s)).sort((a, b) => b.date.localeCompare(a.date));
-    const dailyPurchaseSource = inventorySelectedDate === 'All' ? [] : selectedDay.purchases.filter(item => invFilter.metal === 'All' || item.metal === invFilter.metal);
-    const dailyPurchaseTotals = purchaseTotalsByPurity(dailyPurchaseSource);
-    const currentStock = allActiveStock;
-    const breakdownSource = currentStock.filter(item => invFilter.metal === 'All' || item.metal === invFilter.metal);
-    const breakdownMap = new Map();
-    breakdownSource.forEach(item => {
-        const key = `${item.metal}|${item.karat}`, entry = breakdownMap.get(key) || { metal: item.metal, karat: item.karat, count: 0, weight: 0, cost: 0 };
-        entry.count += 1;
-        entry.weight += Number(item.currentWeight);
-        entry.cost += Number(item.cost);
-        breakdownMap.set(key, entry);
+        (invFilter.status === 'All' || s.status === invFilter.status)).sort((a, b) => b.date.localeCompare(a.date));
+    const groups = {};
+    db.stock.forEach(s => {
+        if (s.currentWeight <= 0 || s.status === 'Sold' || s.status === 'Liquidated')
+            return;
+        const key = [s.metal, s.karat, s.itemType, s.status].join(' · ');
+        groups[key] = groups[key] || { weight: 0, cost: 0 };
+        groups[key].weight += Number(s.currentWeight);
+        groups[key].cost += Number(s.cost);
     });
-    const breakdown = Array.from(breakdownMap.values()).sort((a, b) => a.metal.localeCompare(b.metal) || (GRADE_META[a.metal]?.findIndex(grade => grade.key === a.karat) ?? 99) - (GRADE_META[b.metal]?.findIndex(grade => grade.key === b.karat) ?? 99));
-    const breakdownWeight = breakdownSource.reduce((sum, item) => sum + Number(item.currentWeight), 0);
-    const breakdownCost = breakdownSource.reduce((sum, item) => sum + Number(item.cost), 0);
-    const lowKaratGold = currentStock.filter(lowKaratGoldInventory);
-    const lowKaratEligible = lowKaratGold.filter(categorizableInventory);
-    const lowKaratWeight = lowKaratGold.reduce((sum, item) => sum + Number(item.currentWeight), 0);
-    const selectedGradeCounts = new Map();
-    selectedRecords.forEach(item => { const key = `${item.metal} ${gradeLabel(item.metal, item.karat)}`; selectedGradeCounts.set(key, (selectedGradeCounts.get(key) || 0) + 1); });
     return `
   <section class="block">
-    <div class="page-head inventory-overview-head"><div><p class="eyebrow">Across all purchase dates</p><h2 class="block-title">Current Stock Overview</h2><p class="form-note">See the complete available inventory before opening the daily records.</p></div></div>
-    <div class="inventory-metal-tabs"><strong>View inventory</strong>${['All', 'Gold', 'Silver', 'Platinum'].map(metal => `<button class="${invFilter.metal === metal ? 'active' : ''}" onclick="selectInventoryMetalCategory('${metal}')">${metal}</button>`).join('')}</div>
-    <div class="stat-row inventory-overview-stats">
-      <div class="stat"><div class="label">Current items</div><div class="value">${breakdownSource.length}</div><div class="sub">active records across all dates</div></div>
-      <div class="stat"><div class="label">Total weight</div><div class="value">${fmtWeight(breakdownWeight)}</div><div class="sub">remaining current stock</div></div>
-      <div class="stat"><div class="label">Total inventory cost</div><div class="value">${fmtMoney(breakdownCost)}</div><div class="sub">combined carrying cost</div></div>
-      <div class="stat"><div class="label">Karat / purity groups</div><div class="value">${breakdown.length}</div><div class="sub">shown in the breakdown below</div></div>
+    <h2 class="block-title">Inventory summary (weight &amp; cost)</h2>
+    <div class="stat-row">
+      ${Object.keys(groups).length ? Object.entries(groups).map(([k, v]) => `<div class="stat"><div class="label">${k}</div><div class="value">${fmtWeight(v.weight)}</div><div class="sub">${fmtMoney(v.cost)} cost</div></div>`).join('')
+        : '<div class="empty-note" style="flex:1;">No active inventory yet.</div>'}
     </div>
-    ${(invFilter.metal === 'All' || invFilter.metal === 'Gold') && isAdmin() ? `<div class="low-karat-card"><div><span class="low-karat-label">Quick refining selection</span><strong>Low-karat Gold</strong><small>Below 18K · ${lowKaratGold.length} item${lowKaratGold.length === 1 ? '' : 's'} · ${fmtWeight(lowKaratWeight)} across all dates</small></div><button class="btn" onclick="selectAllLowKaratGold()" ${lowKaratEligible.length ? '' : 'disabled'}>Select all for refining (${lowKaratEligible.length})</button></div>` : ''}
-    <h2 class="block-title inventory-breakdown-heading">${invFilter.metal === 'All' ? 'All current stock by grade' : `${invFilter.metal} inventory by ${invFilter.metal === 'Gold' ? 'karat' : 'purity'}`}</h2>
-    <p class="form-note inventory-breakdown-caption">Totals below combine every active purchase date.</p>
-    ${breakdown.length ? `<div class="table-wrap inventory-breakdown"><table><thead><tr><th>Metal</th><th>Karat / purity</th><th class="num-head">Items</th><th class="num-head">Total weight</th><th class="num-head">Total cost</th></tr></thead><tbody>${breakdown.map(entry => `<tr><td><span class="metal-tag ${entry.metal.toLowerCase()}">${entry.metal}</span></td><td>${esc(gradeLabel(entry.metal, entry.karat))}</td><td class="num">${entry.count}</td><td class="num">${fmtWeight(entry.weight)}</td><td class="num">${fmtMoney(entry.cost)}</td></tr>`).join('')}</tbody></table></div><div class="inventory-breakdown-total"><span>${invFilter.metal === 'All' ? 'All current stock' : `${invFilter.metal} total`} · ${breakdownSource.length} item${breakdownSource.length === 1 ? '' : 's'} · ${fmtWeight(breakdownWeight)}</span><strong>${fmtMoney(breakdownCost)}</strong></div>`
-        : `<div class="empty-note">No active ${invFilter.metal === 'All' ? 'inventory' : esc(invFilter.metal) + ' inventory'} remains.</div>`}
-    <p class="form-note inventory-history-note">For Liquidation items are shown only in the Liquidation view. Liquidated, refined, and sold items remain in reports and transaction history.</p>
   </section>
 
   <section class="block">
-    <div class="page-head" style="margin-bottom:14px;"><div><p class="eyebrow">Complete stock or daily view</p><h2 class="block-title" style="margin:0;">Inventory records</h2><p class="form-note">Use All dates to see everything together, or choose a day for a focused view.</p></div><div class="form-actions" style="margin:0;"><button class="btn secondary small" onclick="changeInventoryWeek(-1)">Previous Monday–Sunday</button><button class="btn secondary small" onclick="changeInventoryWeek(1)">Next Monday–Sunday</button></div></div>
-    <div class="inventory-today-totals"><div>${['All', 'Gold', 'Silver'].map(metal => `<button class="btn secondary small" onclick="showTodayInventoryTotals('${metal}')">Today's ${metal}</button>`).join('')}</div></div>
-    <div class="inventory-days">
-      <button class="inventory-day inventory-all-dates ${inventorySelectedDate === 'All' ? 'active' : ''}" onclick="selectAllInventoryDates()"><strong>All dates</strong><span>Complete current stock</span><small>${allActiveStock.length} record${allActiveStock.length === 1 ? '' : 's'}<br>${fmtWeight(allAvailableStock.reduce((sum, item) => sum + Number(item.currentWeight), 0))} available</small></button>
-      ${dailyRows.map(day => `<button class="inventory-day ${day.date === inventorySelectedDate ? 'active' : ''}" onclick="selectInventoryDate('${day.date}')"><strong>${new Date(day.date + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'long' })}</strong><span>${fmtDate(day.date)}</span><small>${day.purchases.length} purchase${day.purchases.length === 1 ? '' : 's'}<br>${fmtWeight(day.purchases.reduce((sum, item) => sum + Number(item.netWeight || 0), 0))} bought</small></button>`).join('')}
+    <h2 class="block-title">Filter stock</h2>
+    <div class="filter-row">
+      <div class="field"><label>Metal</label><select onchange="invFilter.metal=this.value; render();">
+        ${['All', 'Gold', 'Silver', 'Platinum'].map(m => `<option value="${m}" ${invFilter.metal === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
+      <div class="field"><label>Karat / purity</label><select onchange="invFilter.karat=this.value; render();">
+        <option value="All">All</option>${karats.map(k => `<option value="${k}" ${invFilter.karat === k ? 'selected' : ''}>${k}</option>`).join('')}</select></div>
+      <div class="field"><label>Item type</label><select onchange="invFilter.type=this.value; render();">
+        ${['All', 'Jewelry', 'Scrap'].map(t => `<option value="${t}" ${invFilter.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+      <div class="field"><label>Status</label><select onchange="invFilter.status=this.value; render();">
+        ${['All', 'For Selling', 'For Refining', 'On Hold', 'Liquidated', 'Sold'].map(s => `<option value="${s}" ${invFilter.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
     </div>
-    ${inventorySelectedDate === 'All' ? `<div class="inventory-daily-prompt">Choose a day above, or use <strong>Today's totals</strong>, to view totals for every purity.</div>` : `<div id="inventory_daily_totals" class="inventory-daily-totals">
-      <div class="inventory-daily-totals-head"><div><h2 class="block-title">Purchase totals by purity · ${fmtDate(selectedDay.date)}</h2><p class="form-note">${invFilter.metal === 'All' ? 'All metals' : esc(invFilter.metal)} purchased on this date.</p></div></div>
-      ${dailyPurchaseTotals.length ? `<div class="table-wrap inventory-daily-purity-table"><table><thead><tr><th>Metal</th><th>Karat / purity</th><th class="num-head">Purchase lines</th><th class="num-head">Purchased weight</th><th class="num-head">Total payout</th><th class="num-head">Remaining weight</th></tr></thead><tbody>${dailyPurchaseTotals.map(entry => `<tr><td><span class="metal-tag ${entry.metal.toLowerCase()}">${entry.metal}</span></td><td><strong>${esc(gradeLabel(entry.metal, entry.karat))}</strong></td><td class="num">${entry.count}</td><td class="num">${fmtWeight(entry.purchasedWeight)}</td><td class="num">${fmtMoney(entry.payout)}</td><td class="num">${fmtWeight(entry.remainingWeight)}</td></tr>`).join('')}</tbody></table></div>` : `<div class="empty-note">No ${invFilter.metal === 'All' ? 'purchases' : esc(invFilter.metal) + ' purchases'} were recorded on this date.</div>`}
-    </div>`}
-    <h2 class="block-title">${inventorySelectedDate === 'All' ? 'All purchase dates' : `${new Date(selectedDay.date + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'long' })}, ${fmtDate(selectedDay.date)}`}</h2>
-    <div class="stat-row">
-      <div class="stat"><div class="label">Current stock records</div><div class="value">${selectedDay.stock.length}</div><div class="sub">active inventory lines ${inventorySelectedDate === 'All' ? 'across all dates' : 'on this date'}</div></div>
-      <div class="stat"><div class="label">Available stock lines</div><div class="value">${selectedDay.available.length}</div><div class="sub">eligible for liquidation or refining</div></div>
-      <div class="stat"><div class="label">Available weight</div><div class="value">${fmtWeight(selectedDay.weight)}</div><div class="sub">remaining from ${inventorySelectedDate === 'All' ? 'all purchases' : "this date's purchases"}</div></div>
-      <div class="stat"><div class="label">Remaining cost</div><div class="value">${fmtMoney(selectedDay.cost)}</div><div class="sub">carrying cost ${inventorySelectedDate === 'All' ? 'across all dates' : 'for this purchase date'}</div></div>
-    </div>
-  </section>
-
-  <section class="block" id="inventory_stock_list">
-    <div class="inventory-stock-head"><div><h2 class="block-title">Stock records</h2><p class="form-note">${inventorySearch ? `${rows.length} matching record${rows.length === 1 ? '' : 's'}` : activeFilterLabels.length ? `Showing: ${activeFilterLabels.map(esc).join(' · ')}` : 'Showing all records'} across ${inventoryDateLabel()}.</p></div><div class="inventory-stock-tools"><div class="field inventory-stock-search"><label for="inventory_stock_search">Search stock records</label><input id="inventory_stock_search" type="search" autocomplete="off" value="${esc(inventorySearch)}" placeholder="Customer, date, metal, karat, or status" oninput="updateInventorySearch(this.value)"></div><button class="btn secondary small" onclick="openInventoryFilterModal()">Change filters</button></div></div>
-    ${isAdmin() ? `<div class="inventory-action-panel"><div class="inventory-action-status"><strong>${percentagePool.length} eligible ${inventorySelectedDate === 'All' ? 'across all dates' : 'on this date'}</strong><span><span id="inventory_liq_count">${selectedMoveCount}</span> manually selected${percentagePool.length ? '' : ' · change the filters'}</span>${selectedGradeCounts.size ? `<div class="inventory-selection-chips">${Array.from(selectedGradeCounts.entries()).map(([grade, count]) => `<span>${esc(grade)} · ${count}</span>`).join('')}</div>` : ''}</div><div class="inventory-action-buttons"><button class="btn secondary small" onclick="selectAllVisibleInventory()">Select all shown</button><button class="btn secondary small" onclick="selectAllLowKaratGold()">Select low-karat Gold</button><button class="btn secondary small" data-inventory-selection-required onclick="clearInventorySelection()" ${selectedMoveCount ? '' : 'disabled'}>Clear</button><div class="inventory-bulk-category"><select id="inventory_bulk_status" aria-label="Category for selected inventory" onchange="inventoryBulkStatus=this.value">${['Available', 'For Refining', 'On Hold'].map(status => `<option ${inventoryBulkStatus === status ? 'selected' : ''}>${status}</option>`).join('')}</select><button class="btn secondary small" data-inventory-selection-required onclick="categorizeCheckedInventory()" ${selectedMoveCount ? '' : 'disabled'}>Apply category</button></div><button class="btn" id="inventory_pool_selected" onclick="openManualInventoryPoolModal()" ${canPoolSelected ? '' : 'disabled'}>Pool selected</button><button class="btn secondary small" id="inventory_move_selected" onclick="moveCheckedInventoryToLiquidation()" ${canMoveSelected ? '' : 'disabled'}>Move selected to liquidation</button><button class="btn secondary small" data-inventory-selection-required onclick="prepareInventoryForRefining()" ${selectedMoveCount ? '' : 'disabled'}>Refine selected</button></div></div>` : ''}
-    ${tableOrEmpty(rows, s => `<tr>${isAdmin() ? `<td><input type="checkbox" data-inventory-move-id="${s.id}" aria-label="Select ${esc(s.metal)} ${esc(s.karat)} from ${esc(s.customerName)}" onchange="toggleInventoryForLiquidation('${s.id}',this.checked)" ${inventoryMoveSelection.has(s.id) ? 'checked' : ''} ${categorizableInventory(s) ? '' : 'disabled'}></td>` : ''}<td>${fmtDate(s.date)}</td><td>${esc(s.customerName)}</td><td><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)}</td>
-      <td>${esc(s.itemType)}</td><td class="num">${fmtWeight(s.currentWeight)}</td><td class="num">${fmtMoney(s.cost)}</td><td>${s.inventoryPoolId ? `${statusPill((db.inventoryPools.find(pool => pool.id === s.inventoryPoolId) || {}).status || 'Pooled')}<br><span class="form-note">${esc(s.inventoryPoolId)}</span>` : statusPill(s.status)}</td><td>${esc(s.remarks || '—')}</td>${isAdmin() ? `<td><div class="form-actions">${movableInventory(s) ? `<button class="btn secondary small" onclick="liquidateInventoryItem('${s.id}')">Liquidate item</button>` : ''}${adminEditButton('Inventory', s.id)}</div></td>` : ''}</tr>`, [...(isAdmin() ? ['Select'] : []), 'Date', 'Customer', 'Metal / karat', 'Type', 'Current weight', 'Cost', 'Status', 'Remarks', ...(isAdmin() ? ['Actions'] : [])], `No stock matches this filter ${inventorySelectedDate === 'All' ? 'across all purchase dates' : `on ${fmtDate(selectedDay.date)}`}.`)}
+    ${tableOrEmpty(rows, s => `<tr><td>${fmtDate(s.date)}</td><td>${esc(s.customerName)}</td><td><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)}</td>
+      <td>${esc(s.itemType)}</td><td class="num">${fmtWeight(s.currentWeight)}</td><td class="num">${fmtMoney(s.cost)}</td><td>${statusPill(s.status)}</td><td>${esc(s.location || '—')}</td><td>${esc(s.remarks || '—')}</td>${isAdmin() ? `<td>${adminEditButton('Inventory', s.id)}</td>` : ''}</tr>`, ['Date', 'Customer', 'Metal / karat', 'Type', 'Current weight', 'Cost', 'Status', 'Location', 'Remarks', ...(isAdmin() ? ['Actions'] : [])], 'No stock matches this filter.')}
   </section>
   `;
 }
@@ -3756,12 +1267,8 @@ function openInventoryEdit(id) {
     const item = db.stock.find(s => s.id === id);
     if (!item || !adminEditGuard())
         return;
-    if (item.inventoryPoolId) {
-        toast(`Manage this item through ${item.inventoryPoolId}`);
-        return;
-    }
     editingInventoryId = id;
-    const statuses = ['Available', 'For Refining', 'On Hold', 'Liquidated', 'Refined', 'Sold'];
+    const statuses = ['For Selling', 'For Refining', 'On Hold', 'Liquidated', 'Sold'];
     openAdminEditModal('Edit purchase / inventory record', `<div class="form-grid">
     <div class="field"><label>Date</label><input id="edit_inventory_date" type="date" value="${esc(item.date || todayStr())}"></div>
     <div class="field"><label>Classification</label><select id="edit_inventory_status">${statuses.map(status => `<option ${item.status === status ? 'selected' : ''}>${status}</option>`).join('')}</select></div>
@@ -3769,6 +1276,7 @@ function openInventoryEdit(id) {
     <div class="field"><label>Remaining cost (PHP)</label><input id="edit_inventory_cost" type="number" min="0" step="0.01" value="${Number(item.cost)}"></div>
     <div class="field"><label>Payment method</label><input id="edit_inventory_payment" value="${esc(item.paymentMethod || '')}"></div>
     <div class="field"><label>Staff member</label><input id="edit_inventory_staff" value="${esc(item.staff || '')}"></div>
+    <div class="field"><label>Storage location</label><input id="edit_inventory_location" value="${esc(item.location || '')}"></div>
     <div class="field"><label>Item type</label><select id="edit_inventory_type"><option ${item.itemType === 'Jewelry' ? 'selected' : ''}>Jewelry</option><option ${item.itemType === 'Scrap' ? 'selected' : ''}>Scrap</option></select></div>
     <div class="field span-2"><label>Remarks</label><textarea id="edit_inventory_remarks">${esc(item.remarks || '')}</textarea></div>
   </div><p class="form-note">Original metal, purity, purchase weight, rate, and payout remain locked to preserve the audit trail.</p>`, 'saveInventoryEdit', 'deleteInventoryRecord');
@@ -3792,15 +1300,15 @@ async function saveInventoryEdit() {
         toast('Enter a valid remaining cost');
         return;
     }
-    if (weight === 0 && !['Liquidated', 'Refined', 'Sold'].includes(status)) {
-        toast('Choose Liquidated, Refined, or Sold when the remaining weight is zero');
+    if (weight === 0 && !['Liquidated', 'Sold'].includes(status)) {
+        toast('Choose Liquidated or Sold when the remaining weight is zero');
         return;
     }
-    if (weight > 0 && ['Liquidated', 'Refined', 'Sold'].includes(status)) {
-        toast('Liquidated, Refined, or Sold inventory must have zero remaining weight');
+    if (weight > 0 && ['Liquidated', 'Sold'].includes(status)) {
+        toast('Liquidated or Sold inventory must have zero remaining weight');
         return;
     }
-    Object.assign(item, { date: val('edit_inventory_date'), status, currentWeight: roundWeight(weight), cost: roundMoney(cost), paymentMethod: val('edit_inventory_payment').trim(), staff: val('edit_inventory_staff').trim(), itemType: val('edit_inventory_type'), remarks: val('edit_inventory_remarks').trim() });
+    Object.assign(item, { date: val('edit_inventory_date'), status, currentWeight: roundWeight(weight), cost: roundMoney(cost), paymentMethod: val('edit_inventory_payment').trim(), staff: val('edit_inventory_staff').trim(), location: val('edit_inventory_location').trim(), itemType: val('edit_inventory_type'), remarks: val('edit_inventory_remarks').trim() });
     closeAdminEditModal();
     await saveDB();
     render();
@@ -3813,17 +1321,12 @@ async function deleteInventoryRecord() {
     if (!item)
         return;
     const linked = db.liquidations.some(record => (record.lines || []).some(line => line.itemId === item.id)) ||
-        db.inventoryPools.some(pool => (pool.itemIds || []).includes(item.id)) ||
-        db.liquidationBatches.some(record => (record.lines || []).some(line => line.itemId === item.id)) ||
-        db.refiningBatches.some(record => (record.itemIds || []).includes(item.id) || record.outputItemId === item.id) || db.retailSales.some(record => record.itemId === item.id);
+        db.refiningBatches.some(record => (record.itemIds || []).includes(item.id)) || db.retailSales.some(record => record.itemId === item.id);
     if (linked) {
         toast('This item is linked to a completed transaction. Delete that transaction first.');
         return;
     }
-    if (!await confirmDeletion('Delete inventory record?', `Permanently remove this ${item.metal} ${item.karat} item from inventory.`, [
-        { label: 'Item', value: `${item.metal} ${item.karat} · ${item.itemType}` }, { label: 'Purchase date', value: fmtDate(item.date) },
-        { label: 'Current weight', value: fmtWeight(item.currentWeight) }, { label: 'Remaining cost', value: fmtMoney(item.cost) }
-    ]))
+    if (!confirm(`Delete this ${item.metal} ${item.karat} inventory record? This cannot be undone.`))
         return;
     db.stock = db.stock.filter(s => s.id !== item.id);
     closeAdminEditModal();
@@ -3832,415 +1335,122 @@ async function deleteInventoryRecord() {
     toast('Inventory record deleted');
 }
 /* ============================= LIQUIDATION ============================= */
-const minimizedLiquidationBatches = new Set();
-function toggleLiquidationBatchMinimized(id) {
-    if (minimizedLiquidationBatches.has(id))
-        minimizedLiquidationBatches.delete(id);
-    else
-        minimizedLiquidationBatches.add(id);
-    render();
-}
-function liquidationBatchGradeBadges(batch) {
-    const mixed = batch.metal === 'Mixed', labels = [];
-    (batch.lines || []).forEach(line => {
-        const item = db.stock.find(stock => stock.id === line.itemId) || {};
-        const grade = gradeLabel(item.metal || '', item.karat || '');
-        const label = mixed ? `${item.metal || ''} ${grade}`.trim() : grade;
-        if (label && !labels.includes(label))
-            labels.push(label);
-    });
-    return labels.map(label => `<span class="liquidation-batch-grade">${esc(label)}</span>`).join('');
-}
-function liquidationBatchKaratTotals(batch) {
-    const totals = new Map();
-    (batch.lines || []).forEach(line => {
-        const item = db.stock.find(stock => stock.id === line.itemId) || {};
-        const metal = item.metal || batch.metal || 'Unknown';
-        const grade = gradeLabel(metal, item.karat || 'Unknown');
-        const key = `${metal}|${grade}`, entry = totals.get(key) || { metal, grade, items: 0, weight: 0, cost: 0 };
-        entry.items += 1;
-        entry.weight += Number(line.weight || 0);
-        entry.cost += Number(line.cost || 0);
-        totals.set(key, entry);
-    });
-    return Array.from(totals.values());
-}
+let liqMetal = 'Gold', liqStatus = 'All', liqKarat = 'All';
 function renderLiquidation() {
-    const batches = db.liquidationBatches.slice().sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
-    const allLines = batches.flatMap(batch => batch.lines || []);
-    const totalWeight = allLines.reduce((sum, line) => sum + Number(line.weight || 0), 0), totalCost = allLines.reduce((sum, line) => sum + Number(line.cost || 0), 0);
-    return `<section class="block liquidation-overview">
-    <div class="batch-head"><div><p class="eyebrow">Off-hand stock committed to buyers</p><h2 class="block-title">Open liquidation batches</h2><p class="form-note">These items are excluded from Current Inventory until the batch is sold or returned.</p></div><button class="btn" onclick="goTab('inventory')">Create batch from Inventory</button></div>
-    <div class="liquidation-compact-overview"><span><small>Open batches</small><strong>${batches.length}</strong></span><span><small>Items in transit</small><strong>${allLines.length}</strong></span><span><small>Total weight</small><strong>${fmtWeight(totalWeight)}</strong></span><span><small>Total carrying cost</small><strong>${fmtMoney(totalCost)}</strong></span></div>
-  </section>
-  ${batches.map(batch => {
-        const lines = batch.lines || [], cost = lines.reduce((sum, line) => sum + Number(line.cost || 0), 0), weight = lines.reduce((sum, line) => sum + Number(line.weight || 0), 0);
-        const minimized = minimizedLiquidationBatches.has(batch.id), batchGradeBadges = liquidationBatchGradeBadges(batch), karatTotals = liquidationBatchKaratTotals(batch);
-        return `<section class="block liquidation-batch-card ${minimized ? 'is-minimized' : ''}">
-      <div class="batch-head liquidation-batch-head"><div><div class="liquidation-batch-identity"><p class="eyebrow">${esc(batch.id)} · ${esc(batch.metal)}</p>${batchGradeBadges}</div><h2 class="block-title">${esc(batch.name)}</h2><p class="form-note">Assigned buyer: <strong>${esc(batch.buyer)}</strong>${batch.createdAt ? ` · Created ${new Date(batch.createdAt).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}` : ''}</p>${batch.notes ? `<p class="liquidation-batch-comment"><strong>Comment:</strong> ${esc(batch.notes)}</p>` : ''}</div><div class="form-actions"><button class="btn secondary small" onclick="toggleLiquidationBatchMinimized('${batch.id}')" aria-expanded="${minimized ? 'false' : 'true'}">${minimized ? 'Expand' : 'Minimize'}</button><button class="btn secondary small" onclick="openLiquidationBatchEdit('${batch.id}')">Edit batch</button><button class="btn secondary small" onclick="returnLiquidationBatch('${batch.id}')">Return to Inventory</button><button class="btn small" onclick="openCompleteLiquidationBatch('${batch.id}')">Record sale</button></div></div>
-      <div class="liquidation-batch-compact-summary"><span><small>Items</small><strong>${lines.length}</strong></span><span><small>Total weight</small><strong>${fmtWeight(weight)}</strong></span><span><small>Total inventory cost</small><strong>${fmtMoney(cost)}</strong></span></div>
-      <div class="liquidation-batch-karat-totals"><h3>Totals per karat / purity</h3><div class="table-wrap"><table><thead><tr><th>Metal</th><th>Karat / purity</th><th class="num-head">Items</th><th class="num-head">Total weight</th><th class="num-head">Total cost</th></tr></thead><tbody>${karatTotals.map(entry => `<tr><td><span class="metal-tag ${String(entry.metal).toLowerCase()}">${esc(entry.metal)}</span></td><td><strong>${esc(entry.grade)}</strong></td><td class="num">${entry.items}</td><td class="num"><strong>${fmtWeight(entry.weight)}</strong></td><td class="num"><strong>${fmtMoney(entry.cost)}</strong></td></tr>`).join('')}</tbody></table></div></div>
-      ${minimized ? '' : `
-      <div class="table-wrap liquidation-batch-items"><table><thead><tr><th>Item</th><th>Original seller</th><th>Purchase date</th><th>Status</th><th class="num-head">Weight</th><th class="num-head">Carrying cost</th></tr></thead><tbody>${lines.map(line => {
-            const item = db.stock.find(stock => stock.id === line.itemId) || {};
-            return `<tr><td><strong>${esc(item.metal || batch.metal)} ${esc(gradeLabel(item.metal || batch.metal, item.karat || ''))}</strong><br><span class="form-note">${esc(item.itemType || 'Inventory item')} · ${esc(line.itemId)}</span></td><td>${esc(item.customerName || '—')}</td><td>${fmtDate(item.date)}</td><td>${statusPill('For Liquidation')}</td><td class="num">${fmtWeight(line.weight)}</td><td class="num">${fmtMoney(line.cost)}</td></tr>`;
-        }).join('')}</tbody><tfoot><tr><th colspan="4">Batch subtotal · ${lines.length} item${lines.length === 1 ? '' : 's'}</th><th class="num">${fmtWeight(weight)}</th><th class="num">${fmtMoney(cost)}</th></tr></tfoot></table></div>
-      `}
-    </section>`;
-    }).join('') || `<section class="block"><div class="empty-note">No items are currently marked For Liquidation.<div class="form-actions" style="justify-content:center;"><button class="btn" onclick="goTab('inventory')">Open Current Inventory</button></div></div></section>`}`;
-}
-function liquidationAmountLabel(record) {
-    const amounts = new Map();
-    (record.lines || []).forEach(line => {
-        const assay = line.assay || (db.stock.find(item => item.id === line.itemId) || {}).karat || 'Item';
-        const amount = Number(line.sellingAmount ?? line.proceeds ?? (Number(line.weight) * Number(line.sellingRate || record.sellingRate))) || 0;
-        amounts.set(assay, (amounts.get(assay) || 0) + amount);
-    });
-    if (!amounts.size && Number(record.proceeds) > 0)
-        return esc(fmtMoney(record.proceeds));
-    return amounts.size ? Array.from(amounts.entries()).map(([assay, amount]) => `${esc(assay)}: ${esc(fmtMoney(amount))}`).join('<br>') : '—';
-}
-let editingOpenLiquidationBatchId = null;
-const openLiquidationBatchAddSelection = new Set();
-let openLiquidationBatchItemFilter = 'All';
-function closeOpenLiquidationBatchModal() { document.getElementById('open_liquidation_batch_modal')?.remove(); editingOpenLiquidationBatchId = null; openLiquidationBatchAddSelection.clear(); openLiquidationBatchItemFilter = 'All'; }
-function liquidationBatchItemMatchesFilter(item, filter) {
-    return filter === 'All' || item.karat === filter || item.itemType === filter;
-}
-function liquidationBatchItemFilterOptions(items) {
-    const availableGrades = new Set(items.map(item => item.karat).filter(Boolean));
-    const gradeOrder = (GRADE_META[items[0]?.metal] || []).map(grade => grade.key);
-    const grades = [...gradeOrder.filter(grade => availableGrades.delete(grade)), ...Array.from(availableGrades).sort()];
-    const itemTypes = Array.from(new Set(items.map(item => item.itemType).filter(Boolean))).sort((a, b) => a.localeCompare(b));
-    return ['All', ...grades, ...itemTypes.filter(type => !grades.includes(type))];
-}
-function visibleOpenLiquidationBatchAddRows() {
-    return Array.from(document.querySelectorAll?.('[data-open-batch-add-row]') || []).filter(row => !row.hidden);
-}
-function syncOpenLiquidationBatchAddControls() {
-    const count = document.getElementById('edit_open_batch_add_count'), button = document.getElementById('edit_open_batch_add_submit');
-    if (count)
-        count.textContent = String(openLiquidationBatchAddSelection.size);
-    if (button)
-        button.disabled = !openLiquidationBatchAddSelection.size;
-    const visibleCheckboxes = visibleOpenLiquidationBatchAddRows().map(row => row.querySelector('input[data-open-batch-add-id]')).filter(Boolean);
-    const selectedVisible = visibleCheckboxes.filter(checkbox => checkbox.checked).length;
-    const selectAll = document.getElementById('edit_open_batch_select_all');
-    if (selectAll) {
-        selectAll.disabled = !visibleCheckboxes.length;
-        selectAll.checked = visibleCheckboxes.length > 0 && selectedVisible === visibleCheckboxes.length;
-        selectAll.indeterminate = selectedVisible > 0 && selectedVisible < visibleCheckboxes.length;
-    }
-    const shown = document.getElementById('edit_open_batch_visible_count');
-    if (shown)
-        shown.textContent = String(visibleCheckboxes.length);
-}
-function changeOpenLiquidationBatchItemFilter(filter) {
-    openLiquidationBatchItemFilter = filter || 'All';
-    Array.from(document.querySelectorAll?.('[data-open-batch-add-row]') || []).forEach(row => {
-        row.hidden = !liquidationBatchItemMatchesFilter({ karat: row.dataset.itemKarat, itemType: row.dataset.itemType }, openLiquidationBatchItemFilter);
-    });
-    syncOpenLiquidationBatchAddControls();
-}
-function toggleAllVisibleOpenLiquidationBatchItems(checked) {
-    visibleOpenLiquidationBatchAddRows().forEach(row => {
-        const checkbox = row.querySelector('input[data-open-batch-add-id]');
-        if (!checkbox)
-            return;
-        checkbox.checked = checked;
-        if (checked)
-            openLiquidationBatchAddSelection.add(checkbox.dataset.openBatchAddId);
-        else
-            openLiquidationBatchAddSelection.delete(checkbox.dataset.openBatchAddId);
-    });
-    syncOpenLiquidationBatchAddControls();
-}
-function toggleOpenLiquidationBatchItemPicker() {
-    const picker = document.getElementById('edit_open_batch_item_picker');
-    if (!picker)
-        return;
-    picker.classList.toggle('is-hidden');
-    if (!picker.classList.contains('is-hidden')) {
-        picker.querySelector('#edit_open_batch_item_filter')?.focus();
-        changeOpenLiquidationBatchItemFilter(openLiquidationBatchItemFilter);
-    }
-}
-function toggleOpenLiquidationBatchAddItem(id, checked) {
-    if (checked)
-        openLiquidationBatchAddSelection.add(id);
-    else
-        openLiquidationBatchAddSelection.delete(id);
-    syncOpenLiquidationBatchAddControls();
-}
-function openLiquidationBatchEdit(id) {
-    const batch = db.liquidationBatches.find(record => record.id === id);
-    if (!batch || !adminEditGuard())
-        return;
-    openLiquidationBatchAddSelection.clear();
-    openLiquidationBatchItemFilter = 'All';
-    editingOpenLiquidationBatchId = id;
-    const lines = batch.lines || [];
-    const batchWeight = lines.reduce((sum, line) => sum + Number(line.weight || 0), 0), batchCost = lines.reduce((sum, line) => sum + Number(line.cost || 0), 0);
-    const existingLineIds = new Set(lines.map(line => line.itemId));
-    const eligible = db.stock.filter(item => movableInventory(item) && !item.liquidationBatchId && !existingLineIds.has(item.id));
-    const modal = document.createElement('div');
-    modal.id = 'open_liquidation_batch_modal';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="inventory-move-modal liquidation-edit-modal" role="dialog" aria-modal="true" aria-labelledby="open_liquidation_batch_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">${esc(batch.id)} · ${esc(batch.metal)}</div><h2 id="open_liquidation_batch_title">Edit liquidation batch</h2></div><button class="modal-close" onclick="closeOpenLiquidationBatchModal()" aria-label="Close">×</button></div>
-    <div class="form-grid" style="margin-top:16px;"><div class="field"><label>Batch name</label><input id="edit_open_batch_name" value="${esc(batch.name)}"></div><div class="field"><label>Assigned buyer</label><input id="edit_open_batch_buyer" value="${esc(batch.buyer)}"></div><div class="field span-2"><label>Notes</label><input id="edit_open_batch_notes" value="${esc(batch.notes || '')}"></div></div>
-    <div class="liquidation-edit-current-head"><div><h3>Current batch items</h3><p class="form-note">Existing items remain unchanged.</p></div><button class="btn secondary small" onclick="toggleOpenLiquidationBatchItemPicker()">+ Add New Item</button></div>
-    <div class="table-wrap liquidation-edit-current-items"><table><thead><tr><th>Item</th><th>Seller</th><th>Purchase date</th><th class="num-head">Weight</th><th class="num-head">Cost</th></tr></thead><tbody>${lines.map(line => { const item = db.stock.find(stock => stock.id === line.itemId) || {}; return `<tr><td><strong>${esc(item.metal || batch.metal)} ${esc(gradeLabel(item.metal || batch.metal, item.karat || ''))}</strong> · ${esc(item.itemType || 'Inventory item')}</td><td>${esc(item.customerName || '—')}</td><td>${fmtDate(item.date)}</td><td class="num">${fmtWeight(line.weight)}</td><td class="num">${fmtMoney(line.cost)}</td></tr>`; }).join('')}</tbody><tfoot><tr><th colspan="3">${lines.length} item${lines.length === 1 ? '' : 's'}</th><th class="num">${fmtWeight(batchWeight)}</th><th class="num">${fmtMoney(batchCost)}</th></tr></tfoot></table></div>
-    <section id="edit_open_batch_item_picker" class="liquidation-edit-item-picker is-hidden"><div><h3>Add inventory to ${esc(batch.id)}</h3><p class="form-note">Available Gold, Silver, or Platinum inventory can be added to this batch.</p></div>${eligible.length ? `<div class="liquidation-edit-filter"><label for="edit_open_batch_item_filter">Item filter</label><select id="edit_open_batch_item_filter" onchange="changeOpenLiquidationBatchItemFilter(this.value)">${liquidationBatchItemFilterOptions(eligible).map(option => `<option value="${esc(option)}">${option === 'All' ? 'All items' : esc(option)}</option>`).join('')}</select><span class="form-note"><strong id="edit_open_batch_visible_count">${eligible.length}</strong> shown</span></div><div class="table-wrap"><table><thead><tr><th class="liquidation-select-all"><label><input id="edit_open_batch_select_all" type="checkbox" onchange="toggleAllVisibleOpenLiquidationBatchItems(this.checked)"> Select All</label></th><th>Item</th><th>Seller</th><th>Purchase date</th><th class="num-head">Weight</th><th class="num-head">Cost</th></tr></thead><tbody>${eligible.map(item => `<tr data-open-batch-add-row data-item-karat="${esc(item.karat)}" data-item-type="${esc(item.itemType)}"><td><input type="checkbox" data-open-batch-add-id="${esc(item.id)}" onchange="toggleOpenLiquidationBatchAddItem(this.dataset.openBatchAddId,this.checked)" aria-label="Add ${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))} item"></td><td><strong>${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))}</strong> · ${esc(item.itemType)}</td><td>${esc(item.customerName || '—')}</td><td>${fmtDate(item.date)}</td><td class="num">${fmtWeight(item.currentWeight)}</td><td class="num">${fmtMoney(item.cost)}</td></tr>`).join('')}</tbody></table></div><div class="form-actions"><span class="form-note"><strong id="edit_open_batch_add_count">0</strong> selected</span><button id="edit_open_batch_add_submit" class="btn small" onclick="addItemsToOpenLiquidationBatch()" disabled>Add selected to batch</button></div>` : `<div class="empty-note">No available inventory can be added right now.</div>`}</section>
-    <div class="form-actions liquidation-edit-actions"><button class="btn secondary" onclick="closeOpenLiquidationBatchModal()">Cancel</button><button class="btn" onclick="saveOpenLiquidationBatch()">Save batch</button></div>
-  </div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeOpenLiquidationBatchModal(); });
-    document.body.appendChild(modal);
-}
-async function addItemsToOpenLiquidationBatch() {
-    const batch = db.liquidationBatches.find(record => record.id === editingOpenLiquidationBatchId);
-    if (!batch)
-        return;
-    const name = val('edit_open_batch_name').trim(), buyer = val('edit_open_batch_buyer').trim();
-    if (!name || !buyer) {
-        toast('Batch name and buyer are required');
-        return;
-    }
-    const chosenIds = Array.from(openLiquidationBatchAddSelection);
-    const items = chosenIds.map(id => db.stock.find(item => item.id === id)).filter(item => item && movableInventory(item) && !item.liquidationBatchId);
-    if (!chosenIds.length) {
-        toast('Select at least one inventory item');
-        return;
-    }
-    if (items.length !== chosenIds.length) {
-        toast('One or more selected items are no longer available');
-        return;
-    }
-    const beforeState = JSON.parse(JSON.stringify(db));
-    Object.assign(batch, { name, buyer, notes: val('edit_open_batch_notes').trim() });
-    delete batch.buyerOffer;
-    const appendedItems = appendItemsToLiquidationBatch(batch, items);
-    if (appendedItems.length !== items.length) {
-        db = beforeState;
-        toast('One or more selected items are already in this batch');
-        return;
-    }
-    if (!await saveDB()) {
-        db = beforeState;
-        toast('Items were not added to the batch');
-        return;
-    }
-    const batchId = batch.id, itemCount = appendedItems.length;
-    closeOpenLiquidationBatchModal();
-    render();
-    openLiquidationBatchEdit(batchId);
-    toast(`${itemCount} ${itemCount === 1 ? 'item' : 'items'} added to ${batchId}`);
-}
-async function saveOpenLiquidationBatch() {
-    const batch = db.liquidationBatches.find(record => record.id === editingOpenLiquidationBatchId);
-    if (!batch)
-        return;
-    const name = val('edit_open_batch_name').trim(), buyer = val('edit_open_batch_buyer').trim();
-    if (!name || !buyer) {
-        toast('Batch name and buyer are required');
-        return;
-    }
-    const before = JSON.parse(JSON.stringify(batch));
-    Object.assign(batch, { name, buyer, notes: val('edit_open_batch_notes').trim() });
-    delete batch.buyerOffer;
-    if (!await saveDB()) {
-        Object.assign(batch, before);
-        toast('Batch changes were not saved');
-        return;
-    }
-    closeOpenLiquidationBatchModal();
-    render();
-    toast('Liquidation batch updated');
-}
-async function returnLiquidationBatch(id) {
-    const batch = db.liquidationBatches.find(record => record.id === id);
-    if (!batch || !adminEditGuard())
-        return;
-    if (!confirm(`Return every item in “${batch.name}” to Current Inventory?`))
-        return;
-    const beforeState = JSON.parse(JSON.stringify(db));
-    const linked = (batch.lines || []).map(line => ({ line, item: db.stock.find(stock => stock.id === line.itemId) }));
-    if (linked.some(({ line, item }) => !item || (line.pooledAllocation ? Number(item.currentWeight) + Number(line.weight) > Number(item.netWeight) + 0.005 : item.status !== 'For Liquidation' || item.liquidationBatchId !== batch.id))) {
-        toast('One or more batch items changed. Refresh and try again.');
-        return;
-    }
-    for (const { line, item } of linked) {
-        if (line.pooledAllocation)
-            restorePooledLiquidationLine(line);
-        else {
-            item.status = line.previousStatus || 'Available';
-            delete item.liquidationBatchId;
-        }
-    }
-    db.liquidationBatches = db.liquidationBatches.filter(record => record.id !== id);
-    if (!await saveDB()) {
-        db = beforeState;
-        render();
-        toast('The batch was not returned');
-        return;
-    }
-    render();
-    toast(`${batch.name} returned to Current Inventory`);
-}
-function closeCompleteLiquidationBatch() { document.getElementById('complete_liquidation_batch_modal')?.remove(); }
-function updateCompleteLiquidationProfit(cost) {
-    const totalInput = document.getElementById('complete_batch_total');
-    const profitOutput = document.getElementById('complete_batch_profit');
-    const marginOutput = document.getElementById('complete_batch_profit_margin');
-    if (!totalInput || !profitOutput || !marginOutput)
-        return;
-    const hasAmount = String(totalInput.value || '').replace(/[,\s]/g, '') !== '';
-    if (!hasAmount) {
-        profitOutput.textContent = 'Enter total sold';
-        marginOutput.textContent = '—';
-        profitOutput.style.color = '';
-        marginOutput.style.color = '';
-        return;
-    }
-    const sold = parseMoneyEntry(totalInput.value), profit = roundMoney(sold - Number(cost || 0)), margin = Number(cost) > 0 ? profit / Number(cost) * 100 : 0;
-    const color = profit >= 0 ? 'var(--sage)' : 'var(--rust)';
-    profitOutput.textContent = fmtMoney(profit);
-    marginOutput.textContent = `${margin.toFixed(2)}%`;
-    profitOutput.style.color = color;
-    marginOutput.style.color = color;
-}
-function openCompleteLiquidationBatch(id) {
-    const batch = db.liquidationBatches.find(record => record.id === id);
-    if (!batch || !adminEditGuard())
-        return;
-    const weight = (batch.lines || []).reduce((sum, line) => sum + Number(line.weight || 0), 0), cost = (batch.lines || []).reduce((sum, line) => sum + Number(line.cost || 0), 0);
-    const modal = document.createElement('div');
-    modal.id = 'complete_liquidation_batch_modal';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="summary-modal" role="dialog" aria-modal="true" aria-labelledby="complete_liquidation_batch_title"><div class="summary-modal-head"><div><div class="eyebrow">${esc(batch.id)} · ${esc(batch.buyer)}</div><h2 id="complete_liquidation_batch_title">Record ${esc(batch.name)} sale</h2></div><button class="modal-close" onclick="closeCompleteLiquidationBatch()" aria-label="Close">×</button></div><div class="move-confirmation-summary" style="margin-top:16px;"><div><span>Items</span><strong>${(batch.lines || []).length}</strong></div><div><span>Total weight</span><strong>${fmtWeight(weight)}</strong></div><div><span>Carrying cost</span><strong>${fmtMoney(cost)}</strong></div><div><span>Assigned buyer</span><strong>${esc(batch.buyer)}</strong></div></div><div class="form-grid"><div class="field"><label>Sale date</label><input id="complete_batch_date" type="date" value="${todayStr()}"></div><div class="field"><label>Payment status</label><select id="complete_batch_payment"><option>Pending</option><option>Partially Paid</option><option>Paid</option></select></div><div class="field"><label>Total sold (PHP)</label><input id="complete_batch_total" inputmode="decimal" value="" oninput="formatMoneyEntry(this);updateCompleteLiquidationProfit(${cost})"></div><div class="field"><label>Final notes</label><input id="complete_batch_notes" value="${esc(batch.notes || '')}"></div></div><div class="move-confirmation-summary"><div><span>Total cost</span><strong>${fmtMoney(cost)}</strong></div><div><span>Profit or loss</span><strong id="complete_batch_profit">Enter total sold</strong></div><div><span>Profit margin</span><strong id="complete_batch_profit_margin">—</strong></div></div><div class="form-actions"><button class="btn secondary" onclick="closeCompleteLiquidationBatch()">Cancel</button><button class="btn" onclick="submitLiquidationBatch('${batch.id}')">Record liquidation</button></div></div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeCompleteLiquidationBatch(); });
-    document.body.appendChild(modal);
-}
-function closeLiquidationDetails() { document.getElementById('liquidation_details_modal')?.remove(); }
-function openLiquidationDetails(id) {
-    if (!isAdmin())
-        return;
-    const record = db.liquidations.find(item => item.id === id);
-    if (!record)
-        return;
-    const lines = record.lines || [];
-    const profit = Number(record.margin) || 0;
-    const profitMargin = Number(record.cost) > 0 ? (profit / Number(record.cost)) * 100 : 0;
-    const modal = document.createElement('div');
-    modal.id = 'liquidation_details_modal';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="liquidation_details_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">Liquidation batch details</div><h2 id="liquidation_details_title">${esc(record.id)}</h2></div><button class="modal-close" onclick="closeLiquidationDetails()" aria-label="Close">×</button></div>
-    <div class="move-confirmation-summary" style="margin-top:16px;">
-      <div><span>Date</span><strong>${fmtDate(record.date)}${record.recordedAt ? `<br><small>${new Date(record.recordedAt).toLocaleString('en-PH', { timeStyle: 'short' })}</small>` : ''}</strong></div><div><span>Buyer</span><strong>${esc(record.buyer)}</strong></div>
-      ${record.poolId ? `<div><span>Pool ID</span><strong>${esc(record.poolId)}<br><small>${esc(record.poolName || '')}</small></strong></div>` : ''}
-      <div><span>Items</span><strong>${lines.length || record.itemCount || 0}</strong></div><div><span>Status</span><strong>${esc(record.paymentStatus || '—')}</strong></div>
-      <div><span>Total weight</span><strong>${fmtWeight(record.releasedWeight)}</strong></div><div><span>Total cost</span><strong>${fmtMoney(record.cost)}</strong></div>
-      <div><span>Total sold</span><strong>${fmtMoney(record.proceeds)}</strong></div><div><span>Profit</span><strong>${fmtMoney(profit)} · ${profitMargin.toFixed(2)}%</strong></div>
+    const eligible = db.stock.filter(s => s.metal === liqMetal && s.currentWeight > 0 && (s.status === 'For Selling' || s.status === 'For Refining')
+        && (liqStatus === 'All' || s.status === liqStatus) && (liqKarat === 'All' || s.karat === liqKarat));
+    const karats = Array.from(new Set(db.stock.filter(s => s.metal === liqMetal).map(s => s.karat)));
+    return `
+  <section class="block">
+    <h2 class="block-title">1. Choose what to release</h2>
+    <div class="filter-row">
+      <div class="field"><label>Metal</label><select onchange="liqMetal=this.value; render();">
+        ${['Gold', 'Silver', 'Platinum'].map(m => `<option ${liqMetal === m ? 'selected' : ''}>${m}</option>`).join('')}</select>
+        <span class="hint">Gold and silver are released in separate batches.</span>
+      </div>
+      <div class="field"><label>Karat / purity</label><select onchange="liqKarat=this.value; render();">
+        <option value="All">All</option>${karats.map(k => `<option ${liqKarat === k ? 'selected' : ''}>${k}</option>`).join('')}</select></div>
+      <div class="field"><label>Status</label><select onchange="liqStatus=this.value; render();">
+        ${['All', 'For Selling', 'For Refining'].map(s => `<option ${liqStatus === s ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
     </div>
-    ${lines.length ? `<div class="table-wrap move-confirmation-items"><table><thead><tr><th>Inventory item</th><th>Customer</th><th class="num-head">Weight</th><th class="num-head">Cost</th><th class="num-head">Total sold</th></tr></thead><tbody>${lines.map(line => {
-        const item = db.stock.find(stock => stock.id === line.itemId) || {};
-        const amount = Number(line.sellingAmount ?? line.proceeds ?? (Number(line.weight) * Number(line.sellingRate || record.sellingRate))) || 0;
-        return `<tr><td><strong>${esc(item.metal || record.metal)} ${esc(line.assay || item.karat || '')}</strong><br><span class="form-note">${esc(item.itemType || 'Inventory item')} · ${esc(line.itemId)}</span></td><td>${esc(item.customerName || '—')}</td><td class="num">${fmtWeight(line.weight)}</td><td class="num">${fmtMoney(line.costPortion)}</td><td class="num">${fmtMoney(amount)}</td></tr>`;
-    }).join('')}</tbody></table></div>` : '<div class="empty-note">Detailed item links are unavailable for this older liquidation record.</div>'}
-    ${record.remarks ? `<p class="move-confirmation-note"><strong>Notes</strong><span>${esc(record.remarks)}</span></p>` : ''}
-    <div class="form-actions"><button class="btn secondary" onclick="closeLiquidationDetails()">Close</button></div>
-  </div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeLiquidationDetails(); });
-    document.body.appendChild(modal);
+    ${eligible.length ? `
+    <div class="item-check-wrap">
+      <div class="item-check-row head"><span></span><span>Item</span><span>Available</span><span>Cost</span><span>Status</span><span>Release wt (g)</span></div>
+      ${eligible.map(s => `
+        <div class="item-check-row" data-item="${s.id}">
+          <input type="checkbox" class="liq-chk" onchange="syncLiqRow('${s.id}')">
+          <span>${fmtDate(s.date)} · ${esc(s.karat)} ${esc(s.itemType)} · ${esc(s.customerName)}</span>
+          <span class="num">${fmtWeight(s.currentWeight)}</span>
+          <span class="num">${fmtMoney(s.cost)}</span>
+          <span>${statusPill(s.status)}</span>
+          <input type="number" min="0" step="0.01" max="${s.currentWeight}" class="liq-wt" id="liqwt_${s.id}" placeholder="0.00" disabled>
+        </div>`).join('')}
+    </div>
+    ` : `<div class="empty-note">No eligible ${liqMetal.toLowerCase()} stock for these filters.</div>`}
+  </section>
+
+  <section class="block">
+    <h2 class="block-title">2. Batch details</h2>
+    <div class="form-grid">
+      <div class="field"><label>Buyer / refiner</label><input id="lq_buyer" placeholder="Name"></div>
+      <div class="field"><label>Release date</label><input id="lq_date" type="date" value="${todayStr()}"></div>
+      <div class="field"><label>Selling rate (PHP/g)</label><input id="lq_rate" type="number" min="0" step="0.01"></div>
+      <div class="field"><label>Payment status</label><select id="lq_payment"><option>Pending</option><option>Partially Paid</option><option>Paid</option></select></div>
+      <div class="field span-2"><label>Remarks</label><input id="lq_remarks" placeholder="Optional"></div>
+    </div>
+    <div class="form-actions">
+      <button class="btn" onclick="submitLiquidation()">Record liquidation</button>
+      <span class="form-note">Proceeds = total released weight × selling rate. Cost is carried proportionally from each item.</span>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2 class="block-title">Liquidation history</h2>
+    ${tableOrEmpty(db.liquidations.slice().sort((a, b) => b.date.localeCompare(a.date)), l => `<tr><td>${fmtDate(l.date)}</td><td><span class="metal-tag ${l.metal.toLowerCase()}">${l.metal}</span></td><td>${esc(l.buyer)}</td>
+      <td class="num">${fmtWeight(l.releasedWeight)}</td><td class="num">${fmtMoney(l.proceeds)}</td><td>${esc(l.paymentStatus || '—')}</td><td class="num">${fmtMoney(l.cost)}</td>
+      <td class="num" style="color:${l.margin >= 0 ? 'var(--sage)' : 'var(--rust)'}">${fmtMoney(l.margin)}</td>${isAdmin() ? `<td>${adminEditButton('Liquidation', l.id)}</td>` : ''}</tr>`, ['Date', 'Metal', 'Buyer / refiner', 'Released wt', 'Proceeds', 'Payment', 'Cost', 'Margin', ...(isAdmin() ? ['Actions'] : [])], 'No liquidations recorded yet.')}
+  </section>
+  `;
 }
-async function submitLiquidationBatch(batchId) {
-    const batch = db.liquidationBatches.find(record => record.id === batchId);
-    if (!batch)
-        return;
-    const date = val('complete_batch_date'), totalSold = parseMoneyEntry(val('complete_batch_total'));
-    if (!date) {
-        toast('Enter the sale date');
+function syncLiqRow(id) {
+    const chk = document.querySelector(`.item-check-row[data-item="${id}"] .liq-chk`);
+    const wt = document.getElementById('liqwt_' + id);
+    wt.disabled = !chk.checked;
+    if (chk.checked && !wt.value) {
+        const item = db.stock.find(s => s.id === id);
+        wt.value = Number(item.currentWeight).toFixed(2);
+    }
+}
+function submitLiquidation() {
+    const rows = Array.from(document.querySelectorAll('.item-check-row .liq-chk')).filter(c => c.checked);
+    if (!rows.length) {
+        toast('Select at least one item');
         return;
     }
-    if (totalSold <= 0) {
-        toast('Enter the total PHP sold amount for this batch');
+    const buyer = val('lq_buyer').trim(), date = val('lq_date'), rate = parseFloat(val('lq_rate'));
+    if (!buyer) {
+        toast('Enter a buyer or refiner name');
         return;
     }
-    const prepared = (batch.lines || []).map(line => ({ line, item: db.stock.find(stock => stock.id === line.itemId) }));
-    if (!prepared.length || prepared.some(({ line, item }) => !item || (line.pooledAllocation
-        ? Number(line.weight) <= 0 || Number(line.cost) < 0 || Number(item.currentWeight) + Number(line.weight) > Number(item.netWeight) + 0.005
-        : item.status !== 'For Liquidation' || item.liquidationBatchId !== batch.id || Math.abs(Number(item.currentWeight) - Number(line.weight)) > .005 || Math.abs(Number(item.cost) - Number(line.cost)) > .01))) {
-        toast('One or more batch items changed. Refresh and try again.');
+    if (!rate || rate <= 0) {
+        toast('Enter a valid selling rate');
         return;
     }
-    if (typeof location !== 'undefined' && (location.protocol === 'http:' || location.protocol === 'https:')) {
-        const result = await saveCompletedLiquidationBatch(batch, { date, totalSold, paymentStatus: val('complete_batch_payment'), notes: val('complete_batch_notes').trim() });
-        if (!result)
+    let totalWeight = 0, totalCost = 0, lines = [];
+    for (const chk of rows) {
+        const row = chk.closest('.item-check-row');
+        const id = row.dataset.item;
+        const item = db.stock.find(s => s.id === id);
+        const wtInput = document.getElementById('liqwt_' + id);
+        const w = parseFloat(wtInput.value) || 0;
+        if (w <= 0)
+            continue;
+        if (w > item.currentWeight + 0.0001) {
+            toast('Release weight exceeds available for one item');
             return;
-        closeCompleteLiquidationBatch();
-        render();
-        toast(`Liquidation ${result.liquidation.id} recorded`);
-        return;
-    }
-    const beforeState = JSON.parse(JSON.stringify(db));
-    const totalWeight = prepared.reduce((sum, { line }) => sum + Number(line.weight || 0), 0), totalCost = prepared.reduce((sum, { line }) => sum + Number(line.cost || 0), 0);
-    let allocatedSold = 0;
-    const lines = prepared.map(({ line, item }, index) => {
-        const weight = Number(line.weight), costPortion = Number(line.cost), ratio = totalCost > 0 ? costPortion / totalCost : weight / totalWeight;
-        const sellingAmount = index === prepared.length - 1 ? roundMoney(totalSold - allocatedSold) : roundMoney(totalSold * ratio);
-        allocatedSold = roundMoney(allocatedSold + sellingAmount);
-        if (!line.pooledAllocation) {
+        }
+        const previousStatus = item.status;
+        const costPortion = (w / item.currentWeight) * item.cost;
+        item.currentWeight = +(item.currentWeight - w).toFixed(4);
+        item.cost = +(item.cost - costPortion).toFixed(2);
+        if (item.currentWeight <= 0.005) {
             item.currentWeight = 0;
-            item.cost = 0;
             item.status = 'Liquidated';
-            delete item.liquidationBatchId;
         }
-        return { itemId: item.id, assay: item.karat, weight: roundWeight(weight), sellingAmount, sellingRate: roundMoney(sellingAmount / weight), proceeds: sellingAmount, costPortion: roundMoney(costPortion), previousStatus: line.previousStatus || 'Available', pooledAllocation: line.pooledAllocation === true };
-    });
-    const uniqueRates = Array.from(new Set(lines.map(line => line.sellingRate))), liquidationId = nextSequenceId('L', db.liquidations);
-    db.liquidations.push({ id: liquidationId, batchId: batch.id, batchName: batch.name, date, metal: batch.metal, buyer: batch.buyer, itemCount: lines.length, sellingRate: uniqueRates.length === 1 ? uniqueRates[0] : null, releasedWeight: roundWeight(totalWeight), proceeds: roundMoney(totalSold), paymentStatus: val('complete_batch_payment'), cost: roundMoney(totalCost), margin: roundMoney(totalSold - totalCost), profitMargin: totalCost ? roundMoney((totalSold - totalCost) / totalCost * 100) : 0, lines, remarks: val('complete_batch_notes').trim(), createdBy: currentUser?.displayName || '' });
-    db.liquidationBatches = db.liquidationBatches.filter(record => record.id !== batch.id);
-    if (!await saveDB()) {
-        db = beforeState;
-        render();
-        toast('Liquidation was not recorded; inventory changes were rolled back');
+        totalWeight += w;
+        totalCost += costPortion;
+        lines.push({ itemId: id, weight: w, costPortion, previousStatus });
+    }
+    if (!lines.length) {
+        toast('Enter a release weight for at least one selected item');
         return;
     }
-    closeCompleteLiquidationBatch();
+    const proceeds = totalWeight * rate;
+    db.liquidations.push({ id: uid('liq'), date, metal: liqMetal, buyer, sellingRate: rate, releasedWeight: +totalWeight.toFixed(2),
+        proceeds: +proceeds.toFixed(2), paymentStatus: val('lq_payment'), cost: +totalCost.toFixed(2), margin: +(proceeds - totalCost).toFixed(2), lines, remarks: val('lq_remarks').trim() });
+    saveDB();
     render();
-    toast(`Liquidation ${liquidationId} recorded`);
-}
-async function saveCompletedLiquidationBatch(batch, details) {
-    try {
-        const response = await fetch('/api/complete-liquidation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ batchId: batch.id, date: details.date, totalSold: details.totalSold, paymentStatus: details.paymentStatus, notes: details.notes }) });
-        if (response.status === 401) {
-            showLogin();
-            throw new Error('Session expired');
-        }
-        const result = await response.json().catch(() => null);
-        if (!response.ok)
-            throw new Error(result?.error || `Database server returned HTTP ${response.status}`);
-        for (const updated of result.updatedItems || []) {
-            const item = db.stock.find(stock => stock.id === updated.id);
-            if (item)
-                Object.assign(item, updated);
-        }
-        db.liquidationBatches = db.liquidationBatches.filter(record => record.id !== result.deletedBatchId);
-        db.liquidations = db.liquidations.filter(record => record.id !== result.liquidation.id);
-        db.liquidations.push(result.liquidation);
-        if (Number.isInteger(result.revision))
-            db._revision = result.revision;
-        return result;
-    }
-    catch (error) {
-        console.error('Liquidation completion save failed', error);
-        toast(error instanceof Error ? error.message : 'Liquidation could not be recorded');
-        return null;
-    }
+    toast('Liquidation recorded');
 }
 let editingLiquidationId = null;
 function openLiquidationEdit(id) {
@@ -4248,21 +1458,13 @@ function openLiquidationEdit(id) {
     if (!record || !adminEditGuard())
         return;
     editingLiquidationId = id;
-    const amountFields = (record.lines || []).length
-        ? record.lines.map((line, index) => {
-            const item = db.stock.find(stock => stock.id === line.itemId);
-            const assay = line.assay || item?.karat || 'Item';
-            const amount = Number(line.sellingAmount ?? line.proceeds ?? (Number(line.weight) * Number(line.sellingRate || record.sellingRate))) || 0;
-            return `<div class="field"><label>${esc(assay)} · ${fmtWeight(line.weight)} total sold (PHP)</label><input id="edit_liquidation_line_amount_${index}" inputmode="decimal" value="${moneyEntryValue(amount)}" oninput="formatMoneyEntry(this)"></div>`;
-        }).join('')
-        : `<div class="field"><label>Total sold (PHP)</label><input id="edit_liquidation_amount" inputmode="decimal" value="${moneyEntryValue(record.proceeds)}" oninput="formatMoneyEntry(this)"></div>`;
     openAdminEditModal('Edit liquidation', `<div class="form-grid">
     <div class="field"><label>Release date</label><input id="edit_liquidation_date" type="date" value="${esc(record.date || todayStr())}"></div>
     <div class="field"><label>Buyer / refiner</label><input id="edit_liquidation_buyer" value="${esc(record.buyer || '')}"></div>
-    ${amountFields}
+    <div class="field"><label>Selling rate (PHP/g)</label><input id="edit_liquidation_rate" type="number" min="0" step="0.01" value="${Number(record.sellingRate)}"></div>
     <div class="field"><label>Payment status</label><select id="edit_liquidation_payment">${['Pending', 'Partially Paid', 'Paid'].map(status => `<option ${record.paymentStatus === status ? 'selected' : ''}>${status}</option>`).join('')}</select></div>
     <div class="field span-2"><label>Remarks</label><textarea id="edit_liquidation_remarks">${esc(record.remarks || '')}</textarea></div>
-  </div><p class="form-note">Released weights and inventory costs remain locked. Batch proceeds and profit are recalculated from the total PHP sold amounts.</p>`, 'saveLiquidationEdit', 'deleteLiquidationRecord');
+  </div><p class="form-note">Released weight and inventory cost remain locked. Proceeds and margin are recalculated from the new selling rate.</p>`, 'saveLiquidationEdit', 'deleteLiquidationRecord');
 }
 async function saveLiquidationEdit() {
     if (!adminEditGuard())
@@ -4270,43 +1472,22 @@ async function saveLiquidationEdit() {
     const record = db.liquidations.find(l => l.id === editingLiquidationId);
     if (!record)
         return;
-    const buyer = val('edit_liquidation_buyer').trim(), date = val('edit_liquidation_date');
-    if (!date || !buyer) {
+    const buyer = val('edit_liquidation_buyer').trim(), rate = Number(val('edit_liquidation_rate'));
+    if (!val('edit_liquidation_date') || !buyer) {
         toast('Date and buyer are required');
         return;
     }
-    if ((record.lines || []).length) {
-        const amounts = [];
-        for (let index = 0; index < record.lines.length; index++) {
-            const line = record.lines[index], amount = parseMoneyEntry(val('edit_liquidation_line_amount_' + index));
-            if (!Number.isFinite(amount) || amount <= 0) {
-                toast(`Enter a valid total sold amount for ${line.assay || 'each item'}`);
-                return;
-            }
-            amounts.push(roundMoney(amount));
-        }
-        let proceeds = 0;
-        const rates = [];
-        record.lines.forEach((line, index) => { line.sellingAmount = amounts[index]; line.proceeds = amounts[index]; line.sellingRate = roundMoney(amounts[index] / Number(line.weight)); rates.push(line.sellingRate); proceeds += line.proceeds; });
-        const uniqueRates = Array.from(new Set(rates));
-        record.sellingRate = uniqueRates.length === 1 ? uniqueRates[0] : null;
-        record.proceeds = roundMoney(proceeds);
+    if (!Number.isFinite(rate) || rate <= 0) {
+        toast('Enter a valid selling rate');
+        return;
     }
-    else {
-        const amount = parseMoneyEntry(val('edit_liquidation_amount'));
-        if (!Number.isFinite(amount) || amount <= 0) {
-            toast('Enter a valid total sold amount');
-            return;
-        }
-        record.proceeds = roundMoney(amount);
-        record.sellingRate = roundMoney(amount / Number(record.releasedWeight));
-    }
-    record.date = date;
+    record.date = val('edit_liquidation_date');
     record.buyer = buyer;
+    record.sellingRate = roundMoney(rate);
     record.paymentStatus = val('edit_liquidation_payment');
     record.remarks = val('edit_liquidation_remarks').trim();
+    record.proceeds = roundMoney(Number(record.releasedWeight) * rate);
     record.margin = roundMoney(record.proceeds - Number(record.cost));
-    record.profitMargin = Number(record.cost) > 0 ? roundMoney(record.margin / Number(record.cost) * 100) : 0;
     closeAdminEditModal();
     await saveDB();
     render();
@@ -4335,24 +1516,14 @@ async function deleteLiquidationRecord() {
         toast('Inventory weight has changed and this liquidation cannot be reversed safely');
         return;
     }
-    if (!await confirmDeletion('Delete liquidation?', `Remove this liquidation and restore its released stock to inventory.`, [
-        { label: 'Buyer', value: record.buyer }, { label: 'Date', value: fmtDate(record.date) },
-        { label: 'Weight restored', value: fmtWeight(record.releasedWeight) }, { label: 'Proceeds removed', value: fmtMoney(record.proceeds) }
-    ]))
+    if (!confirm(`Delete this liquidation for ${record.buyer} and restore ${fmtWeight(record.releasedWeight)} to inventory?`))
         return;
     items.forEach(({ line, item }) => {
         item.currentWeight = roundWeight(Number(item.currentWeight) + Number(line.weight || 0));
         item.cost = roundMoney(Number(item.cost) + Number(line.costPortion || 0));
         if (item.currentWeight > 0 && item.status === 'Liquidated')
-            item.status = line.previousStatus === 'For Selling' ? 'Available' : line.previousStatus || (item.itemType === 'Scrap' ? 'For Refining' : 'Available');
+            item.status = line.previousStatus || (item.itemType === 'Scrap' ? 'For Refining' : 'For Selling');
     });
-    if (record.poolId) {
-        const pool = db.inventoryPools.find(item => item.id === record.poolId);
-        if (pool) {
-            pool.updatedAt = new Date().toISOString();
-            syncInventoryPool(pool);
-        }
-    }
     db.liquidations = db.liquidations.filter(l => l.id !== record.id);
     closeAdminEditModal();
     await saveDB();
@@ -4361,72 +1532,19 @@ async function deleteLiquidationRecord() {
 }
 /* ============================= REFINING ============================= */
 let refMetal = 'Gold';
-const refiningSelection = new Set();
-function toggleRefiningSelection(id, checked) {
-    if (checked)
-        refiningSelection.add(id);
-    else
-        refiningSelection.delete(id);
-    updateRefiningCombinedSummary();
-}
-function changeRefiningMetal(metal) { refMetal = metal; refiningSelection.clear(); render(); }
-function selectedRefiningItems() {
-    return db.stock.filter(item => refiningSelection.has(item.id) && !item.inventoryPoolId && item.metal === refMetal && item.status === 'For Refining' && Number(item.currentWeight) > 0);
-}
-function updateRefiningCombinedSummary() {
-    const items = selectedRefiningItems();
-    const weight = items.reduce((sum, item) => sum + Number(item.currentWeight), 0);
-    const cost = items.reduce((sum, item) => sum + Number(item.cost || 0), 0);
-    const countEl = document.getElementById('rf_selected_count'), weightEl = document.getElementById('rf_selected_weight'), costEl = document.getElementById('rf_selected_cost');
-    if (countEl)
-        countEl.textContent = String(items.length);
-    if (weightEl)
-        weightEl.textContent = fmtWeight(weight);
-    if (costEl)
-        costEl.textContent = fmtMoney(cost);
-}
-function prepareInventoryForRefining() {
-    const selected = selectedInventoryForCategory();
-    if (!selected.length) {
-        toast('Check at least one For Refining inventory record first');
-        return;
-    }
-    if (selected.some(item => item.status !== 'For Refining')) {
-        toast('Only records classified as For Refining can enter a refining batch');
-        return;
-    }
-    const metals = Array.from(new Set(selected.map(item => item.metal)));
-    if (metals.length !== 1) {
-        toast('A refining batch can contain only one metal');
-        return;
-    }
-    refMetal = metals[0];
-    refiningSelection.clear();
-    selected.forEach(item => refiningSelection.add(item.id));
-    inventoryMoveSelection.clear();
-    goTab('refining');
-    toast(`${selected.length} ${selected.length === 1 ? 'item' : 'items'} prepared for a refining batch`);
-}
 function renderRefining() {
-    const eligible = db.stock.filter(s => !s.inventoryPoolId && s.metal === refMetal && s.status === 'For Refining' && s.currentWeight > 0);
-    Array.from(refiningSelection).forEach(id => { if (!eligible.some(item => item.id === id))
-        refiningSelection.delete(id); });
-    const selected = selectedRefiningItems();
-    const selectedWeight = selected.reduce((sum, item) => sum + Number(item.currentWeight), 0);
-    const selectedCost = selected.reduce((sum, item) => sum + Number(item.cost || 0), 0);
-    const outputPurities = distinctKarats(refMetal);
+    const eligible = db.stock.filter(s => s.metal === refMetal && s.status === 'For Refining' && s.currentWeight > 0);
     return `
   <section class="block">
-    <h2 class="block-title">1. Select items to combine</h2>
-    <p class="form-note">Check every processed item that will become one refined inventory record.</p>
+    <h2 class="block-title">1. Select scrap for this refining batch</h2>
     <div class="filter-row">
-      <div class="field"><label>Metal</label><select onchange="changeRefiningMetal(this.value)">
+      <div class="field"><label>Metal</label><select onchange="refMetal=this.value; render();">
         ${['Gold', 'Silver', 'Platinum'].map(m => `<option ${refMetal === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
     </div>
     ${eligible.length ? `
     <div class="item-check-row head"><span></span><span>Item</span><span>Weight</span><span>Cost</span><span></span><span></span></div>
     ${eligible.map(s => `<div class="item-check-row" data-item="${s.id}">
-      <input type="checkbox" class="ref-chk" onchange="toggleRefiningSelection('${s.id}',this.checked)" ${refiningSelection.has(s.id) ? 'checked' : ''}>
+      <input type="checkbox" class="ref-chk">
       <span>${fmtDate(s.date)} · ${esc(s.karat)} · ${esc(s.customerName)}</span>
       <span class="num">${fmtWeight(s.currentWeight)}</span><span class="num">${fmtMoney(s.cost)}</span><span></span><span></span>
       </div>`).join('')}
@@ -4434,112 +1552,58 @@ function renderRefining() {
   </section>
 
   <section class="block">
-    <h2 class="block-title">2. Create one refined item</h2>
-    <p class="form-note">The selected records will be closed as Refined. Their costs are added together and carried into one finished item.</p>
-    <div class="refining-combine-summary">
-      <div><span>Selected items</span><strong id="rf_selected_count">${selected.length}</strong></div>
-      <div><span>Total input weight</span><strong id="rf_selected_weight">${fmtWeight(selectedWeight)}</strong></div>
-      <div><span>Combined inventory cost</span><strong id="rf_selected_cost">${fmtMoney(selectedCost)}</strong></div>
-      <div class="combine-arrow" aria-hidden="true">→</div>
-      <div class="combined-output-label"><span>Result</span><strong>1 refined item</strong></div>
-    </div>
-    <div class="form-grid refining-simple-output">
-      <div class="field"><label>Output purity / karat</label><select id="rf_purity" required>
-        <option value="">— select purity —</option>${outputPurities.map(purity => `<option value="${esc(purity)}">${esc(purity)}</option>`).join('')}
-      </select></div>
-      <div class="field"><label>Final refined weight (g)</label><input id="rf_returned" type="number" min="0.01" step="0.01" placeholder="e.g. 10.00"></div>
+    <h2 class="block-title">2. Batch outcome</h2>
+    <div class="form-grid">
+      <div class="field"><label>Refiner</label><input id="rf_refiner" placeholder="Name"></div>
+      <div class="field"><label>Date</label><input id="rf_date" type="date" value="${todayStr()}"></div>
+      <div class="field"><label>Expected yield (g)</label><input id="rf_expected" type="number" min="0" step="0.01"></div>
+      <div class="field"><label>Actual yield (g)</label><input id="rf_actual" type="number" min="0" step="0.01"></div>
+      <div class="field"><label>Refining charges (PHP)</label><input id="rf_charges" type="number" min="0" step="0.01"></div>
+      <div class="field"><label>Returned metal (g)</label><input id="rf_returned" type="number" min="0" step="0.01"></div>
+      <div class="field span-2"><label>Remarks</label><input id="rf_remarks" placeholder="Optional"></div>
     </div>
     <div class="form-actions">
-      <button class="btn" onclick="submitRefining()">Combine into one item</button>
-      <span class="form-note">Example: 10K + 12K + 14K → one 24K item. The total cost is carried automatically.</span>
+      <button class="btn" onclick="submitRefining()">Save refining batch</button>
+      <span class="form-note">Variance = actual yield − expected yield. Selected items are removed from available inventory.</span>
     </div>
   </section>
 
   <section class="block">
     <h2 class="block-title">Refining history</h2>
-    ${tableOrEmpty(db.refiningBatches.slice().sort((a, b) => b.date.localeCompare(a.date)), r => `<tr><td><strong>${esc(r.id)}</strong></td><td>${fmtDate(r.date)}</td><td><span class="metal-tag ${r.metal.toLowerCase()}">${r.metal}</span></td><td>${esc(r.refiner)}</td><td>${esc(r.staff || '—')}</td><td class="num">${(r.itemIds || []).length}</td>
-      <td class="num">${fmtWeight(r.inputWeight)}</td><td class="num">${fmtMoney(r.inputCost)}</td><td>${esc(r.outputPurity || '—')} · ${fmtWeight(r.outputWeight ?? r.returnedMetal)}</td><td class="num">${fmtMoney(r.outputCost)}</td><td>${esc(r.status || 'Completed')}</td>${isAdmin() ? `<td>${adminEditButton('Refining', r.id)}</td>` : ''}</tr>`, ['ID', 'Date', 'Metal', 'Refiner', 'Staff', 'Items', 'Input wt', 'Input cost', 'Output', 'Output value', 'Status', ...(isAdmin() ? ['Actions'] : [])], 'No refining batches recorded yet.')}
+    ${tableOrEmpty(db.refiningBatches.slice().sort((a, b) => b.date.localeCompare(a.date)), r => `<tr><td>${fmtDate(r.date)}</td><td><span class="metal-tag ${r.metal.toLowerCase()}">${r.metal}</span></td><td>${esc(r.refiner)}</td>
+      <td class="num">${fmtWeight(r.inputWeight)}</td><td class="num">${fmtWeight(r.expectedYield)}</td><td class="num">${fmtWeight(r.actualYield)}</td>
+      <td class="num" style="color:${r.variance >= 0 ? 'var(--sage)' : 'var(--rust)'}">${r.variance >= 0 ? '+' : ''}${fmtWeight(r.variance)}</td><td class="num">${fmtMoney(r.refiningCharges)}</td>${isAdmin() ? `<td>${adminEditButton('Refining', r.id)}</td>` : ''}</tr>`, ['Date', 'Metal', 'Refiner', 'Input wt', 'Expected yield', 'Actual yield', 'Variance', 'Charges', ...(isAdmin() ? ['Actions'] : [])], 'No refining batches recorded yet.')}
   </section>
   `;
 }
-let pendingRefiningBatch = null;
-function closeRefiningConfirmation() { document.getElementById('refining_confirmation_modal')?.remove(); pendingRefiningBatch = null; }
 function submitRefining() {
-    const chosen = selectedRefiningItems().map(item => item.id);
+    const chosen = Array.from(document.querySelectorAll('.ref-chk')).filter(c => c.checked)
+        .map(c => c.closest('.item-check-row').dataset.item);
     if (!chosen.length) {
         toast('Select at least one item for refining');
         return;
     }
-    const date = todayStr(), refiner = 'In-house refining', outputPurity = val('rf_purity');
-    if (!outputPurity) {
-        toast('Select the output purity or karat');
+    const refiner = val('rf_refiner').trim();
+    if (!refiner) {
+        toast('Enter a refiner name');
         return;
     }
-    const returned = Number(val('rf_returned'));
-    if (!Number.isFinite(returned) || returned <= 0) {
-        toast('Enter the output weight returned to inventory');
-        return;
-    }
-    const items = chosen.map(id => db.stock.find(s => s.id === id)).filter(Boolean);
-    if (items.length !== chosen.length || items.some(item => item.status !== 'For Refining' || Number(item.currentWeight) <= 0)) {
-        toast('One or more selected items are no longer available for refining');
-        return;
-    }
-    const inputWeight = items.reduce((sum, item) => sum + Number(item.currentWeight), 0);
-    const inputCost = items.reduce((sum, item) => sum + Number(item.cost || 0), 0);
-    const outputCost = roundMoney(inputCost), outputWeight = roundWeight(returned), outputStatus = 'Available';
-    const remarks = `Combined from ${chosen.length} refined item${chosen.length === 1 ? '' : 's'}`;
-    pendingRefiningBatch = { chosen, date, refiner, outputPurity, expected: outputWeight, actual: outputWeight, charges: 0, outputWeight, outputCost, outputStatus, remarks, metal: refMetal, inputWeight: roundWeight(inputWeight), inputCost: roundMoney(inputCost) };
-    const modal = document.createElement('div');
-    modal.id = 'refining_confirmation_modal';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="refining_confirmation_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">Confirm combined refined item</div><h2 id="refining_confirmation_title">${items.length} ${items.length === 1 ? 'item' : 'items'} will become 1 item</h2></div><button class="modal-close" onclick="closeRefiningConfirmation()" aria-label="Close">×</button></div>
-    <p class="move-confirmation-intro">The original records will be marked Refined and replaced by one available ${esc(refMetal)} ${esc(outputPurity)} inventory item.</p>
-    <div class="move-confirmation-summary"><div><span>Input items</span><strong>${items.length}</strong></div><div><span>Total input weight</span><strong>${fmtWeight(inputWeight)}</strong></div><div><span>Combined cost</span><strong>${fmtMoney(inputCost)}</strong></div><div><span>New inventory item</span><strong>${esc(outputPurity)} · ${fmtWeight(outputWeight)}</strong></div></div>
-    <div class="table-wrap move-confirmation-items"><table><thead><tr><th>Input item</th><th>Customer</th><th class="num-head">Weight</th><th class="num-head">Cost</th></tr></thead><tbody>${items.map(item => `<tr><td><strong>${esc(item.metal)} ${esc(item.karat)}</strong><br><span class="form-note">${esc(item.itemType)} · ${fmtDate(item.date)}</span></td><td>${esc(item.customerName || '—')}</td><td class="num">${fmtWeight(item.currentWeight)}</td><td class="num">${fmtMoney(item.cost)}</td></tr>`).join('')}</tbody></table></div>
-    <div class="form-actions"><button class="btn secondary" onclick="closeRefiningConfirmation()">Cancel</button><button class="btn" onclick="confirmRefiningBatch()">Confirm &amp; create one item</button></div>
-  </div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeRefiningConfirmation(); });
-    document.body.appendChild(modal);
-}
-async function confirmRefiningBatch() {
-    const pending = pendingRefiningBatch;
-    if (!pending)
-        return;
-    const items = pending.chosen.map(id => db.stock.find(s => s.id === id)).filter(Boolean);
-    if (items.length !== pending.chosen.length || items.some(item => item.status !== 'For Refining' || Number(item.currentWeight) <= 0)) {
-        closeRefiningConfirmation();
-        toast('One or more input items changed. Review the batch again.');
-        render();
-        return;
-    }
-    const itemSnapshots = items.map(item => ({ itemId: item.id, currentWeight: Number(item.currentWeight), status: item.status, cost: Number(item.cost) || 0 }));
-    const beforeState = JSON.parse(JSON.stringify(db));
-    items.forEach(item => { item.currentWeight = 0; item.cost = 0; item.status = 'Refined'; });
-    const batchId = nextSequenceId('R', db.refiningBatches), outputItemId = uid('stk');
-    const { date, refiner, outputPurity, outputWeight, outputCost, outputStatus, remarks, metal, inputWeight, inputCost, expected, actual, charges } = pending;
-    db.stock.push({ id: outputItemId, date, customerId: '', customerName: `Refining output · ${refiner}`, metal, itemType: 'Scrap', karat: outputPurity,
-        grossWeight: outputWeight, deductions: 0, netWeight: outputWeight, currentWeight: outputWeight, rate: roundMoney(outputCost / outputWeight),
-        suggestedAmount: 0, payout: 0, overrideReason: '', paymentMethod: 'Refining transfer', staff: currentUser?.displayName || refiner,
-        status: outputStatus, remarks: remarks || `Consolidated from ${pending.chosen.length} refining items`, cost: outputCost, sourceRefiningBatchId: batchId });
-    db.refiningBatches.push({ id: batchId, date, metal, refiner, staff: currentUser?.displayName || '', status: 'Completed', itemIds: pending.chosen, itemSnapshots, outputItemId, outputMetal: metal, outputPurity, outputWeight,
-        outputStatus, inputCost: roundMoney(inputCost), outputCost, inputWeight: roundWeight(inputWeight), expectedYield: roundWeight(expected), actualYield: roundWeight(actual),
-        variance: roundWeight(actual - expected), refiningCharges: roundMoney(charges), returnedMetal: outputWeight, remarks });
-    const itemCount = pending.chosen.length;
-    const saved = await saveDB();
-    if (!saved) {
-        db = beforeState;
-        closeRefiningConfirmation();
-        render();
-        toast('Refining batch was not recorded; all inventory changes were rolled back');
-        return;
-    }
-    refiningSelection.clear();
-    closeRefiningConfirmation();
+    const expected = parseFloat(val('rf_expected')) || 0, actual = parseFloat(val('rf_actual')) || 0;
+    const charges = parseFloat(val('rf_charges')) || 0, returned = parseFloat(val('rf_returned')) || 0;
+    let inputWeight = 0, itemSnapshots = [];
+    chosen.forEach(id => {
+        const item = db.stock.find(s => s.id === id);
+        itemSnapshots.push({ itemId: id, currentWeight: Number(item.currentWeight), status: item.status });
+        inputWeight += Number(item.currentWeight);
+        item.currentWeight = 0;
+        item.status = 'Liquidated';
+    });
+    db.refiningBatches.push({ id: uid('ref'), date: val('rf_date'), metal: refMetal, refiner, itemIds: chosen, itemSnapshots,
+        inputWeight: +inputWeight.toFixed(2), expectedYield: expected, actualYield: actual,
+        variance: +(actual - expected).toFixed(2), refiningCharges: charges, returnedMetal: returned, remarks: val('rf_remarks').trim() });
+    saveDB();
     render();
-    toast(`${batchId}: ${itemCount} ${itemCount === 1 ? 'item' : 'items'} consolidated into 1 inventory item`);
+    toast('Refining batch saved');
 }
 let editingRefiningId = null;
 function openRefiningEdit(id) {
@@ -4547,16 +1611,15 @@ function openRefiningEdit(id) {
     if (!record || !adminEditGuard())
         return;
     editingRefiningId = id;
-    const outputLocked = Boolean(record.outputItemId);
     openAdminEditModal('Edit refining batch', `<div class="form-grid">
     <div class="field"><label>Date</label><input id="edit_refining_date" type="date" value="${esc(record.date || todayStr())}"></div>
     <div class="field"><label>Refiner</label><input id="edit_refining_refiner" value="${esc(record.refiner || '')}"></div>
     <div class="field"><label>Expected yield (g)</label><input id="edit_refining_expected" type="number" min="0" step="0.01" value="${Number(record.expectedYield) || 0}"></div>
-    <div class="field"><label>Actual yield (g)</label><input id="edit_refining_actual" type="number" min="0" step="0.01" value="${Number(record.actualYield) || 0}" ${outputLocked ? 'readonly' : ''}></div>
-    <div class="field"><label>Refining charges (PHP)</label><input id="edit_refining_charges" type="number" min="0" step="0.01" value="${Number(record.refiningCharges) || 0}" ${outputLocked ? 'readonly' : ''}></div>
-    <div class="field"><label>Output weight (g)</label><input id="edit_refining_returned" type="number" min="0" step="0.01" value="${Number(record.outputWeight ?? record.returnedMetal) || 0}" ${outputLocked ? 'readonly' : ''}></div>
+    <div class="field"><label>Actual yield (g)</label><input id="edit_refining_actual" type="number" min="0" step="0.01" value="${Number(record.actualYield) || 0}"></div>
+    <div class="field"><label>Refining charges (PHP)</label><input id="edit_refining_charges" type="number" min="0" step="0.01" value="${Number(record.refiningCharges) || 0}"></div>
+    <div class="field"><label>Returned metal (g)</label><input id="edit_refining_returned" type="number" min="0" step="0.01" value="${Number(record.returnedMetal) || 0}"></div>
     <div class="field span-2"><label>Remarks</label><textarea id="edit_refining_remarks">${esc(record.remarks || '')}</textarea></div>
-  </div><p class="form-note">${outputLocked ? 'Output purity, weight, charges, and input items are locked because they define the consolidated inventory item.' : 'Input items and input weight remain locked. Variance is recalculated automatically.'}</p>`, 'saveRefiningEdit', 'deleteRefiningRecord');
+  </div><p class="form-note">Input items and input weight remain locked. Variance is recalculated automatically.</p>`, 'saveRefiningEdit', 'deleteRefiningRecord');
 }
 async function saveRefiningEdit() {
     if (!adminEditGuard())
@@ -4573,15 +1636,7 @@ async function saveRefiningEdit() {
         toast('Yield, charges, and returned metal must be valid non-negative values');
         return;
     }
-    const date = val('edit_refining_date'), refiner = val('edit_refining_refiner').trim(), remarks = val('edit_refining_remarks').trim();
-    Object.assign(record, { date, refiner, expectedYield: roundWeight(expected), actualYield: roundWeight(actual), variance: roundWeight(actual - expected), refiningCharges: roundMoney(charges), returnedMetal: roundWeight(returned), remarks });
-    const outputItem = record.outputItemId ? db.stock.find(item => item.id === record.outputItemId) : null;
-    if (outputItem) {
-        outputItem.date = date;
-        outputItem.customerName = `Refining output · ${refiner}`;
-        if (remarks)
-            outputItem.remarks = remarks;
-    }
+    Object.assign(record, { date: val('edit_refining_date'), refiner: val('edit_refining_refiner').trim(), expectedYield: roundWeight(expected), actualYield: roundWeight(actual), variance: roundWeight(actual - expected), refiningCharges: roundMoney(charges), returnedMetal: roundWeight(returned), remarks: val('edit_refining_remarks').trim() });
     closeAdminEditModal();
     await saveDB();
     render();
@@ -4603,40 +1658,17 @@ async function deleteRefiningRecord() {
         toast('Cannot reverse this batch because an inventory item is missing');
         return;
     }
-    const outputItem = record.outputItemId ? db.stock.find(item => item.id === record.outputItemId) : null;
-    if (record.outputItemId && !outputItem) {
-        toast('Cannot reverse this batch because its output inventory item is missing');
-        return;
-    }
-    if (outputItem) {
-        const usedInLiquidation = db.liquidations.some(batch => (batch.lines || []).some(line => line.itemId === outputItem.id));
-        const usedInRefining = db.refiningBatches.some(batch => batch.id !== record.id && (batch.itemIds || []).includes(outputItem.id));
-        const usedInRetail = db.retailSales.some(sale => sale.itemId === outputItem.id);
-        if (usedInLiquidation || usedInRefining || usedInRetail) {
-            toast('Delete the later transaction using the refined output before reversing this batch');
-            return;
-        }
-        if (Math.abs(Number(outputItem.currentWeight) - Number(record.outputWeight ?? record.returnedMetal)) > 0.005 || Math.abs(Number(outputItem.cost) - Number(record.outputCost)) > 0.01) {
-            toast('The refined output inventory has changed and this batch cannot be reversed safely');
-            return;
-        }
-    }
     if (items.some(entry => entry.item.status === 'Sold' || db.retailSales.some(sale => sale.itemId === entry.item.id))) {
         toast('Delete the later retail sale before reversing this refining batch');
         return;
     }
-    if (items.some(entry => Number(entry.item.currentWeight) !== 0 || !['Refined', 'Liquidated'].includes(entry.item.status))) {
+    if (items.some(entry => Number(entry.item.currentWeight) !== 0 || entry.item.status !== 'Liquidated')) {
         toast('Inventory has changed and this refining batch cannot be reversed safely');
         return;
     }
-    if (!await confirmDeletion('Delete refining batch?', `Remove the refined output and restore the original input inventory.`, [
-        { label: 'Refiner', value: record.refiner }, { label: 'Date', value: fmtDate(record.date) },
-        { label: 'Input items restored', value: String(items.length) }, { label: 'Output removed', value: fmtWeight(record.outputWeight ?? record.returnedMetal) }
-    ]))
+    if (!confirm(`Delete this refining batch for ${record.refiner} and restore its input items to inventory?`))
         return;
-    if (outputItem)
-        db.stock = db.stock.filter(item => item.id !== outputItem.id);
-    items.forEach(({ snapshot, item }) => { item.currentWeight = roundWeight(snapshot.currentWeight); item.cost = roundMoney(snapshot.cost ?? item.cost); item.status = snapshot.status || 'For Refining'; });
+    items.forEach(({ snapshot, item }) => { item.currentWeight = roundWeight(snapshot.currentWeight); item.status = snapshot.status || 'For Refining'; });
     db.refiningBatches = db.refiningBatches.filter(r => r.id !== record.id);
     closeAdminEditModal();
     await saveDB();
@@ -4646,7 +1678,7 @@ async function deleteRefiningRecord() {
 /* ============================= RETAIL SALES ============================= */
 let lastRetailSaleId = null;
 function renderRetail() {
-    const eligible = db.stock.filter(s => !s.inventoryPoolId && s.status === 'Available' && s.itemType === 'Jewelry' && s.currentWeight > 0);
+    const eligible = db.stock.filter(s => s.status === 'For Selling' && s.itemType === 'Jewelry' && s.currentWeight > 0);
     return `
   <section class="block">
     <h2 class="block-title">Sell a jewelry item</h2>
@@ -4656,7 +1688,7 @@ function renderRetail() {
           <option value="">— choose item —</option>
           ${eligible.map(s => `<option value="${s.id}">${fmtDate(s.date)} · ${s.metal} ${esc(s.karat)} · ${fmtWeight(s.currentWeight)} · cost ${fmtMoney(s.cost)}</option>`).join('')}
         </select>
-        ${!eligible.length ? `<span class="hint">No available jewelry is currently in stock.</span>` : ''}
+        ${!eligible.length ? `<span class="hint">No jewelry currently marked "For Selling".</span>` : ''}
       </div>
       <div class="field"><label>Buyer name</label><input id="rt_buyer" placeholder="Walk-in customer"></div>
       <div class="field"><label>Sale date</label><input id="rt_date" type="date" value="${todayStr()}"></div>
@@ -4747,14 +1779,11 @@ async function deleteRetailRecord() {
         toast('Inventory has changed and this retail sale cannot be reversed safely');
         return;
     }
-    if (!await confirmDeletion('Delete retail sale?', `Remove this sale and return the jewelry item to available inventory.`, [
-        { label: 'Buyer', value: record.buyer }, { label: 'Date', value: fmtDate(record.date) },
-        { label: 'Item', value: record.itemSummary || `${item.metal} ${item.karat} ${item.itemType}` }, { label: 'Sale amount', value: fmtMoney(record.salePrice) }
-    ]))
+    if (!confirm(`Delete this retail sale to ${record.buyer} and return the item to available inventory?`))
         return;
     const previouslyReleased = db.liquidations.reduce((sum, batch) => sum + (batch.lines || []).filter(line => line.itemId === item.id).reduce((lineSum, line) => lineSum + Number(line.weight || 0), 0), 0);
     item.currentWeight = roundWeight(Math.min(Number(record.weight) || Number(item.netWeight), Math.max(0, Number(item.netWeight) - previouslyReleased)));
-    item.status = 'Available';
+    item.status = 'For Selling';
     db.retailSales = db.retailSales.filter(r => r.id !== record.id);
     closeAdminEditModal();
     await saveDB();
@@ -4895,9 +1924,7 @@ async function deleteUserRecord() {
         toast('You cannot delete the account currently signed in');
         return;
     }
-    if (!await confirmDeletion('Delete user account?', `Permanently remove this account and revoke its access.`, [
-        { label: 'Username', value: account.username }, { label: 'Role', value: account.role || 'User' }
-    ]))
+    if (!confirm(`Permanently delete the account "${account.username}"?`))
         return;
     try {
         const response = await fetch(`/api/users/${encodeURIComponent(account.id)}`, { method: 'DELETE' });
@@ -4938,30 +1965,20 @@ function exportStock() {
         { label: 'Date', key: 'date' }, { label: 'Customer', key: 'customerName' }, { label: 'Metal', key: 'metal' }, { label: 'Karat', key: 'karat' },
         { label: 'Item type', key: 'itemType' }, { label: 'Gross weight', key: 'grossWeight' }, { label: 'Deductions', key: 'deductions' },
         { label: 'Net weight', key: 'netWeight' }, { label: 'Current weight', key: 'currentWeight' }, { label: 'Rate', key: 'rate' },
-        { label: 'Payout', key: 'payout' }, { label: 'Cost remaining', key: 'cost' }, { label: 'Status', key: 'status' }, { label: 'Staff', key: 'staff' }
+        { label: 'Payout', key: 'payout' }, { label: 'Cost remaining', key: 'cost' }, { label: 'Status', key: 'status' }, { label: 'Location', key: 'location' }, { label: 'Staff', key: 'staff' }
     ]));
 }
 function exportLiquidations() {
-    downloadCSV('zpp_liquidations.csv', toCSV(liquidationHistoryRecords(), [
-        { label: 'Liquidation ID', key: 'id' }, { label: 'Date', key: 'date' }, { label: 'Metal', key: 'metal' }, { label: 'Buyer/Refiner', key: 'buyer' }, { label: 'Number of items', get: record => (record.lines || []).length || record.itemCount || 0 }, { label: 'Released weight', key: 'releasedWeight' },
-        { label: 'Total sold by item', get: record => (record.lines || []).map(line => `${line.assay || 'Item'}: ${Number(line.sellingAmount ?? line.proceeds) || 0}`).join(' | ') },
-        { label: 'Total sold', key: 'proceeds' }, { label: 'Payment status', key: 'paymentStatus' }, { label: 'Total cost', key: 'cost' }, { label: 'Profit', key: 'margin' }
+    downloadCSV('zpp_liquidations.csv', toCSV(db.liquidations, [
+        { label: 'Date', key: 'date' }, { label: 'Metal', key: 'metal' }, { label: 'Buyer/Refiner', key: 'buyer' }, { label: 'Released weight', key: 'releasedWeight' },
+        { label: 'Selling rate', key: 'sellingRate' }, { label: 'Proceeds', key: 'proceeds' }, { label: 'Payment status', key: 'paymentStatus' }, { label: 'Cost', key: 'cost' }, { label: 'Margin', key: 'margin' }
     ]));
 }
 function exportRefining() {
     downloadCSV('zpp_refining.csv', toCSV(db.refiningBatches, [
-        { label: 'Refining ID', key: 'id' }, { label: 'Date', key: 'date' }, { label: 'Metal', key: 'metal' }, { label: 'Refiner', key: 'refiner' }, { label: 'Staff', key: 'staff' },
-        { label: 'Input item IDs', get: r => (r.itemIds || []).join(' | ') }, { label: 'Input weight', key: 'inputWeight' }, { label: 'Input cost', key: 'inputCost' },
+        { label: 'Date', key: 'date' }, { label: 'Metal', key: 'metal' }, { label: 'Refiner', key: 'refiner' }, { label: 'Input weight', key: 'inputWeight' },
         { label: 'Expected yield', key: 'expectedYield' }, { label: 'Actual yield', key: 'actualYield' }, { label: 'Variance', key: 'variance' },
-        { label: 'Charges', key: 'refiningCharges' }, { label: 'Output purity', key: 'outputPurity' }, { label: 'Output weight', get: r => r.outputWeight ?? r.returnedMetal },
-        { label: 'Output inventory cost', key: 'outputCost' }, { label: 'Status', key: 'status' }, { label: 'Notes', key: 'remarks' }
-    ]));
-}
-function exportPurchases() {
-    downloadCSV('zpp_purchase_history.csv', toCSV(purchaseHistoryRecords(), [
-        { label: 'Date', key: 'date' }, { label: 'Seller', key: 'customerName' }, { label: 'Metal', key: 'metal' }, { label: 'Karat / purity', key: 'karat' },
-        { label: 'Item type', key: 'itemType' }, { label: 'Net weight', key: 'netWeight' }, { label: 'Rate', key: 'rate' }, { label: 'Payout', key: 'payout' },
-        { label: 'Payment method', key: 'paymentMethod' }, { label: 'Staff', key: 'staff' }, { label: 'Status', key: 'status' }
+        { label: 'Charges', key: 'refiningCharges' }, { label: 'Returned metal', key: 'returnedMetal' }
     ]));
 }
 function exportRetail() {
@@ -4980,129 +1997,36 @@ function exportRates() {
         { label: 'Gold 24K base', get: h => h.snapshot.gold.base }, { label: 'Silver base', get: h => h.snapshot.silver.base }, { label: 'Platinum base', get: h => h.snapshot.platinum.base }
     ]));
 }
-function closeCustomerHistoryModal() { document.getElementById('customer_history_modal')?.remove(); }
-function filterCustomerHistory(value) {
-    const query = String(value || '').trim().toLowerCase();
-    const rows = Array.from(document.querySelectorAll('#customer_history_results [data-customer-history-search]'));
-    let visible = 0;
-    rows.forEach(row => {
-        const matches = !query || String(row.dataset.customerHistorySearch || '').includes(query);
-        row.hidden = !matches;
-        if (matches)
-            visible += 1;
-    });
-    const count = document.getElementById('customer_history_result_count');
-    if (count)
-        count.textContent = `Showing ${visible} of ${rows.length}`;
-    document.getElementById('customer_history_search_empty')?.classList.toggle('is-hidden', visible > 0 || !rows.length);
-}
-function openCustomerHistoryModal() {
-    closeCustomerHistoryModal();
-    const purchases = purchaseHistoryRecords();
-    const customers = db.customers.filter(customer => purchases.some(item => item.customerId === customer.id));
-    const modal = document.createElement('div');
-    modal.id = 'customer_history_modal';
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="customer_history_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">${esc(purchaseHistoryFilterLabel())}</div><h2 id="customer_history_title">Customer history</h2><p class="form-note">Purchase totals grouped by customer for the selected dates.</p></div><button class="modal-close" onclick="closeCustomerHistoryModal()" aria-label="Close">×</button></div>
-    <div class="dashboard-report-search customer-history-search"><div class="field"><label for="customer_history_search">Search customer</label><input id="customer_history_search" type="search" autocomplete="off" placeholder="Type a customer name" oninput="filterCustomerHistory(this.value)"></div><span id="customer_history_result_count">Showing ${customers.length} of ${customers.length}</span></div>
-    <div id="customer_history_search_empty" class="empty-note is-hidden">No customers match your search.</div>
-    <div id="customer_history_results">${tableOrEmpty(customers, customer => {
-        const history = purchases.filter(item => item.customerId === customer.id);
-        const totalWeight = history.reduce((sum, item) => sum + Number(item.netWeight || 0), 0);
-        const totalPayout = history.reduce((sum, item) => sum + Number(item.payout || 0), 0);
-        return `<tr data-customer-history-search="${dashboardSearchValue(customer.name, customer.contact)}"><td data-label="Customer"><strong>${esc(customer.name)}</strong></td><td data-label="Transactions" class="num">${history.length}</td><td data-label="Total weight sold" class="num">${fmtWeight(totalWeight)}</td><td data-label="Total payout" class="num">${fmtMoney(totalPayout)}</td></tr>`;
-    }, ['Customer', 'Transactions', 'Total weight sold', 'Total payout'], 'No customer purchases match the selected dates.')}</div>
-    <div class="form-actions" style="justify-content:flex-end;margin-top:18px;"><button class="btn" onclick="closeCustomerHistoryModal()">Close</button></div>
-  </div>`;
-    modal.addEventListener('click', event => { if (event.target === modal)
-        closeCustomerHistoryModal(); });
-    document.body.appendChild(modal);
-    modal.querySelector('#customer_history_search')?.focus();
-}
-function renderLiquidationHistory() {
-    const liquidations = liquidationHistoryRecords();
-    const totalCost = liquidations.reduce((sum, item) => sum + Number(item.cost || 0), 0);
-    const totalSold = liquidations.reduce((sum, item) => sum + Number(item.proceeds || 0), 0);
-    const totalProfit = liquidations.reduce((sum, item) => sum + Number(item.margin || 0), 0);
-    return `<section class="block">
-    <div class="batch-head"><div><h2 class="block-title">Liquidation history</h2><p class="form-note">Administrator record of all completed liquidation batches.</p></div><button class="btn small" onclick="exportLiquidations()">Download liquidation CSV</button></div>
-    <div class="purchase-history-filter-card">
-      <div class="purchase-history-filter-top"><div><strong>Liquidation date</strong><span>Choose a date range or use a quick option.</span></div><div class="purchase-history-presets"><button class="btn secondary small" onclick="setLiquidationHistoryDatePreset('today')">Today</button><button class="btn secondary small" onclick="setLiquidationHistoryDatePreset('month')">This month</button><button class="btn secondary small" onclick="setLiquidationHistoryDatePreset('all')" ${liquidationHistoryFrom || liquidationHistoryTo ? '' : 'disabled'}>Clear dates</button></div></div>
-      <div class="purchase-history-date-row"><div class="field"><label for="liquidation_history_from">From</label><input id="liquidation_history_from" type="date" value="${esc(liquidationHistoryFrom)}"></div><div class="field"><label for="liquidation_history_to">To</label><input id="liquidation_history_to" type="date" value="${esc(liquidationHistoryTo)}"></div><button class="btn" onclick="applyLiquidationHistoryDates()">Apply dates</button></div>
-      <div class="purchase-history-active-range"><span>Showing:</span><strong>${esc(liquidationHistoryFilterLabel())}</strong></div>
-    </div>
-    ${dashboardReportSearch('Search ID, date, buyer, metal, or status', liquidations.length)}
-    <div class="stat-row" style="margin:16px 0;">
-      <div class="stat"><div class="label">Liquidation batches</div><div class="value">${liquidations.length}</div></div>
-      <div class="stat"><div class="label">Total cost</div><div class="value">${fmtMoney(totalCost)}</div></div>
-      <div class="stat"><div class="label">Total sold</div><div class="value">${fmtMoney(totalSold)}</div></div>
-      <div class="stat"><div class="label">Total profit</div><div class="value" style="color:${totalProfit >= 0 ? 'var(--sage)' : 'var(--rust)'}">${fmtMoney(totalProfit)}</div></div>
-    </div>
-    ${tableOrEmpty(liquidations, l => `<tr data-dashboard-search="${dashboardSearchValue(l.id, l.date, fmtDate(l.date), l.buyer, l.metal, l.paymentStatus)}"><td><button class="link-button" onclick="openLiquidationDetails('${l.id}')">${esc(l.id)}</button></td><td>${fmtDate(l.date)}</td><td>${esc(l.buyer)}</td><td class="num">${(l.lines || []).length || l.itemCount || 0}</td>
-      <td class="num">${fmtMoney(l.cost)}</td><td class="num">${fmtMoney(l.proceeds)}</td><td class="num" style="color:${l.margin >= 0 ? 'var(--sage)' : 'var(--rust)'}">${fmtMoney(l.margin)}</td><td>${esc(l.paymentStatus || '—')}</td><td><div class="form-actions"><button class="btn secondary small" onclick="openLiquidationDetails('${l.id}')">Details</button>${adminEditButton('Liquidation', l.id)}</div></td></tr>`, ['ID', 'Date', 'Buyer / refiner', 'Items', 'Total cost', 'Total sold', 'Profit', 'Status', 'Actions'], 'No liquidations recorded yet.')}
-  </section>`;
-}
 function renderReports() {
-    const allPurchases = db.stock.filter(s => !s.sourceRefiningBatchId);
-    const allReadyStock = db.stock.filter(s => !s.inventoryPoolId && (s.status === 'Available' || s.status === 'For Refining') && s.currentWeight > 0);
-    const readyStock = allReadyStock.filter(readinessDateMatch).slice().sort((a, b) => b.date.localeCompare(a.date));
-    const renderPurchaseReport = () => {
-        const purchases = allPurchases.filter(purchaseHistoryDateMatch).slice().sort((a, b) => b.date.localeCompare(a.date));
-        const purchaseWeight = purchases.reduce((sum, item) => sum + Number(item.netWeight || 0), 0);
-        const purchasePayout = purchases.reduce((sum, item) => sum + Number(item.payout || 0), 0);
-        return `<div id="dashboard_report_content" class="dashboard-report-content">
-  <section class="block recent-purchases purchase-history">
-    <div class="batch-head"><div><h2 class="block-title">Purchase history</h2><p class="form-note">All recorded purchases are kept here in one view.</p></div><div class="form-actions"><button class="btn secondary small" onclick="openCustomerHistoryModal()">View customer history</button><button class="btn small" onclick="exportPurchases()">Download purchase CSV</button></div></div>
-    <div class="purchase-history-filter-card">
-      <div class="purchase-history-filter-top"><div><strong>Purchase date</strong><span>Choose a date range or use a quick option.</span></div><div class="purchase-history-presets"><button class="btn secondary small" onclick="setPurchaseHistoryDatePreset('today')">Today</button><button class="btn secondary small" onclick="setPurchaseHistoryDatePreset('month')">This month</button><button class="btn secondary small" onclick="setPurchaseHistoryDatePreset('all')" ${purchaseHistoryFrom || purchaseHistoryTo ? '' : 'disabled'}>Clear dates</button></div></div>
-      <div class="purchase-history-date-row"><div class="field"><label for="purchase_history_from">From</label><input id="purchase_history_from" type="date" value="${esc(purchaseHistoryFrom)}"></div><div class="field"><label for="purchase_history_to">To</label><input id="purchase_history_to" type="date" value="${esc(purchaseHistoryTo)}"></div><button class="btn" onclick="applyPurchaseHistoryDates()">Apply dates</button></div>
-      <div class="purchase-history-active-range"><span>Showing:</span><strong>${esc(purchaseHistoryFilterLabel())}</strong></div>
-    </div>
-    ${dashboardReportSearch('Search seller, metal, purity, status, or staff', purchases.length)}
-    <div class="stat-row" style="margin:16px 0;">
-      <div class="stat"><div class="label">Items purchased</div><div class="value">${purchases.length}</div></div>
-      <div class="stat"><div class="label">Total net weight</div><div class="value">${fmtWeight(purchaseWeight)}</div></div>
-      <div class="stat"><div class="label">Total payout</div><div class="value">${fmtMoney(purchasePayout)}</div></div>
-    </div>
-    ${tableOrEmpty(purchases, s => `<tr data-dashboard-search="${dashboardSearchValue(s.date, fmtDate(s.date), s.customerName, s.metal, s.karat, s.itemType, s.status, s.staff, s.batchId)}"><td data-label="Date">${fmtDate(s.date)}</td><td data-label="Seller">${esc(s.customerName)}</td><td data-label="Item"><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)} · ${esc(s.itemType)}</td>
-      <td data-label="Net weight" class="num">${fmtWeight(s.netWeight)}</td><td data-label="Payout" class="num">${fmtMoney(s.payout)}</td><td data-label="Status">${statusPill(s.status)}</td>
-      <td data-label="Details"><div class="purchase-details"><span class="hint">${esc(s.staff || 'No staff recorded')}</span><div class="form-actions"><button class="btn secondary small" onclick="openPurchaseReceipt('${s.batchId || s.id}')">Receipt</button>${adminEditButton('Inventory', s.id)}</div></div></td></tr>`, ['Date', 'Seller', 'Item', 'Net weight', 'Payout', 'Status', 'Details'], 'No purchases recorded yet.')}
-  </section></div>`;
-    };
-    const renderReadinessReport = () => `<div id="dashboard_report_content" class="dashboard-report-content"><section class="block">
-    <div class="batch-head"><div><h2 class="block-title">Liquidation readiness</h2><p class="form-note">On-hand inventory that can be assigned to a liquidation batch or sent for refining.</p></div><button class="btn small" onclick="goTab('inventory')">Open inventory</button></div>
-    <div class="purchase-history-filter-card">
-      <div class="purchase-history-filter-top"><div><strong>Purchase date</strong><span>Defaults to the latest two weeks so the list stays manageable.</span></div><div class="purchase-history-presets"><button class="btn secondary small" onclick="setReadinessDatePreset('today')">Today</button><button class="btn secondary small" onclick="setReadinessDatePreset('two-weeks')">Last 2 weeks</button><button class="btn secondary small" onclick="setReadinessDatePreset('all')" ${readinessFrom || readinessTo ? '' : 'disabled'}>All dates</button></div></div>
-      <div class="purchase-history-date-row"><div class="field"><label for="readiness_from">From</label><input id="readiness_from" type="date" value="${esc(readinessFrom)}"></div><div class="field"><label for="readiness_to">To</label><input id="readiness_to" type="date" value="${esc(readinessTo)}"></div><button class="btn" onclick="applyReadinessDates()">Apply dates</button></div>
-      <div class="purchase-history-active-range"><span>Showing:</span><strong>${esc(readinessFilterLabel())}</strong><span>· ${readyStock.length} of ${allReadyStock.length} eligible items</span></div>
-    </div>
-    ${dashboardReportSearch('Search date, metal, purity, item type, or status', readyStock.length)}
-    ${tableOrEmpty(readyStock, s => `<tr data-dashboard-search="${dashboardSearchValue(s.date, fmtDate(s.date), s.metal, s.karat, s.itemType, s.status, s.customerName)}"><td>${fmtDate(s.date)}</td><td><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)}</td><td>${esc(s.itemType)}</td>
-      <td class="num">${fmtWeight(s.currentWeight)}</td><td>${statusPill(s.status)}</td></tr>`, ['Date', 'Metal / karat', 'Type', 'Weight available', 'Status'], 'Nothing is currently eligible for liquidation.')}
-  </section></div>`;
-    const selectedReport = dashboardReportPanel === 'purchases' ? renderPurchaseReport()
-        : dashboardReportPanel === 'liquidations' ? `<div id="dashboard_report_content" class="dashboard-report-content">${renderLiquidationHistory()}</div>`
-            : dashboardReportPanel === 'readiness' ? renderReadinessReport() : '';
-    return `<section class="block dashboard-report-menu">
-    <div><h2 class="block-title">Dashboard records</h2><p class="form-note">Open only the report you need. Select the active button again to close it.</p></div>
-    <div class="dashboard-report-buttons">
-      <button class="btn ${dashboardReportPanel === 'purchases' ? '' : 'secondary'}" aria-pressed="${dashboardReportPanel === 'purchases'}" onclick="toggleDashboardReport('purchases')"><span>Purchase history</span><strong>${allPurchases.length}</strong></button>
-      <button class="btn ${dashboardReportPanel === 'liquidations' ? '' : 'secondary'}" aria-pressed="${dashboardReportPanel === 'liquidations'}" onclick="toggleDashboardReport('liquidations')"><span>Liquidation history</span><strong>${db.liquidations.length}</strong></button>
-      <button class="btn ${dashboardReportPanel === 'readiness' ? '' : 'secondary'}" aria-pressed="${dashboardReportPanel === 'readiness'}" onclick="toggleDashboardReport('readiness')"><span>Liquidation readiness</span><strong>${allReadyStock.length}</strong></button>
-    </div>
-  </section>
-  ${selectedReport}
-  <section class="block export-ledger-compact">
-    <details><summary>Export ledger data</summary><div class="stat-row">
-      <div class="stat"><div class="label">Inventory ledger</div><button class="btn small" style="margin-top:8px;" onclick="exportStock()">Download CSV</button></div>
+    return `
+  <section class="block">
+    <h2 class="block-title">Export ledger data</h2>
+    <div class="stat-row">
+      <div class="stat"><div class="label">Inventory &amp; purchases</div><button class="btn small" style="margin-top:8px;" onclick="exportStock()">Download CSV</button></div>
       <div class="stat"><div class="label">Liquidation history</div><button class="btn small" style="margin-top:8px;" onclick="exportLiquidations()">Download CSV</button></div>
       <div class="stat"><div class="label">Refining history</div><button class="btn small" style="margin-top:8px;" onclick="exportRefining()">Download CSV</button></div>
       <div class="stat"><div class="label">Retail sales</div><button class="btn small" style="margin-top:8px;" onclick="exportRetail()">Download CSV</button></div>
       <div class="stat"><div class="label">Customers</div><button class="btn small" style="margin-top:8px;" onclick="exportCustomers()">Download CSV</button></div>
       <div class="stat"><div class="label">Rate history</div><button class="btn small" style="margin-top:8px;" onclick="exportRates()">Download CSV</button></div>
-    </div></details>
-  </section>`;
+    </div>
+  </section>
+
+  <section class="block">
+    <h2 class="block-title">Customer history (all sellers)</h2>
+    ${tableOrEmpty(db.customers, c => {
+        const hist = db.stock.filter(s => s.customerId === c.id);
+        const totalW = hist.reduce((a, s) => a + Number(s.netWeight), 0);
+        const totalP = hist.reduce((a, s) => a + Number(s.payout), 0);
+        return `<tr><td>${esc(c.name)}</td><td class="num">${hist.length}</td><td class="num">${fmtWeight(totalW)}</td><td class="num">${fmtMoney(totalP)}</td></tr>`;
+    }, ['Customer', 'Transactions', 'Total weight sold', 'Total payout'], 'No customers on file yet.')}
+  </section>
+
+  <section class="block">
+    <h2 class="block-title">Liquidation readiness</h2>
+    ${tableOrEmpty(db.stock.filter(s => (s.status === 'For Selling' || s.status === 'For Refining') && s.currentWeight > 0), s => `<tr><td>${fmtDate(s.date)}</td><td><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)}</td><td>${esc(s.itemType)}</td>
+      <td class="num">${fmtWeight(s.currentWeight)}</td><td>${statusPill(s.status)}</td></tr>`, ['Date', 'Metal / karat', 'Type', 'Weight available', 'Status'], 'Nothing is currently eligible for liquidation.')}
+  </section>
+  `;
 }
 /* ============================= INIT ============================= */
 initializeAuth();
