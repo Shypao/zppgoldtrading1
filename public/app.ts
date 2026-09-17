@@ -2419,6 +2419,36 @@ function syncInventoryPool(pool){
 function syncAllInventoryPools(){
   (db.inventoryPools||[]).forEach(pool=>syncInventoryPool(pool));
 }
+function inventoryDisplayRows(records){
+  const rows=[],seenPools=new Set();
+  records.forEach(item=>{
+    if(!item.inventoryPoolId){rows.push({...item,isInventoryPool:false});return;}
+    if(seenPools.has(item.inventoryPoolId)) return;
+    seenPools.add(item.inventoryPoolId);
+    const pool=db.inventoryPools.find(candidate=>candidate.id===item.inventoryPoolId);
+    if(!pool){rows.push({...item,isInventoryPool:false});return;}
+    const snapshot=inventoryPoolSnapshot(pool);
+    if(snapshot.weight<=0) return;
+    const composition=inventoryPoolComposition(snapshot.items);
+    const types=Array.from(new Set(snapshot.items.map(source=>source.itemType).filter(Boolean)));
+    const dates=snapshot.items.map(source=>source.date).filter(Boolean).sort();
+    rows.push({
+      id:pool.id,
+      date:dates.at(-1)||String(pool.createdAt||'').slice(0,10)||todayStr(),
+      customerName:pool.name||pool.id,
+      metal:composition.metal,
+      karat:composition.karat,
+      itemType:types.length===1?types[0]:'Mixed',
+      status:pool.onHold?'On Hold':'Available',
+      currentWeight:snapshot.weight,
+      cost:snapshot.cost,
+      remarks:pool.notes||`${pool.itemIds.length} pooled inventory records`,
+      inventoryPoolId:pool.id,
+      isInventoryPool:true
+    });
+  });
+  return rows;
+}
 function poolableInventoryItem(item){
   return activeInventoryRecord(item)&&!item.inventoryPoolId&&!item.liquidationBatchId;
 }
@@ -2488,7 +2518,7 @@ function openManualInventoryPoolModal(){
   const weight=items.reduce((sum,item)=>sum+Number(item.currentWeight||0),0),cost=items.reduce((sum,item)=>sum+Number(item.cost||0),0);
   const nextId=nextSequenceId('POOL',db.inventoryPools),composition=inventoryPoolComposition(items);
   const modal=document.createElement('div');modal.id='inventory_pool_modal';modal.className='modal-backdrop';
-  modal.innerHTML=`<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="inventory_pool_title"><div class="summary-modal-head"><div><div class="eyebrow">Manual inventory grouping</div><h2 id="inventory_pool_title">Create ${esc(nextId)}</h2></div><button class="modal-close" onclick="closeInventoryPoolModal()" aria-label="Close">×</button></div><p class="move-confirmation-intro">Only the inventory records you selected will belong to this pool. Metals, purities, and purchase dates do not restrict the grouping.</p><div class="form-grid"><div class="field"><label>Pool name (optional)</label><input id="inventory_pool_name" placeholder="${esc(composition.label)} pool"></div><div class="field"><label>Starting status</label><select id="inventory_pool_status"><option value="ACTIVE">Active</option><option value="ON HOLD" selected>On Hold</option></select></div><div class="field span-2"><label>Notes</label><input id="inventory_pool_notes" placeholder="Optional"></div></div><div class="move-confirmation-summary"><div><span>Selected records</span><strong>${items.length}</strong></div><div><span>Pool contents</span><strong>${esc(composition.label)}</strong></div><div><span>Total weight</span><strong>${fmtWeight(weight)}</strong></div><div><span>Total cost</span><strong>${fmtMoneyExact(cost)}</strong></div></div><div class="table-wrap move-confirmation-items"><table><thead><tr><th>Item</th><th>Seller</th><th>Date</th><th class="num-head">Weight</th><th class="num-head">Cost</th></tr></thead><tbody>${items.map(item=>`<tr><td>${esc(item.metal)} ${esc(gradeLabel(item.metal,item.karat))}</td><td>${esc(item.customerName||'—')}</td><td>${fmtDate(item.date)}</td><td class="num">${fmtWeight(item.currentWeight)}</td><td class="num">${fmtMoneyExact(item.cost)}</td></tr>`).join('')}</tbody></table></div><div class="form-actions"><button class="btn secondary" onclick="closeInventoryPoolModal()">Cancel</button><button class="btn" onclick="createManualInventoryPool()">Create Pool</button></div></div>`;
+  modal.innerHTML=`<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="inventory_pool_title"><div class="summary-modal-head"><div><div class="eyebrow">Manual inventory grouping</div><h2 id="inventory_pool_title">Create ${esc(nextId)}</h2></div><button class="modal-close" onclick="closeInventoryPoolModal()" aria-label="Close">×</button></div><p class="move-confirmation-intro">Only the inventory records you selected will belong to this pool. Metals, purities, and purchase dates do not restrict the grouping.</p><div class="form-grid"><div class="field"><label>Pool name (optional)</label><input id="inventory_pool_name" placeholder="${esc(composition.label)} pool"></div><div class="field"><label>Starting status</label><select id="inventory_pool_status"><option value="ACTIVE" selected>Available</option><option value="ON HOLD">On Hold</option></select></div><div class="field span-2"><label>Notes</label><input id="inventory_pool_notes" placeholder="Optional"></div></div><div class="move-confirmation-summary"><div><span>Selected records</span><strong>${items.length}</strong></div><div><span>Pool contents</span><strong>${esc(composition.label)}</strong></div><div><span>Total weight</span><strong>${fmtWeight(weight)}</strong></div><div><span>Total cost</span><strong>${fmtMoneyExact(cost)}</strong></div></div><div class="table-wrap move-confirmation-items"><table><thead><tr><th>Item</th><th>Seller</th><th>Date</th><th class="num-head">Weight</th><th class="num-head">Cost</th></tr></thead><tbody>${items.map(item=>`<tr><td>${esc(item.metal)} ${esc(gradeLabel(item.metal,item.karat))}</td><td>${esc(item.customerName||'—')}</td><td>${fmtDate(item.date)}</td><td class="num">${fmtWeight(item.currentWeight)}</td><td class="num">${fmtMoneyExact(item.cost)}</td></tr>`).join('')}</tbody></table></div><div class="form-actions"><button class="btn secondary" onclick="closeInventoryPoolModal()">Cancel</button><button class="btn" onclick="createManualInventoryPool()">Create Pool</button></div></div>`;
   modal.addEventListener('click',event=>{if(event.target===modal)closeInventoryPoolModal();});document.body.appendChild(modal);
 }
 async function createManualInventoryPool(){
@@ -2678,7 +2708,9 @@ function renderInventory(){
   const selectedPoolItems=selectedInventoryForPool();
   const canPoolSelected=selectedPoolItems.length>=2;
   const activeFilterLabels=[invFilter.metal,invFilter.karat,invFilter.type,invFilter.status].filter(value=>value!=='All');
-  const rows = selectedDay.stock.filter(s=>
+  const displayStock=inventoryDisplayRows(selectedDay.stock);
+  const displayAvailable=displayStock.filter(item=>item.status==='Available'||item.status==='For Refining');
+  const rows = displayStock.filter(s=>
     (invFilter.metal==='All'||s.metal===invFilter.metal) &&
     (invFilter.karat==='All'||s.karat===invFilter.karat) &&
     (invFilter.type==='All'||s.itemType===invFilter.type) &&
@@ -2688,7 +2720,7 @@ function renderInventory(){
   const dailyPurchaseSource=inventorySelectedDate==='All'?[]:selectedDay.purchases.filter(item=>invFilter.metal==='All'||item.metal===invFilter.metal);
   const dailyPurchaseTotals=purchaseTotalsByPurity(dailyPurchaseSource);
 
-  const currentStock=allActiveStock;
+  const currentStock=inventoryDisplayRows(allActiveStock);
   const breakdownSource=currentStock.filter(item=>invFilter.metal==='All'||item.metal===invFilter.metal);
   const breakdownMap=new Map();
   breakdownSource.forEach(item=>{
@@ -2722,13 +2754,11 @@ function renderInventory(){
     <p class="form-note inventory-history-note">For Liquidation items are shown only in the Liquidation view. Liquidated, refined, and sold items remain in reports and transaction history.</p>
   </section>
 
-  ${renderInventoryPools()}
-
   <section class="block">
     <div class="page-head" style="margin-bottom:14px;"><div><p class="eyebrow">Complete stock or daily view</p><h2 class="block-title" style="margin:0;">Inventory records</h2><p class="form-note">Use All dates to see everything together, or choose a day for a focused view.</p></div><div class="form-actions" style="margin:0;"><button class="btn secondary small" onclick="changeInventoryWeek(-1)">Previous Monday–Sunday</button><button class="btn secondary small" onclick="changeInventoryWeek(1)">Next Monday–Sunday</button></div></div>
     <div class="inventory-today-totals"><div>${['All','Gold','Silver'].map(metal=>`<button class="btn secondary small" onclick="showTodayInventoryTotals('${metal}')">Today's ${metal}</button>`).join('')}</div></div>
     <div class="inventory-days">
-      <button class="inventory-day inventory-all-dates ${inventorySelectedDate==='All'?'active':''}" onclick="selectAllInventoryDates()"><strong>All dates</strong><span>Complete current stock</span><small>${allActiveStock.length} record${allActiveStock.length===1?'':'s'}<br>${fmtWeight(allAvailableStock.reduce((sum,item)=>sum+Number(item.currentWeight),0))} available</small></button>
+      <button class="inventory-day inventory-all-dates ${inventorySelectedDate==='All'?'active':''}" onclick="selectAllInventoryDates()"><strong>All dates</strong><span>Complete current stock</span><small>${inventoryDisplayRows(allActiveStock).length} record${inventoryDisplayRows(allActiveStock).length===1?'':'s'}<br>${fmtWeight(inventoryDisplayRows(allActiveStock).filter(item=>item.status==='Available'||item.status==='For Refining').reduce((sum,item)=>sum+Number(item.currentWeight),0))} available</small></button>
       ${dailyRows.map(day=>`<button class="inventory-day ${day.date===inventorySelectedDate?'active':''}" onclick="selectInventoryDate('${day.date}')"><strong>${new Date(day.date+'T00:00:00').toLocaleDateString('en-PH',{weekday:'long'})}</strong><span>${fmtDate(day.date)}</span><small>${day.purchases.length} purchase${day.purchases.length===1?'':'s'}<br>${fmtWeight(day.purchases.reduce((sum,item)=>sum+Number(item.netWeight||0),0))} bought</small></button>`).join('')}
     </div>
     ${inventorySelectedDate==='All'?`<div class="inventory-daily-prompt">Choose a day above, or use <strong>Today's totals</strong>, to view totals for every purity.</div>`:`<div id="inventory_daily_totals" class="inventory-daily-totals">
@@ -2737,18 +2767,18 @@ function renderInventory(){
     </div>`}
     <h2 class="block-title">${inventorySelectedDate==='All'?'All purchase dates':`${new Date(selectedDay.date+'T00:00:00').toLocaleDateString('en-PH',{weekday:'long'})}, ${fmtDate(selectedDay.date)}`}</h2>
     <div class="stat-row">
-      <div class="stat"><div class="label">Current stock records</div><div class="value">${selectedDay.stock.length}</div><div class="sub">active inventory lines ${inventorySelectedDate==='All'?'across all dates':'on this date'}</div></div>
-      <div class="stat"><div class="label">Available stock lines</div><div class="value">${selectedDay.available.length}</div><div class="sub">eligible for liquidation or refining</div></div>
-      <div class="stat"><div class="label">Available weight</div><div class="value">${fmtWeight(selectedDay.weight)}</div><div class="sub">remaining from ${inventorySelectedDate==='All'?'all purchases':"this date's purchases"}</div></div>
-      <div class="stat"><div class="label">Remaining cost</div><div class="value">${fmtMoney(selectedDay.cost)}</div><div class="sub">carrying cost ${inventorySelectedDate==='All'?'across all dates':'for this purchase date'}</div></div>
+      <div class="stat"><div class="label">Current stock records</div><div class="value">${displayStock.length}</div><div class="sub">pooled inventory is counted as one item</div></div>
+      <div class="stat"><div class="label">Available stock lines</div><div class="value">${displayAvailable.length}</div><div class="sub">eligible for liquidation or refining</div></div>
+      <div class="stat"><div class="label">Available weight</div><div class="value">${fmtWeight(displayAvailable.reduce((sum,item)=>sum+Number(item.currentWeight),0))}</div><div class="sub">remaining from ${inventorySelectedDate==='All'?'all purchases':"this date's purchases"}</div></div>
+      <div class="stat"><div class="label">Remaining cost</div><div class="value">${fmtMoney(displayStock.reduce((sum,item)=>sum+Number(item.cost),0))}</div><div class="sub">carrying cost ${inventorySelectedDate==='All'?'across all dates':'for this purchase date'}</div></div>
     </div>
   </section>
 
   <section class="block" id="inventory_stock_list">
     <div class="inventory-stock-head"><div><h2 class="block-title">Stock records</h2><p class="form-note">${inventorySearch?`${rows.length} matching record${rows.length===1?'':'s'}`:activeFilterLabels.length?`Showing: ${activeFilterLabels.map(esc).join(' · ')}`:'Showing all records'} across ${inventoryDateLabel()}.</p></div><div class="inventory-stock-tools"><div class="field inventory-stock-search"><label for="inventory_stock_search">Search stock records</label><input id="inventory_stock_search" type="search" autocomplete="off" value="${esc(inventorySearch)}" placeholder="Customer, date, metal, karat, or status" oninput="updateInventorySearch(this.value)"></div><button class="btn secondary small" onclick="openInventoryFilterModal()">Change filters</button></div></div>
     ${isAdmin()?`<div class="inventory-action-panel"><div class="inventory-action-status"><strong>${percentagePool.length} eligible ${inventorySelectedDate==='All'?'across all dates':'on this date'}</strong><span><span id="inventory_liq_count">${selectedMoveCount}</span> manually selected${percentagePool.length?'':' · change the filters'}</span>${selectedGradeCounts.size?`<div class="inventory-selection-chips">${Array.from(selectedGradeCounts.entries()).map(([grade,count])=>`<span>${esc(grade)} · ${count}</span>`).join('')}</div>`:''}</div><div class="inventory-action-buttons"><button class="btn secondary small" onclick="selectAllVisibleInventory()">Select all shown</button><button class="btn secondary small" onclick="selectAllLowKaratGold()">Select low-karat Gold</button><button class="btn secondary small" data-inventory-selection-required onclick="clearInventorySelection()" ${selectedMoveCount?'':'disabled'}>Clear</button><div class="inventory-bulk-category"><select id="inventory_bulk_status" aria-label="Category for selected inventory" onchange="inventoryBulkStatus=this.value">${['Available','For Refining','On Hold'].map(status=>`<option ${inventoryBulkStatus===status?'selected':''}>${status}</option>`).join('')}</select><button class="btn secondary small" data-inventory-selection-required onclick="categorizeCheckedInventory()" ${selectedMoveCount?'':'disabled'}>Apply category</button></div><button class="btn" id="inventory_pool_selected" onclick="openManualInventoryPoolModal()" ${canPoolSelected?'':'disabled'}>Pool selected</button><button class="btn secondary small" id="inventory_move_selected" onclick="moveCheckedInventoryToLiquidation()" ${canMoveSelected?'':'disabled'}>Move selected to liquidation</button><button class="btn secondary small" data-inventory-selection-required onclick="prepareInventoryForRefining()" ${selectedMoveCount?'':'disabled'}>Refine selected</button></div></div>`:''}
-    ${tableOrEmpty(rows, s=>`<tr>${isAdmin()?`<td><input type="checkbox" data-inventory-move-id="${s.id}" aria-label="Select ${esc(s.metal)} ${esc(s.karat)} from ${esc(s.customerName)}" onchange="toggleInventoryForLiquidation('${s.id}',this.checked)" ${inventoryMoveSelection.has(s.id)?'checked':''} ${categorizableInventory(s)?'':'disabled'}></td>`:''}<td>${fmtDate(s.date)}</td><td>${esc(s.customerName)}</td><td><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)}</td>
-      <td>${esc(s.itemType)}</td><td class="num">${fmtWeight(s.currentWeight)}</td><td class="num">${fmtMoney(s.cost)}</td><td>${s.inventoryPoolId?`${statusPill((db.inventoryPools.find(pool=>pool.id===s.inventoryPoolId)||{}).status||'Pooled')}<br><span class="form-note">${esc(s.inventoryPoolId)}</span>`:statusPill(s.status)}</td><td>${esc(s.remarks||'—')}</td>${isAdmin()?`<td><div class="form-actions">${movableInventory(s)?`<button class="btn secondary small" onclick="liquidateInventoryItem('${s.id}')">Liquidate item</button>`:''}${adminEditButton('Inventory',s.id)}</div></td>`:''}</tr>`,
+    ${tableOrEmpty(rows, s=>`<tr>${isAdmin()?`<td>${s.isInventoryPool?'—':`<input type="checkbox" data-inventory-move-id="${s.id}" aria-label="Select ${esc(s.metal)} ${esc(s.karat)} from ${esc(s.customerName)}" onchange="toggleInventoryForLiquidation('${s.id}',this.checked)" ${inventoryMoveSelection.has(s.id)?'checked':''} ${categorizableInventory(s)?'':'disabled'}>`}</td>`:''}<td>${fmtDate(s.date)}</td><td>${esc(s.customerName)}</td><td><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)}</td>
+      <td>${esc(s.itemType)}</td><td class="num">${fmtWeight(s.currentWeight)}</td><td class="num">${fmtMoney(s.cost)}</td><td>${statusPill(s.status)}${s.isInventoryPool?`<br><span class="form-note">${esc(s.inventoryPoolId)}</span>`:''}</td><td>${esc(s.remarks||'—')}</td>${isAdmin()?`<td><div class="form-actions">${s.isInventoryPool?`<button class="btn secondary small" onclick="toggleInventoryPoolHold('${s.inventoryPoolId}')">${s.status==='On Hold'?'Set Available':'Put On Hold'}</button><button class="btn small" onclick="openPoolLiquidationModal('${s.inventoryPoolId}')">Liquidate pool</button>`:`${movableInventory(s)?`<button class="btn secondary small" onclick="liquidateInventoryItem('${s.id}')">Liquidate item</button>`:''}${adminEditButton('Inventory',s.id)}`}</div></td>`:''}</tr>`,
       [...(isAdmin()?['Select']:[]),'Date','Customer','Metal / karat','Type','Current weight','Cost','Status','Remarks',...(isAdmin()?['Actions']:[])],
       `No stock matches this filter ${inventorySelectedDate==='All'?'across all purchase dates':`on ${fmtDate(selectedDay.date)}`}.`)}
   </section>

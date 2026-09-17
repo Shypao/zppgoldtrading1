@@ -351,6 +351,28 @@ test('inventory offers manual Pool selected and removes automatic pool/date grou
   assert.doesNotMatch(html, />Combine dates</);
 });
 
+test('inventory displays a pool as one available row with combined weight and cost', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'pool-a', date: '2026-09-17', customerName: 'Seller A', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-0003', netWeight: 1000, currentWeight: 1000, payout: 100000, cost: 100000 },
+    { id: 'pool-b', date: '2026-09-17', customerName: 'Seller B', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-0003', netWeight: 2000, currentWeight: 2000, payout: 200000, cost: 200000 }
+  ];
+  state.inventoryPools = [{ id: 'POOL-0003', name: 'Silver pool', metal: 'Silver', karat: '925', itemIds: ['pool-a', 'pool-b'], originalWeight: 3000, originalCost: 300000, onHold: false, status: 'ACTIVE', remainingWeight: 3000, remainingCost: 300000, createdAt: '2026-09-17T00:00:00.000Z' }];
+  api.setState(state);
+
+  const html = api.renderInventory();
+
+  assert.equal((html.match(/>Silver pool</g) || []).length, 1, 'the pool should be rendered as one visible inventory row');
+  assert.match(html, /POOL-0003/);
+  assert.match(html, /3000\.00 g/);
+  assert.match(html, /PHP 300,000/);
+  assert.match(html, />Available</);
+  assert.match(html, /Liquidate pool/);
+  assert.doesNotMatch(html, /Seller A|Seller B/);
+  assert.doesNotMatch(html, /Inventory Pools/);
+});
+
 test('record sale modal shows live profit margin fields without buyer offer', async () => {
   const api = await loadInventoryApi();
   api.setState(stateFixture());
