@@ -20,26 +20,24 @@ test('thermal receipt width includes its padding so printed totals are not clipp
   );
 });
 
-test('58 mm receipts keep all text inside the VOZY P50 print-head boundary', async () => {
+test('58 mm receipts use the proven centered VOZY P50 main-page print path', async () => {
   const source = await readFile(appPath, 'utf8');
 
-  assert.match(source, /const receiptWidth = paperWidth === 80 \? 72 : 48;/);
-  assert.match(source, /const paperPadding = paperWidth === 80 \? 2 : 1;/);
+  assert.match(source, /const receiptWidth = paperWidth === 80 \? 72 : 46;/);
+  assert.match(source, /const paperPadding = paperWidth === 80 \? 2 : 2;/);
   assert.match(
     source,
-    /@page\{size:\$\{paperWidth\}mm \$\{receiptHeight\}mm;margin:0\}/,
-    'the receipt page should use the full selected roll width and measured content height',
+    /@page\{size:\$\{paperWidth\}mm auto;margin:0\}/,
+    'the main print page should use the selected continuous thermal roll width',
   );
   assert.match(
     source,
-    /width:\$\{receiptWidth\}mm;[^}]*padding:\$\{paperPadding\}mm!important/,
-    'the 58 mm profile should leave a 2 mm guard inside the 48 mm print head',
+    /width:\$\{receiptWidth\}mm;max-width:\$\{receiptWidth\}mm;[^}]*margin:0 auto!important;[^}]*padding:\$\{paperPadding\}mm!important/,
+    'the 46 mm print block should be centered with a safe inner guard',
   );
-  assert.match(
-    source,
-    /width:\$\{receiptWidth\}mm;[^}]*margin:0!important/,
-    'the printable receipt block must not add a second centering offset on top of the printer driver margin',
-  );
+  assert.match(source, /document\.body\.classList\.add\('printing-thermal-receipt'\)/);
+  assert.match(source, /window\.print\(\)/);
+  assert.doesNotMatch(source, /window\.open\('',\s*'zpp_thermal_receipt'/);
   assert.match(source, /\.receipt-items\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*10\s*:\s*9\}px/);
   assert.match(source, /\.receipt-total\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*14\s*:\s*13\}px/);
 });

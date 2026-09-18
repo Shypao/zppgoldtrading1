@@ -2714,24 +2714,16 @@ function printPurchaseReceipt(batchId) {
         return;
     }
     const paperWidth = Number(val('receipt_paper_size')) === 80 ? 80 : 58;
-    const receiptWidth = paperWidth === 80 ? 72 : 48;
-    const paperPadding = paperWidth === 80 ? 2 : 1;
-    const receipt = document.getElementById('receipt_preview_paper');
-    if (!receipt) {
-        toast('Receipt preview is not available');
-        return;
-    }
-    const receiptHeight = measureThermalReceiptHeight(receipt, paperWidth, receiptWidth, paperPadding);
-    const printWindow = window.open('', 'zpp_thermal_receipt', 'popup,width=480,height=720');
-    if (!printWindow) {
-        toast('Allow the receipt print window, then try again');
-        return;
-    }
-    printWindow.document.open();
-    printWindow.document.write(thermalReceiptPrintDocument(purchaseReceiptMarkup(items), paperWidth, receiptHeight));
-    printWindow.document.close();
-    printWindow.focus();
-    window.setTimeout(() => { printWindow.print(); printWindow.close(); }, 150);
+    const receiptWidth = paperWidth === 80 ? 72 : 46;
+    const paperPadding = paperWidth === 80 ? 2 : 2;
+    document.getElementById('thermal_print_page_style')?.remove();
+    const pageStyle = document.createElement('style');
+    pageStyle.id = 'thermal_print_page_style';
+    pageStyle.textContent = `@page{size:${paperWidth}mm auto;margin:0}body.printing-thermal-receipt .thermal-receipt,body.printing-thermal-receipt .thermal-receipt.paper-80{box-sizing:border-box;width:${receiptWidth}mm;max-width:${receiptWidth}mm;margin:0 auto!important;padding:${paperPadding}mm!important}`;
+    document.head.appendChild(pageStyle);
+    document.body.classList.add('printing-thermal-receipt');
+    window.addEventListener('afterprint', cleanupThermalPrintState, { once: true });
+    window.print();
 }
 /* ============================= INVENTORY ============================= */
 let invFilter = { metal: 'All', karat: 'All', type: 'All', status: 'All' };
