@@ -32,8 +32,8 @@ test('58 mm receipts use the proven centered VOZY P50 main-page print path', asy
   );
   assert.match(
     source,
-    /width:\$\{receiptWidth\}mm;max-width:\$\{receiptWidth\}mm;[^}]*margin:0!important;margin-left:2mm!important;[^}]*padding:\$\{paperPadding\}mm!important/,
-    'the 46 mm print block should use the calibrated 2 mm right offset for the VOZY print head',
+    /width:\$\{receiptWidth\}mm;max-width:\$\{receiptWidth\}mm;[^}]*margin:0!important;margin-left:5mm!important;[^}]*padding:\$\{paperPadding\}mm!important/,
+    'the 46 mm print block should use the calibrated 5 mm right offset for the VOZY print head',
   );
   assert.match(source, /document\.body\.classList\.add\('printing-thermal-receipt'\)/);
   assert.match(source, /window\.print\(\)/);
