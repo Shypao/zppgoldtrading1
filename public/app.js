@@ -2689,7 +2689,7 @@ function thermalReceiptPrintDocument(markup, paperWidth, receiptHeight) {
     *{box-sizing:border-box}
     html,body{width:${paperWidth}mm;height:auto;min-height:0;margin:0!important;padding:0!important;background:#fff;color:#000}
     body{font-family:"Courier New",Courier,monospace;font-size:${paperWidth === 80 ? 11.5 : 10.5}px;font-weight:900;line-height:1.22;-webkit-text-stroke:.24px #000;text-rendering:geometricPrecision;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-    .thermal-receipt{width:${receiptWidth}mm;height:auto;min-height:0;margin:0!important;padding:${paperPadding}mm!important;background:#fff;color:#000;transform:none!important;rotate:none!important;writing-mode:horizontal-tb!important;direction:ltr!important}
+    .thermal-receipt{width:${receiptWidth}mm;height:auto;min-height:0;margin:0 auto!important;padding:${paperPadding}mm!important;background:#fff;color:#000;transform:none!important;rotate:none!important;writing-mode:horizontal-tb!important;direction:ltr!important}
     .thermal-receipt,.thermal-receipt *{font-weight:900}
     .receipt-header,.receipt-meta,.receipt-total,.receipt-payment,.receipt-thanks,.receipt-quote,.receipt-item{break-inside:avoid;page-break-inside:avoid}
     .receipt-shop{text-align:center;font-size:${paperWidth === 80 ? 17 : 15}px;font-weight:900;letter-spacing:.1px;line-height:1.08}

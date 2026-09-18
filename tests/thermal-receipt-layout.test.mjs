@@ -35,6 +35,11 @@ test('58 mm receipts keep all text inside the VOZY P50 print-head boundary', asy
     /width:\$\{receiptWidth\}mm;[^}]*padding:\$\{paperPadding\}mm!important/,
     'the 58 mm profile should leave a 2 mm guard inside the 48 mm print head',
   );
+  assert.match(
+    source,
+    /width:\$\{receiptWidth\}mm;[^}]*margin:0 auto!important/,
+    'the printable receipt block should be centered on the paper roll',
+  );
   assert.match(source, /\.receipt-items\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*10\s*:\s*9\}px/);
   assert.match(source, /\.receipt-total\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*14\s*:\s*13\}px/);
 });
