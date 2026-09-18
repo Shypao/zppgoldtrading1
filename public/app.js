@@ -2733,6 +2733,7 @@ let inventorySelectedDate = 'All';
 let inventorySearch = '';
 const inventoryMoveSelection = new Set();
 const inventoryPoolRowSelection = new Set();
+let inventoryPoolMergeSaving = false;
 let pendingInventoryMove = null;
 let pendingLiquidationBatchSetup = null;
 let combineLiquidationMetal = '';
@@ -3207,6 +3208,10 @@ function inventoryPoolingSelection() {
         return { items, pools, valid: false };
     return { items, pools, valid: pools.length === 1 ? items.length >= 1 : items.length >= 2 };
 }
+function inventoryPoolMergeSelection() {
+    const pools = Array.from(inventoryPoolRowSelection, id => db.inventoryPools.find(pool => pool.id === id)).filter(pool => pool && inventoryPoolSnapshot(pool).weight > 0);
+    return { pools, valid: pools.length >= 2 };
+}
 function toggleInventoryPoolSelection(id, checked) {
     const pool = db.inventoryPools.find(item => item.id === id);
     if (!pool || inventoryPoolSnapshot(pool).weight <= 0)
@@ -3216,6 +3221,134 @@ function toggleInventoryPoolSelection(id, checked) {
     else
         inventoryPoolRowSelection.delete(id);
     render();
+}
+function closeInventoryPoolMergeModal() { document.getElementById('inventory_pool_merge_modal')?.remove(); }
+function remapMergedPoolReferences(sourcePoolIds, targetPoolId) {
+    const sources = new Set(sourcePoolIds.filter(id => id && id !== targetPoolId));
+    const remapRecord = record => {
+        if (!record)
+            return;
+        if (sources.has(record.poolId)) {
+            record.originalPoolId = record.originalPoolId || record.poolId;
+            record.poolId = targetPoolId;
+        }
+        if (Array.isArray(record.poolIds))
+            record.poolIds = Array.from(new Set(record.poolIds.map(id => sources.has(id) ? targetPoolId : id)));
+        (record.lines || []).forEach(line => {
+            if (!sources.has(line.sourcePoolId))
+                return;
+            line.originalSourcePoolId = line.originalSourcePoolId || line.sourcePoolId;
+            line.sourcePoolId = targetPoolId;
+        });
+    };
+    (db.liquidationBatches || []).forEach(remapRecord);
+    (db.liquidations || []).forEach(remapRecord);
+}
+function mergeInventoryPoolRecords(pools, name = '') {
+    const selected = Array.from(new Map((pools || []).filter(Boolean).map(pool => [pool.id, pool])).values());
+    if (selected.length < 2 || selected.some(pool => !db.inventoryPools.includes(pool) || inventoryPoolSnapshot(pool).weight <= 0))
+        return null;
+    const target = selected[0], selectedIds = selected.map(pool => pool.id), selectedIdSet = new Set(selectedIds);
+    const items = Array.from(new Map(selected.flatMap(pool => inventoryPoolItems(pool)).map(item => [item.id, item])).values());
+    if (!items.length)
+        return null;
+    const originalItems = Array.from(new Map(selected.flatMap(pool => {
+        if (pool.originalItems?.length)
+            return pool.originalItems;
+        return inventoryPoolItems(pool).map(item => ({ itemId: item.id, originalWeight: roundWeight(Number(item.netWeight || item.currentWeight || 0)), originalCost: roundMoney(Number(item.payout ?? item.cost ?? 0)), statusAtPooling: item.status }));
+    }).map(item => [item.itemId, item])).values());
+    const originalWeight = roundWeight(selected.reduce((sum, pool) => {
+        const recorded = Number(pool.originalWeight);
+        return sum + (Number.isFinite(recorded) && recorded > 0 ? recorded : (pool.originalItems || []).reduce((total, item) => total + Number(item.originalWeight || 0), 0) || inventoryPoolSnapshot(pool).weight);
+    }, 0));
+    const originalCost = roundMoney(selected.reduce((sum, pool) => {
+        const recorded = Number(pool.originalCost);
+        return sum + (Number.isFinite(recorded) && recorded >= 0 ? recorded : (pool.originalItems || []).reduce((total, item) => total + Number(item.originalCost || 0), 0) || inventoryPoolSnapshot(pool).cost);
+    }, 0));
+    const composition = inventoryPoolComposition(items), mergedFromPoolIds = Array.from(new Set(selected.flatMap(pool => [...(pool.mergedFromPoolIds || []), pool.id])));
+    const mergedPoolHistory = selected.flatMap(pool => [
+        ...(pool.mergedPoolHistory || []),
+        { id: pool.id, name: pool.name || '', metal: pool.metal || '', karat: pool.karat || '', itemIds: [...(pool.itemIds || [])], originalItems: JSON.parse(JSON.stringify(pool.originalItems || [])), originalWeight: Number(pool.originalWeight || 0), originalCost: Number(pool.originalCost || 0), remainingWeight: inventoryPoolSnapshot(pool).weight, remainingCost: inventoryPoolSnapshot(pool).cost, status: inventoryPoolStatus(pool), onHold: pool.onHold === true, notes: pool.notes || '', createdAt: pool.createdAt || '', createdBy: pool.createdBy || '', mergedAt: new Date().toISOString() }
+    ]);
+    target.name = String(name || '').trim() || target.name || `${composition.label} pool`;
+    target.metal = composition.metal;
+    target.karat = composition.karat;
+    target.itemIds = items.map(item => item.id);
+    target.originalItems = originalItems;
+    target.originalWeight = originalWeight;
+    target.originalCost = originalCost;
+    target.mergedFromPoolIds = mergedFromPoolIds;
+    target.mergedPoolHistory = mergedPoolHistory;
+    target.onHold = false;
+    target.updatedAt = new Date().toISOString();
+    items.forEach(item => { item.inventoryPoolId = target.id; if (Number(item.currentWeight || 0) > 0)
+        item.status = 'Available'; });
+    remapMergedPoolReferences(selectedIds, target.id);
+    db.inventoryPools = db.inventoryPools.filter(pool => !selectedIdSet.has(pool.id) || pool.id === target.id);
+    syncInventoryPool(target);
+    return target;
+}
+function openInventoryPoolMergeModal() {
+    if (!adminEditGuard())
+        return;
+    const selection = inventoryPoolMergeSelection();
+    if (!selection.valid) {
+        toast('Select at least two inventory pools to merge');
+        return;
+    }
+    const snapshots = selection.pools.map(pool => ({ pool, snapshot: inventoryPoolSnapshot(pool) }));
+    const totalWeight = roundWeight(snapshots.reduce((sum, entry) => sum + entry.snapshot.weight, 0)), totalCost = roundMoney(snapshots.reduce((sum, entry) => sum + entry.snapshot.cost, 0));
+    const modal = document.createElement('div');
+    modal.id = 'inventory_pool_merge_modal';
+    modal.className = 'modal-backdrop';
+    modal.innerHTML = `<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="inventory_pool_merge_title"><div class="summary-modal-head"><div><div class="eyebrow">Combine pooled inventory</div><h2 id="inventory_pool_merge_title">Merge ${selection.pools.length} selected pools</h2></div><button class="modal-close" onclick="closeInventoryPoolMergeModal()" aria-label="Close">×</button></div><p class="move-confirmation-intro">The selected pools will become one Available pool in Stock Records. Original inventory records and liquidation history remain traceable.</p><div class="field"><label for="inventory_pool_merge_name">Merged pool name</label><input id="inventory_pool_merge_name" value="${esc(selection.pools[0].name || '')}" placeholder="Combined inventory pool"></div><div class="move-confirmation-summary"><div><span>Selected pools</span><strong>${selection.pools.length}</strong></div><div><span>Total weight</span><strong>${fmtWeight(totalWeight)}</strong></div><div><span>Total cost</span><strong>${fmtMoney(totalCost)}</strong></div><div><span>Status after merge</span><strong>Available</strong></div></div><div class="table-wrap move-confirmation-items"><table><thead><tr><th>Pool</th><th>Contents</th><th class="num-head">Weight</th><th class="num-head">Cost</th></tr></thead><tbody>${snapshots.map(({ pool, snapshot }) => `<tr><td><strong>${esc(pool.name || pool.id)}</strong><br><span class="form-note">${esc(pool.id)}</span></td><td>${snapshot.items.length} item${snapshot.items.length === 1 ? '' : 's'}</td><td class="num">${fmtWeight(snapshot.weight)}</td><td class="num">${fmtMoney(snapshot.cost)}</td></tr>`).join('')}</tbody></table></div><div class="move-confirmation-note"><strong>Confirm merge</strong><span>${esc(selection.pools[0].id)} will remain as the pool ID. The other selected pool IDs will be retained in trace history.</span></div><div class="form-actions"><button class="btn secondary" onclick="closeInventoryPoolMergeModal()">Cancel</button><button class="btn" id="confirm_inventory_pool_merge" onclick="confirmInventoryPoolMerge()">Confirm merge</button></div></div>`;
+    modal.addEventListener('click', event => { if (event.target === modal)
+        closeInventoryPoolMergeModal(); });
+    document.body.appendChild(modal);
+}
+async function confirmInventoryPoolMerge() {
+    if (inventoryPoolMergeSaving)
+        return;
+    const selection = inventoryPoolMergeSelection();
+    if (!selection.valid) {
+        closeInventoryPoolMergeModal();
+        toast('The pool selection changed. Select at least two pools again.');
+        return;
+    }
+    const button = document.getElementById('confirm_inventory_pool_merge');
+    inventoryPoolMergeSaving = true;
+    if (button) {
+        button.disabled = true;
+        button.setAttribute('aria-busy', 'true');
+    }
+    const beforeState = JSON.parse(JSON.stringify(db));
+    try {
+        const target = mergeInventoryPoolRecords(selection.pools, val('inventory_pool_merge_name'));
+        if (!target) {
+            db = beforeState;
+            toast('The selected pools could not be merged');
+            return;
+        }
+        if (!await saveDB()) {
+            db = beforeState;
+            render();
+            toast('The selected pools were not merged');
+            return;
+        }
+        inventoryMoveSelection.clear();
+        inventoryPoolRowSelection.clear();
+        closeInventoryPoolMergeModal();
+        render();
+        toast(`${selection.pools.length} pools merged into ${target.id}`);
+    }
+    finally {
+        inventoryPoolMergeSaving = false;
+        const currentButton = document.getElementById('confirm_inventory_pool_merge');
+        if (currentButton) {
+            currentButton.disabled = false;
+            currentButton.removeAttribute('aria-busy');
+        }
+    }
 }
 function inventoryPoolComposition(items) {
     const metals = Array.from(new Set(items.map(item => String(item.metal || ''))));
@@ -3856,6 +3989,7 @@ function renderInventory() {
     const poolingSelection = inventoryPoolingSelection();
     const canPoolSelected = poolingSelection.valid;
     const selectedPoolCount = poolingSelection.pools.length;
+    const canMergeSelectedPools = inventoryPoolMergeSelection().valid;
     const canMoveSelected = selectedPoolCount > 0 || (selectedMoveCount > 0 && selectedMovableCount === selectedMoveCount);
     const activeFilterLabels = [invFilter.metal, invFilter.karat, invFilter.type, invFilter.status].filter(value => value !== 'All');
     const displayStock = inventoryDisplayRows(selectedDay.stock);
@@ -3926,7 +4060,8 @@ function renderInventory() {
   <section class="block" id="inventory_stock_list">
     <div class="inventory-stock-head"><div><h2 class="block-title">Stock records</h2><p class="form-note">${inventorySearch ? `${rows.length} matching record${rows.length === 1 ? '' : 's'}` : activeFilterLabels.length ? `Showing: ${activeFilterLabels.map(esc).join(' · ')}` : 'Showing all records'} across ${inventoryDateLabel()}.</p></div><div class="inventory-stock-tools"><div class="field inventory-stock-search"><label for="inventory_stock_search">Search stock records</label><input id="inventory_stock_search" type="search" autocomplete="off" value="${esc(inventorySearch)}" placeholder="Customer, date, metal, karat, or status" oninput="updateInventorySearch(this.value)"></div><button class="btn secondary small" onclick="openInventoryFilterModal()">Change filters</button></div></div>
     ${isAdmin() ? `<div class="inventory-action-panel"><div class="inventory-action-status"><strong>${percentagePool.length} eligible ${inventorySelectedDate === 'All' ? 'across all dates' : 'on this date'}</strong><span><span id="inventory_liq_count">${selectedMoveCount}</span> inventory item${selectedMoveCount === 1 ? '' : 's'} selected${selectedPoolCount ? ` · ${selectedPoolCount} pool selected` : ''}${percentagePool.length ? '' : ' · change the filters'}</span>${selectedGradeCounts.size ? `<div class="inventory-selection-chips">${Array.from(selectedGradeCounts.entries()).map(([grade, count]) => `<span>${esc(grade)} · ${count}</span>`).join('')}</div>` : ''}</div><div class="inventory-action-buttons"><button class="btn secondary small" onclick="selectAllVisibleInventory()">Select all shown</button><button class="btn secondary small" onclick="selectAllLowKaratGold()">Select low-karat Gold</button><button class="btn secondary small" id="inventory_clear_selected" onclick="clearInventorySelection()" ${selectedMoveCount || selectedPoolCount ? '' : 'disabled'}>Clear</button><div class="inventory-bulk-category"><select id="inventory_bulk_status" aria-label="Category for selected inventory" onchange="inventoryBulkStatus=this.value">${['Available', 'For Refining', 'On Hold'].map(status => `<option ${inventoryBulkStatus === status ? 'selected' : ''}>${status}</option>`).join('')}</select><button class="btn secondary small" data-inventory-selection-required onclick="categorizeCheckedInventory()" ${selectedMoveCount ? '' : 'disabled'}>Apply category</button></div><button class="btn" id="inventory_pool_selected" onclick="openManualInventoryPoolModal()" ${canPoolSelected ? '' : 'disabled'}>Pool selected</button><button class="btn secondary small" id="inventory_move_selected" onclick="moveCheckedInventoryToLiquidation()" ${canMoveSelected ? '' : 'disabled'}>Move selected to liquidation</button><button class="btn secondary small" onclick="openCombineLiquidationDateSelection()" ${hasMovableStock ? '' : 'disabled'}>Combine dates</button><button class="btn secondary small" data-inventory-selection-required onclick="prepareInventoryForRefining()" ${selectedMoveCount ? '' : 'disabled'}>Refine selected</button></div></div>` : ''}
-    ${tableOrEmpty(rows, s => `<tr>${isAdmin() ? `<td>${s.isInventoryPool ? `<input type="checkbox" aria-label="Select ${esc(s.customerName)} to add matching inventory" onchange="toggleInventoryPoolSelection('${s.inventoryPoolId}',this.checked)" ${inventoryPoolRowSelection.has(s.inventoryPoolId) ? 'checked' : ''}>` : `<input type="checkbox" data-inventory-move-id="${s.id}" aria-label="Select ${esc(s.metal)} ${esc(s.karat)} from ${esc(s.customerName)}" onchange="toggleInventoryForLiquidation('${s.id}',this.checked)" ${inventoryMoveSelection.has(s.id) ? 'checked' : ''} ${categorizableInventory(s) ? '' : 'disabled'}>`}</td>` : ''}<td>${fmtDate(s.date)}</td><td>${esc(s.customerName)}</td><td><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)}</td>
+    ${isAdmin() ? `<div class="form-actions" style="margin:0 0 12px"><button class="btn secondary small" id="inventory_merge_pools" onclick="openInventoryPoolMergeModal()" ${canMergeSelectedPools ? '' : 'disabled'}>Merge selected pools</button></div>` : ''}
+    ${tableOrEmpty(rows, s => `<tr>${isAdmin() ? `<td>${s.isInventoryPool ? `<input type="checkbox" aria-label="Select ${esc(s.customerName)} to merge or add inventory" onchange="toggleInventoryPoolSelection('${s.inventoryPoolId}',this.checked)" ${inventoryPoolRowSelection.has(s.inventoryPoolId) ? 'checked' : ''}>` : `<input type="checkbox" data-inventory-move-id="${s.id}" aria-label="Select ${esc(s.metal)} ${esc(s.karat)} from ${esc(s.customerName)}" onchange="toggleInventoryForLiquidation('${s.id}',this.checked)" ${inventoryMoveSelection.has(s.id) ? 'checked' : ''} ${categorizableInventory(s) ? '' : 'disabled'}>`}</td>` : ''}<td>${fmtDate(s.date)}</td><td>${esc(s.customerName)}</td><td><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)}</td>
       <td>${esc(s.itemType)}</td><td class="num">${fmtWeight(s.currentWeight)}</td><td class="num">${fmtMoney(s.cost)}</td><td>${statusPill(s.status)}${s.isInventoryPool ? `<br><span class="form-note">${esc(s.inventoryPoolId)}</span>` : ''}</td><td>${esc(s.remarks || '—')}</td>${isAdmin() ? `<td><div class="form-actions">${s.isInventoryPool ? `<button class="btn small" onclick="openPoolLiquidationModal('${s.inventoryPoolId}')">Liquidate Pool</button><button class="btn secondary small" onclick="openInventoryPoolEdit('${s.inventoryPoolId}')">Edit</button>` : `${movableInventory(s) ? `<button class="btn secondary small" onclick="liquidateInventoryItem('${s.id}')">Liquidate item</button>` : ''}${adminEditButton('Inventory', s.id)}`}</div></td>` : ''}</tr>`, [...(isAdmin() ? ['Select'] : []), 'Date', 'Customer', 'Metal / karat', 'Type', 'Current weight', 'Cost', 'Status', 'Remarks', ...(isAdmin() ? ['Actions'] : [])], `No stock matches this filter ${inventorySelectedDate === 'All' ? 'across all purchase dates' : `on ${fmtDate(selectedDay.date)}`}.`)}
   </section>
   `;
@@ -4579,11 +4714,11 @@ async function submitLiquidationBatch(batchId) {
             item.status = 'Liquidated';
             delete item.liquidationBatchId;
         }
-        return { itemId: item.id, assay: item.karat, weight: roundWeight(weight), sellingAmount, sellingRate: roundMoney(sellingAmount / weight), proceeds: sellingAmount, costPortion: roundMoney(costPortion), previousStatus: line.previousStatus || 'Available', pooledAllocation: line.pooledAllocation === true, partialAllocation: line.partialAllocation === true, sourcePoolId: line.sourcePoolId || null };
+        return { itemId: item.id, assay: item.karat, weight: roundWeight(weight), sellingAmount, sellingRate: roundMoney(sellingAmount / weight), proceeds: sellingAmount, costPortion: roundMoney(costPortion), previousStatus: line.previousStatus || 'Available', pooledAllocation: line.pooledAllocation === true, partialAllocation: line.partialAllocation === true, sourcePoolId: line.sourcePoolId || null, originalSourcePoolId: line.originalSourcePoolId || null };
     });
     const uniqueRates = Array.from(new Set(lines.map(line => line.sellingRate))), liquidationId = nextSequenceId('L', db.liquidations);
     const pool = batch.poolId ? db.inventoryPools.find(record => record.id === batch.poolId) : null, remaining = pool ? syncInventoryPool(pool) : null, poolIds = syncPoolsForLiquidationLines(lines, batch.poolId);
-    db.liquidations.push({ id: liquidationId, batchId: batch.id, batchName: batch.name, poolId: batch.poolId || null, poolIds, poolName: batch.poolName || '', date, metal: batch.metal, buyer: batch.buyer, itemCount: lines.length, sellingRate: uniqueRates.length === 1 ? uniqueRates[0] : null, releasedWeight: roundWeight(totalWeight), proceeds: roundMoney(totalSold), paymentStatus: val('complete_batch_payment'), cost: roundMoney(totalCost), margin: roundMoney(totalSold - totalCost), profitMargin: totalCost ? roundMoney((totalSold - totalCost) / totalCost * 100) : 0, lines, remainingPoolWeight: remaining?.weight, remainingPoolCost: remaining?.cost, remarks: val('complete_batch_notes').trim(), createdBy: currentUser?.displayName || '' });
+    db.liquidations.push({ id: liquidationId, batchId: batch.id, batchName: batch.name, poolId: batch.poolId || null, originalPoolId: batch.originalPoolId || null, poolIds, poolName: batch.poolName || '', date, metal: batch.metal, buyer: batch.buyer, itemCount: lines.length, sellingRate: uniqueRates.length === 1 ? uniqueRates[0] : null, releasedWeight: roundWeight(totalWeight), proceeds: roundMoney(totalSold), paymentStatus: val('complete_batch_payment'), cost: roundMoney(totalCost), margin: roundMoney(totalSold - totalCost), profitMargin: totalCost ? roundMoney((totalSold - totalCost) / totalCost * 100) : 0, lines, remainingPoolWeight: remaining?.weight, remainingPoolCost: remaining?.cost, remarks: val('complete_batch_notes').trim(), createdBy: currentUser?.displayName || '' });
     db.liquidationBatches = db.liquidationBatches.filter(record => record.id !== batch.id);
     if (!await saveDB()) {
         db = beforeState;

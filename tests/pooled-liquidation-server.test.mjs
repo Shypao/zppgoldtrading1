@@ -144,6 +144,27 @@ test('server accepts a manual pool containing mixed metals and purities', () => 
   assert.equal(result.stdout, 'ok');
 });
 
+test('server accepts a merged pool while original stock and liquidation trace remain linked', () => {
+  const state = emptyState();
+  state.stock.push(
+    { id: 'gold-21', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-0001', netWeight: 2, currentWeight: 2, payout: 10000, cost: 10000 },
+    { id: 'gold-22', metal: 'Gold', karat: '22K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-0001', netWeight: 4, currentWeight: 3, payout: 24000, cost: 18000 }
+  );
+  state.inventoryPools.push({
+    id: 'POOL-0001', name: 'Gold combined pool', metal: 'Gold', karat: 'Mixed', itemIds: ['gold-21', 'gold-22'],
+    originalWeight: 6, originalCost: 34000, remainingWeight: 5, remainingCost: 28000, onHold: false, status: 'PARTIALLY LIQUIDATED',
+    mergedFromPoolIds: ['POOL-0001', 'POOL-0002']
+  });
+  state.liquidations.push({
+    id: 'LQ-MERGED', poolId: 'POOL-0001', originalPoolId: 'POOL-0002', metal: 'Gold', releasedWeight: 1, cost: 6000,
+    lines: [{ itemId: 'gold-22', weight: 1, costPortion: 6000, pooledAllocation: true, sourcePoolId: 'POOL-0001', originalSourcePoolId: 'POOL-0002' }]
+  });
+
+  const result = validate(state);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'ok');
+});
+
 test('server accepts a pool with one remaining member after another item returns to inventory', () => {
   const state = emptyState();
   state.stock.push(

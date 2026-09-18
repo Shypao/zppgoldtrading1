@@ -97,6 +97,31 @@ async function loadInventoryApi() {
       openCompleteLiquidationBatch(id);
       return appended.at(-1)?.innerHTML || '';
     },
+    async completeBatch(batchId, totalSold = 10000) {
+      const fields = {
+        complete_batch_date: { value: '2026-09-18' },
+        complete_batch_total: { value: String(totalSold) },
+        complete_batch_payment: { value: 'Paid' },
+        complete_batch_notes: { value: '' }
+      };
+      const originalGetElementById = document.getElementById;
+      const originalSaveDB = saveDB;
+      const originalRender = render;
+      const originalToast = toast;
+      document.getElementById = id => fields[id] || null;
+      saveDB = async () => true;
+      render = () => '';
+      toast = () => {};
+      try {
+        await submitLiquidationBatch(batchId);
+      } finally {
+        document.getElementById = originalGetElementById;
+        saveDB = originalSaveDB;
+        render = originalRender;
+        toast = originalToast;
+      }
+      return JSON.parse(JSON.stringify({ batches: db.liquidationBatches, liquidations: db.liquidations, pools: db.inventoryPools, stock: db.stock }));
+    },
     openBatchEdit(id) {
       appended.length = 0;
       openLiquidationBatchEdit(id);
@@ -111,6 +136,24 @@ async function loadInventoryApi() {
       appended.length = 0;
       openPoolLiquidationModal(id);
       return appended.at(-1)?.innerHTML || '';
+    },
+    openPoolMerge(poolIds) {
+      appended.length = 0;
+      inventoryPoolRowSelection.clear();
+      poolIds.forEach(id => inventoryPoolRowSelection.add(id));
+      if (typeof openInventoryPoolMergeModal === 'function') openInventoryPoolMergeModal();
+      return appended.at(-1)?.innerHTML || '';
+    },
+    mergePools(poolIds, name = 'Merged pool') {
+      inventoryPoolRowSelection.clear();
+      poolIds.forEach(id => inventoryPoolRowSelection.add(id));
+      const pools = typeof inventoryPoolMergeSelection === 'function'
+        ? inventoryPoolMergeSelection().pools
+        : poolIds.map(id => db.inventoryPools.find(pool => pool.id === id)).filter(Boolean);
+      const result = typeof mergeInventoryPoolRecords === 'function'
+        ? mergeInventoryPoolRecords(pools, name)
+        : null;
+      return JSON.parse(JSON.stringify({ result, stock: db.stock, pools: db.inventoryPools, batches: db.liquidationBatches, liquidations: db.liquidations }));
     },
     returnPoolMembers(poolId, itemIds) {
       const pool = db.inventoryPools.find(record => record.id === poolId);
@@ -744,6 +787,78 @@ test('inventory displays a pool as one available row with combined weight and co
   assert.match(liquidationModal, /Select a liquidation destination/);
   assert.match(liquidationModal, /Create new liquidation batch/);
   assert.match(liquidationModal, /Add to existing open batch/);
+});
+
+test('checked inventory pools can be reviewed and merged into one available pool', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'pool-a', date: '2026-09-17', customerName: 'Seller A', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-0001', netWeight: 2, currentWeight: 2, cost: 10000 },
+    { id: 'pool-b', date: '2026-09-18', customerName: 'Seller B', metal: 'Gold', karat: '22K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-0002', netWeight: 3, currentWeight: 3, cost: 18000 }
+  ];
+  state.inventoryPools = [
+    { id: 'POOL-0001', name: '21K pool', metal: 'Gold', karat: '21K', itemIds: ['pool-a'], originalItems: [{ itemId: 'pool-a', originalWeight: 2, originalCost: 10000 }], originalWeight: 2, originalCost: 10000, remainingWeight: 2, remainingCost: 10000, onHold: false, status: 'ACTIVE' },
+    { id: 'POOL-0002', name: '22K pool', metal: 'Gold', karat: '22K', itemIds: ['pool-b'], originalItems: [{ itemId: 'pool-b', originalWeight: 3, originalCost: 18000 }], originalWeight: 3, originalCost: 18000, remainingWeight: 3, remainingCost: 18000, onHold: false, status: 'ACTIVE' }
+  ];
+  api.setState(state);
+
+  const inventoryHtml = api.renderInventory();
+  assert.match(inventoryHtml, /id="inventory_merge_pools"[^>]*disabled[^>]*>Merge selected pools</);
+
+  const modalHtml = api.openPoolMerge(['POOL-0001', 'POOL-0002']);
+  assert.match(modalHtml, /Merge 2 selected pools/);
+  assert.match(modalHtml, /5\.00 g/);
+  assert.match(modalHtml, /PHP 28,000/);
+  assert.match(modalHtml, /Confirm merge/);
+  assert.match(modalHtml, /POOL-0001 will remain as the pool ID/);
+
+  const reverseSelection = api.mergePools(['POOL-0002', 'POOL-0001'], 'Reverse selection pool');
+  assert.equal(reverseSelection.result.id, 'POOL-0002', 'the first checked pool ID must survive');
+});
+
+test('merging pools preserves stock history and remaps liquidation pool references', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'pool-a', date: '2026-09-17', customerName: 'Seller A', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-0001', netWeight: 2, currentWeight: 2, cost: 10000 },
+    { id: 'pool-b', date: '2026-09-18', customerName: 'Seller B', metal: 'Gold', karat: '22K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-0002', netWeight: 4, currentWeight: 3, cost: 18000 }
+  ];
+  state.inventoryPools = [
+    { id: 'POOL-0001', name: '21K pool', metal: 'Gold', karat: '21K', itemIds: ['pool-a'], originalItems: [{ itemId: 'pool-a', originalWeight: 2, originalCost: 10000 }], originalWeight: 2, originalCost: 10000, remainingWeight: 2, remainingCost: 10000, onHold: false, status: 'ACTIVE' },
+    { id: 'POOL-0002', name: '22K pool', metal: 'Gold', karat: '22K', itemIds: ['pool-b'], originalItems: [{ itemId: 'pool-b', originalWeight: 4, originalCost: 24000 }], originalWeight: 4, originalCost: 24000, remainingWeight: 3, remainingCost: 18000, onHold: false, status: 'PARTIALLY LIQUIDATED' }
+  ];
+  state.liquidationBatches = [{ id: 'LB-POOL', name: 'Earlier pool move', buyer: 'Gold Buyer', metal: 'Gold', poolId: 'POOL-0002', poolIds: ['POOL-0002'], lines: [{ itemId: 'pool-b', sourcePoolId: 'POOL-0002', weight: 1, cost: 6000, pooledAllocation: true, previousStatus: 'Available' }] }];
+  state.liquidations = [{ id: 'LQ-POOL', poolId: 'POOL-0002', poolIds: ['POOL-0002'], lines: [{ itemId: 'pool-b', sourcePoolId: 'POOL-0002', weight: 1, cost: 6000 }] }];
+  api.setState(state);
+
+  const merged = api.mergePools(['POOL-0001', 'POOL-0002'], 'Gold combined pool');
+
+  assert.equal(merged.result.id, 'POOL-0001');
+  assert.equal(merged.pools.length, 1);
+  assert.equal(merged.pools[0].name, 'Gold combined pool');
+  assert.deepEqual(Array.from(merged.pools[0].itemIds), ['pool-a', 'pool-b']);
+  assert.deepEqual(Array.from(merged.pools[0].mergedFromPoolIds), ['POOL-0001', 'POOL-0002']);
+  assert.deepEqual(Array.from(merged.pools[0].mergedPoolHistory, pool => pool.name), ['21K pool', '22K pool']);
+  assert.equal(merged.pools[0].originalWeight, 6);
+  assert.equal(merged.pools[0].originalCost, 34000);
+  assert.equal(merged.pools[0].remainingWeight, 5);
+  assert.equal(merged.pools[0].remainingCost, 28000);
+  assert.equal(merged.pools[0].status, 'PARTIALLY LIQUIDATED');
+  assert.equal(merged.stock.length, 2, 'original stock records must remain intact');
+  assert.equal(merged.stock.every(item => item.inventoryPoolId === 'POOL-0001'), true);
+  assert.equal(merged.batches[0].poolId, 'POOL-0001');
+  assert.deepEqual(Array.from(merged.batches[0].poolIds), ['POOL-0001']);
+  assert.equal(merged.batches[0].lines[0].sourcePoolId, 'POOL-0001');
+  assert.equal(merged.batches[0].lines[0].originalSourcePoolId, 'POOL-0002');
+  assert.equal(merged.liquidations[0].poolId, 'POOL-0001');
+
+  const completed = await api.completeBatch('LB-POOL', 7000);
+  const completedRecord = completed.liquidations.find(record => record.batchId === 'LB-POOL');
+  assert.equal(completed.batches.length, 0);
+  assert.equal(completedRecord.poolId, 'POOL-0001');
+  assert.equal(completedRecord.originalPoolId, 'POOL-0002');
+  assert.equal(completedRecord.lines[0].sourcePoolId, 'POOL-0001');
+  assert.equal(completedRecord.lines[0].originalSourcePoolId, 'POOL-0002');
 });
 
 test('returning selected pool members keeps their remaining balances as available inventory', async () => {
