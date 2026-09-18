@@ -165,6 +165,32 @@ test('server accepts a merged pool while original stock and liquidation trace re
   assert.equal(result.stdout, 'ok');
 });
 
+test('server accepts multiple proportional retail sales from one jewelry inventory record', () => {
+  const state = emptyState();
+  state.stock.push({ id: 'jewelry', metal: 'Gold', karat: '18K', itemType: 'Jewelry', status: 'Available', netWeight: 4, currentWeight: 1.5, payout: 40000, cost: 15000 });
+  state.retailSales.push(
+    { id: 'RTL-1', itemId: 'jewelry', buyer: 'Buyer A', date: '2026-09-18', weight: 1, cost: 10000, salePrice: 12000, inventoryAllocation: true, partialAllocation: true, remainingWeightAfter: 3, remainingCostAfter: 30000 },
+    { id: 'RTL-2', itemId: 'jewelry', buyer: 'Buyer B', date: '2026-09-18', weight: 1.5, cost: 15000, salePrice: 18000, inventoryAllocation: true, partialAllocation: true, remainingWeightAfter: 1.5, remainingCostAfter: 15000 }
+  );
+
+  const result = validate(state);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'ok');
+});
+
+test('server accepts preserved liquidation trace after its empty pool is deleted', () => {
+  const state = emptyState();
+  state.stock.push({ id: 'silver', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', netWeight: 1000, currentWeight: 500, payout: 100000, cost: 50000 });
+  state.liquidations.push({
+    id: 'LQ-DISSOLVED', originalPoolId: 'POOL-DELETED', originalPoolName: 'Old silver pool', metal: 'Silver', releasedWeight: 500, cost: 50000,
+    lines: [{ itemId: 'silver', weight: 500, costPortion: 50000, pooledAllocation: true, originalSourcePoolId: 'POOL-DELETED' }]
+  });
+
+  const result = validate(state);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'ok');
+});
+
 test('server accepts a pool with one remaining member after another item returns to inventory', () => {
   const state = emptyState();
   state.stock.push(

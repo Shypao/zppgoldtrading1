@@ -3112,16 +3112,26 @@ function openInventoryPoolEdit(id){
     <div class="field"><label>Item type</label><select id="edit_pool_type"><option ${itemType==='Jewelry'?'selected':''}>Jewelry</option><option ${itemType==='Scrap'?'selected':''}>Scrap</option>${itemType==='Mixed'?'<option selected>Mixed</option>':''}</select></div>
     <div class="field span-2"><label>Remarks</label><textarea id="edit_pool_remarks">${esc(pool.notes||'')}</textarea></div>
   </div><p class="form-note">Changes apply to the pooled balance while every original inventory record remains traceable.</p>
-  <section style="margin-top:20px;padding-top:16px;border-top:2px solid var(--line);"><h3>Pool items</h3><p class="form-note">Select records to remove from this pool and return as individual Available inventory.</p><div class="table-wrap"><table><thead><tr><th>Select</th><th>Item</th><th>Customer</th><th class="num-head">Remaining weight</th><th class="num-head">Remaining cost</th></tr></thead><tbody>${snapshot.items.map(item=>`<tr><td><input type="checkbox" data-pool-return-item-id="${esc(item.id)}" ${Number(item.currentWeight)>0?'':'disabled'} aria-label="Return ${esc(item.metal)} ${esc(gradeLabel(item.metal,item.karat))} from pool"></td><td><strong>${esc(item.metal)} ${esc(gradeLabel(item.metal,item.karat))}</strong><br><span class="form-note">${esc(item.itemType)}</span></td><td>${esc(item.customerName||'—')}</td><td class="num">${fmtWeight(item.currentWeight)}</td><td class="num">${fmtMoney(item.cost)}</td></tr>`).join('')}</tbody></table></div><div class="form-actions"><button class="btn secondary" type="button" onclick="returnSelectedPoolItemsToInventory()">Return selected to Inventory</button></div></section>`,'saveInventoryPoolEdit');
+  <section style="margin-top:20px;padding-top:16px;border-top:2px solid var(--line);"><h3>Pool items</h3><p class="form-note">Select records to remove from this pool and return as individual Available inventory. If every record is selected, the empty pool will be deleted.</p><div class="table-wrap"><table><thead><tr><th>Select</th><th>Item</th><th>Customer</th><th class="num-head">Remaining weight</th><th class="num-head">Remaining cost</th></tr></thead><tbody>${snapshot.items.map(item=>`<tr><td><input type="checkbox" data-pool-return-item-id="${esc(item.id)}" aria-label="Return ${esc(item.metal)} ${esc(gradeLabel(item.metal,item.karat))} from pool"></td><td><strong>${esc(item.metal)} ${esc(gradeLabel(item.metal,item.karat))}</strong><br><span class="form-note">${esc(item.itemType)}</span></td><td>${esc(item.customerName||'—')}</td><td class="num">${fmtWeight(item.currentWeight)}</td><td class="num">${fmtMoney(item.cost)}</td></tr>`).join('')}</tbody></table></div><div class="form-actions"><button class="btn secondary" type="button" onclick="returnSelectedPoolItemsToInventory()">Return selected to Inventory</button></div></section>`,'saveInventoryPoolEdit');
+}
+function preserveDissolvedPoolReferences(pool){
+  const poolId=pool.id;
+  const preserve=record=>{
+    if(record.poolId===poolId){record.originalPoolId=record.originalPoolId||poolId;record.originalPoolName=record.originalPoolName||pool.name||'';delete record.poolId;}
+    if(Array.isArray(record.poolIds)){record.poolIds=record.poolIds.filter(id=>id!==poolId);if(!record.poolIds.length)delete record.poolIds;}
+    (record.lines||[]).forEach(line=>{if(line.sourcePoolId===poolId){line.originalSourcePoolId=line.originalSourcePoolId||poolId;delete line.sourcePoolId;}});
+  };
+  (db.liquidationBatches||[]).forEach(preserve);
+  (db.liquidations||[]).forEach(preserve);
 }
 function detachInventoryPoolItems(pool,itemIds){
   const selectedIds=new Set(itemIds||[]),poolIds=new Set(pool?.itemIds||[]);
   if(!pool||!selectedIds.size||Array.from(selectedIds).some(id=>!poolIds.has(id)))return false;
   const remainingIds=(pool.itemIds||[]).filter(id=>!selectedIds.has(id));
-  if(!remainingIds.length)return false;
-  const selectedItems=inventoryPoolItems(pool).filter(item=>selectedIds.has(item.id)&&Number(item.currentWeight)>0);
+  const selectedItems=inventoryPoolItems(pool).filter(item=>selectedIds.has(item.id));
   if(selectedItems.length!==selectedIds.size)return false;
-  selectedItems.forEach(item=>{delete item.inventoryPoolId;delete item.liquidationBatchId;item.status='Available';});
+  selectedItems.forEach(item=>{delete item.inventoryPoolId;delete item.liquidationBatchId;if(Number(item.currentWeight)>0)item.status='Available';});
+  if(!remainingIds.length){preserveDissolvedPoolReferences(pool);db.inventoryPools=db.inventoryPools.filter(record=>record.id!==pool.id);return true;}
   pool.itemIds=remainingIds;
   const originalById=new Map((pool.originalItems||[]).map(item=>[item.itemId,item]));
   pool.originalItems=(pool.originalItems||[]).filter(item=>!selectedIds.has(item.itemId));
@@ -3137,9 +3147,10 @@ async function returnSelectedPoolItemsToInventory(){
   const ids=Array.from(document.querySelectorAll?.('[data-pool-return-item-id]:checked')||[]).map(input=>input.dataset.poolReturnItemId).filter(Boolean);
   if(!ids.length){toast('Select at least one pool item to return');return;}
   const beforeState=JSON.parse(JSON.stringify(db));
-  if(!detachInventoryPoolItems(pool,ids)){toast('Keep at least one available item in the pool');return;}
+  if(!detachInventoryPoolItems(pool,ids)){toast('The selected pool items could not be returned');return;}
+  const poolDeleted=!db.inventoryPools.some(record=>record.id===pool.id);
   if(!await saveDB()){db=beforeState;render();toast('The selected items were not returned to Inventory');return;}
-  editingInventoryPoolId=null;closeAdminEditModal();render();toast(`${ids.length} ${ids.length===1?'item':'items'} returned to Available Inventory`);
+  editingInventoryPoolId=null;closeAdminEditModal();render();toast(poolDeleted?`${pool.id} deleted; ${ids.length} ${ids.length===1?'item':'items'} returned to Inventory`:`${ids.length} ${ids.length===1?'item':'items'} returned to Available Inventory`);
 }
 function distributePoolWeight(items,targetWeight){
   const currentTotal=items.reduce((sum,item)=>sum+Number(item.currentWeight||0),0);
@@ -3818,6 +3829,7 @@ async function deleteRefiningRecord(){
 
 /* ============================= RETAIL SALES ============================= */
 let lastRetailSaleId=null;
+let retailSaleSaving=false;
 function renderRetail(){
   const eligible = db.stock.filter(s=>!s.inventoryPoolId&&s.status==='Available' && s.itemType==='Jewelry' && s.currentWeight>0);
   return `
@@ -3825,7 +3837,7 @@ function renderRetail(){
     <h2 class="block-title">Sell a jewelry item</h2>
     <div class="form-grid">
       <div class="field span-2"><label>Item</label>
-        <select id="rt_item">
+        <select id="rt_item" onchange="selectRetailSaleItem()">
           <option value="">— choose item —</option>
           ${eligible.map(s=>`<option value="${s.id}">${fmtDate(s.date)} · ${s.metal} ${esc(s.karat)} · ${fmtWeight(s.currentWeight)} · cost ${fmtMoney(s.cost)}</option>`).join('')}
         </select>
@@ -3833,34 +3845,65 @@ function renderRetail(){
       </div>
       <div class="field"><label>Buyer name</label><input id="rt_buyer" placeholder="Walk-in customer"></div>
       <div class="field"><label>Sale date</label><input id="rt_date" type="date" value="${todayStr()}"></div>
+      <div class="field"><label>Weight to sell (g)</label><input id="rt_weight" type="number" min="0.01" step="0.01" disabled oninput="updateRetailSalePreview()"><span class="hint" id="rt_weight_hint">Choose an item first.</span></div>
+      <div class="field"><label>Cost basis (automatic)</label><input id="rt_cost" value="" readonly><span class="hint" id="rt_remaining_hint"></span></div>
       <div class="field"><label>Sale price (PHP)</label><input id="rt_price" type="number" min="0" step="0.01"></div>
     </div>
-    <div class="form-actions"><button class="btn" onclick="submitRetail()">Record sale</button></div>
+    <div class="form-actions"><button class="btn" id="record_retail_sale" onclick="submitRetail()">Record sale</button></div>
   </section>
 
   <section class="block">
     <h2 class="block-title">Retail sales history</h2>
     ${tableOrEmpty(db.retailSales.slice().sort((a,b)=>b.date.localeCompare(a.date)),
-      r=>`<tr><td>${fmtDate(r.date)}</td><td>${esc(r.buyer)}</td><td class="num">${fmtMoney(r.salePrice)}</td>
+      r=>`<tr><td>${fmtDate(r.date)}</td><td>${esc(r.buyer)}</td><td class="num">${fmtWeight(r.weight)}</td><td class="num">${fmtMoney(r.salePrice)}</td>
       <td class="num">${fmtMoney(r.cost)}</td><td class="num" style="color:${r.margin>=0?'var(--sage)':'var(--rust)'}">${fmtMoney(r.margin)}</td><td><div class="form-actions"><button class="btn secondary small" onclick="printRetailSummary('${r.id}')">Summary</button>${adminEditButton('Retail',r.id)}</div></td></tr>`,
-      ['Date','Buyer','Sale price','Cost','Margin','Actions'],
+      ['Date','Buyer','Weight','Sale price','Cost','Margin','Actions'],
       'No retail sales recorded yet.')}
   </section>
   `;
 }
-function submitRetail(){
+function prepareRetailSaleAllocation(item,requestedWeight){
+  const availableWeight=roundWeight(Number(item?.currentWeight||0)),availableCost=roundMoney(Number(item?.cost||0)),weight=roundWeight(Number(requestedWeight));
+  if(!item||item.inventoryPoolId||item.status!=='Available'||item.itemType!=='Jewelry'||weight<0.01||weight>availableWeight+0.005)return null;
+  const soldWeight=weight>=availableWeight-0.005?availableWeight:weight,cost=soldWeight===availableWeight?availableCost:roundMoney(availableCost*(soldWeight/availableWeight));
+  return {weight:soldWeight,cost,remainingWeight:roundWeight(availableWeight-soldWeight),remainingCost:roundMoney(availableCost-cost)};
+}
+function selectRetailSaleItem(){
+  const item=db.stock.find(record=>record.id===val('rt_item')),weight=document.getElementById('rt_weight');
+  if(weight){weight.disabled=!item;weight.max=item?String(item.currentWeight):'';weight.value=item?String(item.currentWeight):'';}
+  updateRetailSalePreview();
+}
+function updateRetailSalePreview(){
+  const item=db.stock.find(record=>record.id===val('rt_item')),prepared=prepareRetailSaleAllocation(item,val('rt_weight'));
+  const cost=document.getElementById('rt_cost'),weightHint=document.getElementById('rt_weight_hint'),remainingHint=document.getElementById('rt_remaining_hint');
+  if(cost)cost.value=prepared?fmtMoneyExact(prepared.cost):'';
+  if(weightHint)weightHint.textContent=item?`${fmtWeight(item.currentWeight)} available`:'Choose an item first.';
+  if(remainingHint)remainingHint.textContent=prepared?`${fmtWeight(prepared.remainingWeight)} and ${fmtMoneyExact(prepared.remainingCost)} will remain in Inventory.`:'';
+}
+function applyRetailSaleAllocation(item,prepared,details){
+  if(!item||!prepared||!details||Number(details.salePrice)<=0)return null;
+  const previousStatus=item.status;
+  item.currentWeight=prepared.remainingWeight;item.cost=prepared.remainingCost;item.status=prepared.remainingWeight>0?'Available':'Sold';
+  const sale={id:uid('rtl'),date:details.date,itemId:item.id,buyer:details.buyer||'Walk-in',salePrice:roundMoney(details.salePrice),cost:prepared.cost,margin:roundMoney(Number(details.salePrice)-prepared.cost),itemSummary:`${item.metal} ${item.karat} ${item.itemType}`,weight:prepared.weight,inventoryAllocation:true,partialAllocation:prepared.remainingWeight>0,previousStatus,remainingWeightAfter:prepared.remainingWeight,remainingCostAfter:prepared.remainingCost};
+  db.retailSales.push(sale);lastRetailSaleId=sale.id;return sale;
+}
+async function submitRetail(){
+  if(retailSaleSaving)return;
   const itemId = val('rt_item');
   if(!itemId){ toast('Choose an item to sell'); return; }
   const item = db.stock.find(s=>s.id===itemId);
   const price = parseFloat(val('rt_price'));
   if(!price || price<=0){ toast('Enter a valid sale price'); return; }
+  const prepared=prepareRetailSaleAllocation(item,val('rt_weight'));
+  if(!prepared){toast(`Enter a weight between 0.01 g and ${Number(item?.currentWeight||0).toFixed(2)} g`);return;}
   const buyer = val('rt_buyer').trim() || 'Walk-in';
-  const soldWeight=Number(item.currentWeight);
-  item.status='Sold'; item.currentWeight=0;
-  const sale={id:uid('rtl'), date: val('rt_date'), itemId, buyer, salePrice:price, cost:item.cost, margin:+(price-item.cost).toFixed(2),
-    itemSummary:`${item.metal} ${item.karat} ${item.itemType}`,weight:soldWeight};
-  db.retailSales.push(sale); lastRetailSaleId=sale.id;
-  saveDB(); render(); toast('Sale recorded');
+  const beforeState=JSON.parse(JSON.stringify(db)),button=document.getElementById('record_retail_sale');retailSaleSaving=true;if(button){button.disabled=true;button.setAttribute('aria-busy','true');}
+  try{
+    const sale=applyRetailSaleAllocation(item,prepared,{buyer,date:val('rt_date'),salePrice:price});
+    if(!sale){toast('The retail sale could not be prepared');return;}
+    if(!await saveDB()){db=beforeState;render();toast('The retail sale was not recorded');return;}
+    render();toast(prepared.remainingWeight>0?`Partial sale recorded; ${fmtWeight(prepared.remainingWeight)} remains in Inventory`:'Sale recorded');
+  } finally {retailSaleSaving=false;const currentButton=document.getElementById('record_retail_sale');if(currentButton){currentButton.disabled=false;currentButton.removeAttribute('aria-busy');}}
 }
 let editingRetailId=null;
 function openRetailEdit(id){
@@ -3886,6 +3929,19 @@ async function deleteRetailRecord(){
   const record=db.retailSales.find(r=>r.id===editingRetailId); if(!record) return;
   const item=db.stock.find(s=>s.id===record.itemId);
   if(!item){ toast('Cannot reverse this sale because its inventory item is missing'); return; }
+  if(record.inventoryAllocation===true){
+    const remainingWeight=roundWeight(record.remainingWeightAfter),remainingCost=roundMoney(record.remainingCostAfter),expectedStatus=remainingWeight>0?'Available':'Sold';
+    if(item.status!==expectedStatus||Math.abs(Number(item.currentWeight)-remainingWeight)>.005||Math.abs(Number(item.cost)-remainingCost)>.01){toast('Delete later transactions for this jewelry item before reversing this sale');return;}
+    if(!await confirmDeletion('Delete retail sale?',`Remove this sale and restore its sold weight and cost to inventory.`,[
+      {label:'Buyer',value:record.buyer},{label:'Date',value:fmtDate(record.date)},
+      {label:'Weight restored',value:fmtWeight(record.weight)},{label:'Cost restored',value:fmtMoney(record.cost)}
+    ]))return;
+    const beforeState=JSON.parse(JSON.stringify(db));
+    item.currentWeight=roundWeight(Number(item.currentWeight)+Number(record.weight||0));item.cost=roundMoney(Number(item.cost)+Number(record.cost||0));item.status=record.previousStatus||'Available';
+    db.retailSales=db.retailSales.filter(r=>r.id!==record.id);
+    if(!await saveDB()){db=beforeState;render();toast('The retail sale was not deleted');return;}
+    closeAdminEditModal();render();toast('Retail sale deleted and sold balance restored');return;
+  }
   if(item.status!=='Sold'||Number(item.currentWeight)!==0){ toast('Inventory has changed and this retail sale cannot be reversed safely'); return; }
   if(!await confirmDeletion('Delete retail sale?',`Remove this sale and return the jewelry item to available inventory.`,[
     {label:'Buyer',value:record.buyer},{label:'Date',value:fmtDate(record.date)},
@@ -4041,7 +4097,7 @@ function exportPurchases(){ downloadCSV('zpp_purchase_history.csv', toCSV(purcha
   {label:'Payment method',key:'paymentMethod'},{label:'Staff',key:'staff'},{label:'Status',key:'status'}
 ])); }
 function exportRetail(){ downloadCSV('zpp_retail_sales.csv', toCSV(db.retailSales, [
-  {label:'Date',key:'date'},{label:'Buyer',key:'buyer'},{label:'Sale price',key:'salePrice'},{label:'Cost',key:'cost'},{label:'Margin',key:'margin'}
+  {label:'Date',key:'date'},{label:'Buyer',key:'buyer'},{label:'Weight',key:'weight'},{label:'Sale price',key:'salePrice'},{label:'Cost',key:'cost'},{label:'Margin',key:'margin'}
 ])); }
 function exportCustomers(){ downloadCSV('zpp_customers.csv', toCSV(db.customers, [
   {label:'Name',key:'name'},{label:'Contact',key:'contact'},{label:'Notes',key:'notes'}

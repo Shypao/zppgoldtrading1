@@ -29,6 +29,7 @@ async function loadInventoryApi() {
     renderFeaturedBox,
     renderInventory,
     renderLiquidation,
+    renderRetail,
     matchingBuyingCustomerNames(query) {
       return Array.from(matchingBuyingCustomers(query), customer => customer.name);
     },
@@ -160,7 +161,24 @@ async function loadInventoryApi() {
       const result = typeof detachInventoryPoolItems === 'function'
         ? detachInventoryPoolItems(pool, itemIds)
         : false;
-      return JSON.parse(JSON.stringify({ result, stock: db.stock, pools: db.inventoryPools }));
+      return JSON.parse(JSON.stringify({ result, stock: db.stock, pools: db.inventoryPools, batches: db.liquidationBatches, liquidations: db.liquidations }));
+    },
+    prepareRetailSale(itemId, weight) {
+      const item = db.stock.find(record => record.id === itemId);
+      const result = typeof prepareRetailSaleAllocation === 'function'
+        ? prepareRetailSaleAllocation(item, weight)
+        : null;
+      return JSON.parse(JSON.stringify(result));
+    },
+    applyRetailSale(itemId, weight, salePrice = 20000) {
+      const item = db.stock.find(record => record.id === itemId);
+      const prepared = typeof prepareRetailSaleAllocation === 'function'
+        ? prepareRetailSaleAllocation(item, weight)
+        : null;
+      const result = typeof applyRetailSaleAllocation === 'function' && prepared
+        ? applyRetailSaleAllocation(item, prepared, { buyer: 'Retail Buyer', date: '2026-09-18', salePrice })
+        : null;
+      return JSON.parse(JSON.stringify({ result, item, sales: db.retailSales }));
     },
     openInventoryEdit(id) {
       appended.length = 0;
@@ -416,6 +434,35 @@ test('staging a partial item keeps its proportional balance in current inventory
   assert.equal(staged.item.cost, 9128.88);
   assert.equal(staged.item.status, 'Available');
   assert.equal(staged.item.liquidationBatchId, undefined);
+});
+
+test('retail jewelry can be sold by partial weight with proportional inventory cost', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  Object.assign(state.stock[0], { itemType: 'Jewelry', currentWeight: 4, netWeight: 4, cost: 40000 });
+  state.retailSales = [];
+  api.setState(state);
+
+  const retailHtml = api.renderRetail();
+  assert.match(retailHtml, /id="rt_weight"/);
+  assert.match(retailHtml, /Cost basis \(automatic\)/);
+  assert.match(retailHtml, /updateRetailSalePreview\(\)/);
+
+  const prepared = api.prepareRetailSale('stock-on-hand', 1.5);
+  assert.equal(prepared.weight, 1.5);
+  assert.equal(prepared.cost, 15000);
+  assert.equal(prepared.remainingWeight, 2.5);
+  assert.equal(prepared.remainingCost, 25000);
+
+  const applied = api.applyRetailSale('stock-on-hand', 1.5, 18000);
+  assert.equal(applied.result.weight, 1.5);
+  assert.equal(applied.result.cost, 15000);
+  assert.equal(applied.result.margin, 3000);
+  assert.equal(applied.result.partialAllocation, true);
+  assert.equal(applied.item.currentWeight, 2.5);
+  assert.equal(applied.item.cost, 25000);
+  assert.equal(applied.item.status, 'Available');
+  assert.equal(applied.sales.length, 1);
 });
 
 test('For Liquidation records are excluded from Current Inventory', async () => {
@@ -890,6 +937,33 @@ test('returning selected pool members keeps their remaining balances as availabl
   assert.equal(result.pools[0].originalCost, 200000);
   assert.equal(result.pools[0].remainingWeight, 2000);
   assert.equal(result.pools[0].remainingCost, 200000);
+});
+
+test('returning every pool member deletes the empty pool without deleting inventory history', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'pool-a', date: '2026-09-17', customerName: 'Seller A', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-EMPTY', netWeight: 1000, currentWeight: 500, payout: 100000, cost: 50000 },
+    { id: 'pool-b', date: '2026-09-17', customerName: 'Seller B', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-EMPTY', netWeight: 2000, currentWeight: 2000, payout: 200000, cost: 200000 }
+  ];
+  state.inventoryPools = [{ id: 'POOL-EMPTY', name: 'Silver pool', metal: 'Silver', karat: '925', itemIds: ['pool-a', 'pool-b'], originalWeight: 3000, originalCost: 300000, remainingWeight: 2500, remainingCost: 250000, onHold: false, status: 'PARTIALLY LIQUIDATED' }];
+  state.liquidationBatches = [{ id: 'LB-POOL', name: 'Pending pool sale', buyer: 'Buyer', metal: 'Silver', poolId: 'POOL-EMPTY', poolIds: ['POOL-EMPTY'], lines: [{ itemId: 'pool-a', sourcePoolId: 'POOL-EMPTY', weight: 500, cost: 50000, pooledAllocation: true, previousStatus: 'Available' }] }];
+  state.liquidations = [{ id: 'LQ-POOL', poolId: 'POOL-EMPTY', poolIds: ['POOL-EMPTY'], lines: [{ itemId: 'pool-a', sourcePoolId: 'POOL-EMPTY', weight: 500, costPortion: 50000, pooledAllocation: true }] }];
+  api.setState(state);
+
+  const result = api.returnPoolMembers('POOL-EMPTY', ['pool-a', 'pool-b']);
+
+  assert.equal(result.result, true);
+  assert.equal(result.pools.length, 0);
+  assert.equal(result.stock.length, 2);
+  assert.equal(result.stock.every(item => item.inventoryPoolId === undefined), true);
+  assert.equal(result.stock.every(item => item.status === 'Available'), true);
+  assert.equal(result.batches[0].poolId, undefined);
+  assert.equal(result.batches[0].originalPoolId, 'POOL-EMPTY');
+  assert.equal(result.batches[0].lines[0].sourcePoolId, undefined);
+  assert.equal(result.batches[0].lines[0].originalSourcePoolId, 'POOL-EMPTY');
+  assert.equal(result.liquidations[0].poolId, undefined);
+  assert.equal(result.liquidations[0].originalPoolId, 'POOL-EMPTY');
 });
 
 test('an existing pool can be checked with matching inventory and remains one pool', async () => {

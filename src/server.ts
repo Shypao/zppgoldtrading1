@@ -649,8 +649,19 @@ export function validateLedgerIntegrity(state: LedgerState): void {
       throw new Error(`Refining batch ${batch.id} references a missing output inventory item`);
     }
   }
+  const retailAllocatedWeight=new Map<string,number>();
   for (const sale of state.retailSales) {
-    if (sale.itemId) claimInventory(String(sale.itemId), `retail sale ${sale.id}`);
+    if(!sale.itemId) continue;
+    const itemId=String(sale.itemId);
+    if(sale.inventoryAllocation===true){
+      const item=stockById.get(itemId),weight=Number(sale.weight),cost=Number(sale.cost);
+      if(!item||weight<=0||cost<0) throw new Error(`retail sale ${sale.id} has an invalid inventory allocation`);
+      retailAllocatedWeight.set(itemId,(retailAllocatedWeight.get(itemId)||0)+weight);
+    } else claimInventory(itemId, `retail sale ${sale.id}`);
+  }
+  for(const [itemId,soldWeight] of retailAllocatedWeight){
+    const item=stockById.get(itemId)!;
+    if(Number(item.currentWeight||0)+soldWeight>Number(item.netWeight||0)+0.005) throw new Error(`Retail allocations for inventory item ${itemId} exceed its original weight`);
   }
   const pendingItemIds=new Set<string>();
   for (const batch of state.liquidationBatches) {
