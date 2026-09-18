@@ -2698,8 +2698,8 @@ function thermalReceiptPrintDocument(markup, paperWidth, receiptHeight) {
     .receipt-meta,.receipt-payment{display:grid;grid-template-columns:max-content minmax(0,1fr);column-gap:4px;row-gap:2px;align-items:start}
     .receipt-meta span,.receipt-payment span{white-space:nowrap}.receipt-meta strong{min-width:0;overflow-wrap:anywhere}.receipt-payment strong{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
     .receipt-items{width:100%;border-collapse:collapse;table-layout:fixed;font-size:${paperWidth === 80 ? 10 : 9}px;font-weight:900;line-height:1.16;font-variant-numeric:tabular-nums}
-    .receipt-col-description{width:40%}.receipt-col-qty{width:10%}.receipt-col-weight{width:20%}.receipt-col-amount{width:30%}
-    .receipt-items th{padding:1px 1px 4px;text-align:right;vertical-align:bottom;font-size:${paperWidth === 80 ? 10 : 9.5}px;font-weight:900;line-height:1.08;white-space:normal;-webkit-text-stroke:.35px #000}.receipt-items th:first-child{text-align:left}
+    .receipt-col-description{width:38%}.receipt-col-qty{width:12%}.receipt-col-weight{width:22%}.receipt-col-amount{width:28%}
+    .receipt-items th{padding:1px 1px 4px;text-align:center;vertical-align:bottom;font-size:${paperWidth === 80 ? 9.5 : 8.5}px;font-weight:900;line-height:1.12;white-space:nowrap;-webkit-text-stroke:.4px #000}.receipt-items th:first-child{text-align:left}.receipt-items th:last-child{text-align:right}
     .receipt-items td{padding:4px 1px;vertical-align:top;border-bottom:1px dotted #000}.receipt-description{text-align:left;overflow-wrap:anywhere;word-break:normal}
     .receipt-item-title,.receipt-item-detail,.receipt-item-rate{display:block}.receipt-item-detail{margin-top:1px}.receipt-item-rate{margin-top:1px;font-size:${paperWidth === 80 ? 9 : 8}px;font-weight:900;line-height:1.1;white-space:normal}
     .receipt-qty,.receipt-weight,.receipt-amount{text-align:right;white-space:nowrap}
@@ -2719,7 +2719,7 @@ function printPurchaseReceipt(batchId) {
     document.getElementById('thermal_print_page_style')?.remove();
     const pageStyle = document.createElement('style');
     pageStyle.id = 'thermal_print_page_style';
-    pageStyle.textContent = `@page{size:${paperWidth}mm auto;margin:0}body.printing-thermal-receipt .thermal-receipt,body.printing-thermal-receipt .thermal-receipt.paper-80{box-sizing:border-box;width:${receiptWidth}mm;max-width:${receiptWidth}mm;margin:0!important;padding:${paperPadding}mm!important}`;
+    pageStyle.textContent = `@page{size:${paperWidth}mm auto;margin:0}body.printing-thermal-receipt .thermal-receipt,body.printing-thermal-receipt .thermal-receipt.paper-80{box-sizing:border-box;width:${receiptWidth}mm;max-width:${receiptWidth}mm;margin:0!important;margin-left:2mm!important;padding:${paperPadding}mm!important}`;
     document.head.appendChild(pageStyle);
     document.body.classList.add('printing-thermal-receipt');
     window.addEventListener('afterprint', cleanupThermalPrintState, { once: true });

@@ -32,8 +32,8 @@ test('58 mm receipts use the proven centered VOZY P50 main-page print path', asy
   );
   assert.match(
     source,
-    /width:\$\{receiptWidth\}mm;max-width:\$\{receiptWidth\}mm;[^}]*margin:0!important;[^}]*padding:\$\{paperPadding\}mm!important/,
-    'the 46 mm print block should rely on the VOZY driver alignment without a duplicate CSS offset',
+    /width:\$\{receiptWidth\}mm;max-width:\$\{receiptWidth\}mm;[^}]*margin:0!important;margin-left:2mm!important;[^}]*padding:\$\{paperPadding\}mm!important/,
+    'the 46 mm print block should use the calibrated 2 mm right offset for the VOZY print head',
   );
   assert.match(source, /document\.body\.classList\.add\('printing-thermal-receipt'\)/);
   assert.match(source, /window\.print\(\)/);
@@ -67,5 +67,6 @@ test('every printed receipt line uses larger heavy thermal typography', async ()
   assert.match(source, /\.receipt-items\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*10\s*:\s*9\}px/);
   assert.match(source, /\.receipt-item-rate\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*9\s*:\s*8\}px;font-weight:900/);
   assert.match(source, /\.receipt-quote\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*9\s*:\s*8\}px;font-style:italic/);
-  assert.match(source, /\.receipt-items th\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*10\s*:\s*9\.5\}px;[^}]*-webkit-text-stroke:\.35px #000/);
+  assert.match(source, /\.receipt-col-description\{width:38%\}\.receipt-col-qty\{width:12%\}\.receipt-col-weight\{width:22%\}\.receipt-col-amount\{width:28%\}/);
+  assert.match(source, /\.receipt-items th\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*9\.5\s*:\s*8\.5\}px;[^}]*white-space:nowrap;[^}]*-webkit-text-stroke:\.4px #000/);
 });
