@@ -37,8 +37,8 @@ test('58 mm receipts keep all text inside the VOZY P50 print-head boundary', asy
   );
   assert.match(
     source,
-    /width:\$\{receiptWidth\}mm;[^}]*margin:0 auto!important/,
-    'the printable receipt block should be centered on the paper roll',
+    /width:\$\{receiptWidth\}mm;[^}]*margin:0!important/,
+    'the printable receipt block must not add a second centering offset on top of the printer driver margin',
   );
   assert.match(source, /\.receipt-items\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*10\s*:\s*9\}px/);
   assert.match(source, /\.receipt-total\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*14\s*:\s*13\}px/);
