@@ -48,7 +48,7 @@ test('thermal receipt includes the complete POS structure', async () => {
   assert.match(source, /class="receipt-item-detail">\$\{esc\(item\.itemType\)\}/);
   assert.match(source, /Rate: PHP \$\{receiptMoneyNumber\(item\.rate\)\}\/g/);
   assert.match(source, /<span>PAID:<\/span>/);
-  assert.match(source, /<span>CHANGE:<\/span>/);
+  assert.doesNotMatch(source, /<span>CHANGE:<\/span>/);
   assert.match(source, /<span>METHOD:<\/span>/);
   assert.match(source, /Thank you!/);
 });
@@ -57,7 +57,8 @@ test('every printed receipt line uses larger heavy thermal typography', async ()
   const source = await readFile(appPath, 'utf8');
 
   assert.match(source, /body\{font-family:"Courier New",Courier,monospace;font-size:\$\{paperWidth\s*===\s*80\s*\?\s*11\.5\s*:\s*10\.5\}px;font-weight:900;/);
-  assert.match(source, /-webkit-text-stroke:\.12px #000/);
+  assert.match(source, /-webkit-text-stroke:\.24px #000/);
+  assert.match(source, /\.thermal-receipt,\.thermal-receipt \*\{font-weight:900\}/);
   assert.match(source, /\.receipt-address\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*10\.5\s*:\s*9\.5\}px/);
   assert.match(source, /\.receipt-items\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*10\s*:\s*9\}px/);
   assert.match(source, /\.receipt-item-rate\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*9\s*:\s*8\}px;font-weight:900/);

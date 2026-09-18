@@ -2042,7 +2042,7 @@ function purchaseReceiptMarkup(items){
     <div class="receipt-meta"><span>Date:</span><strong>${esc(fmtDate(first.date))}</strong><span>Customer:</span><strong>${esc(first.customerName||'Walk-in')}</strong><span>Transaction No.:</span><strong>${esc(transactionNumber)}</strong>${first.staff?`<span>Staff:</span><strong>${esc(first.staff)}</strong>`:''}</div><div class="receipt-rule"></div>
     <table class="receipt-items"><colgroup><col class="receipt-col-description"><col class="receipt-col-qty"><col class="receipt-col-weight"><col class="receipt-col-amount"></colgroup><thead><tr><th>ITEM / DESCRIPTION</th><th>QTY</th><th>WEIGHT</th><th>AMOUNT</th></tr></thead><tbody>${itemLines}</tbody></table>
     <div class="receipt-rule receipt-rule-strong"></div><div class="receipt-total"><span>TOTAL</span><span>PHP ${receiptMoneyNumber(total)}</span></div><div class="receipt-rule"></div>
-    <div class="receipt-payment"><span>PAID:</span><strong>PHP ${receiptMoneyNumber(total)}</strong><span>CHANGE:</span><strong>PHP 0</strong><span>METHOD:</span><strong>${esc(first.paymentMethod||'—')}</strong></div>
+    <div class="receipt-payment"><span>PAID:</span><strong>PHP ${receiptMoneyNumber(total)}</strong><span>METHOD:</span><strong>${esc(first.paymentMethod||'—')}</strong></div>
     <div class="receipt-thanks">Thank you!</div><div class="receipt-quote">“Because gold is honest money it is disliked by dishonest men.”</div>`;
 }
 function cleanupThermalPrintState(){
@@ -2087,8 +2087,9 @@ function thermalReceiptPrintDocument(markup,paperWidth,receiptHeight){
     @page{size:${paperWidth}mm ${receiptHeight}mm;margin:0}
     *{box-sizing:border-box}
     html,body{width:${paperWidth}mm;height:auto;min-height:0;margin:0!important;padding:0!important;background:#fff;color:#000}
-    body{font-family:"Courier New",Courier,monospace;font-size:${paperWidth===80?11.5:10.5}px;font-weight:900;line-height:1.22;-webkit-text-stroke:.12px #000;text-rendering:geometricPrecision;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    body{font-family:"Courier New",Courier,monospace;font-size:${paperWidth===80?11.5:10.5}px;font-weight:900;line-height:1.22;-webkit-text-stroke:.24px #000;text-rendering:geometricPrecision;-webkit-print-color-adjust:exact;print-color-adjust:exact}
     .thermal-receipt{width:${receiptWidth}mm;height:auto;min-height:0;margin:0!important;padding:${paperPadding}mm!important;background:#fff;color:#000;transform:none!important;rotate:none!important;writing-mode:horizontal-tb!important;direction:ltr!important}
+    .thermal-receipt,.thermal-receipt *{font-weight:900}
     .receipt-header,.receipt-meta,.receipt-total,.receipt-payment,.receipt-thanks,.receipt-quote,.receipt-item{break-inside:avoid;page-break-inside:avoid}
     .receipt-shop{text-align:center;font-size:${paperWidth===80?17:15}px;font-weight:900;letter-spacing:.1px;line-height:1.08}
     .receipt-address{text-align:center;font-size:${paperWidth===80?10.5:9.5}px;line-height:1.2;margin-top:1px}
