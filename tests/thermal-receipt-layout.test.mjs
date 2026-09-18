@@ -59,7 +59,8 @@ test('thermal receipt includes the complete POS structure', async () => {
 test('every printed receipt line uses larger heavy thermal typography', async () => {
   const source = await readFile(appPath, 'utf8');
 
-  assert.match(source, /body\{font-family:"Courier New",Courier,monospace;font-size:\$\{paperWidth\s*===\s*80\s*\?\s*11\.5\s*:\s*10\.5\}px;font-weight:900;/);
+  assert.match(source, /body\{font-family:Arial,Helvetica,sans-serif;font-size:\$\{paperWidth\s*===\s*80\s*\?\s*11\.5\s*:\s*10\.5\}px;font-weight:900;/);
+  assert.match(source, /font-synthesis:weight;text-rendering:optimizeLegibility/);
   assert.match(source, /-webkit-text-stroke:\.24px #000/);
   assert.match(source, /\.thermal-receipt,\.thermal-receipt \*\{font-weight:900\}/);
   assert.match(source, /\.receipt-address\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*10\.5\s*:\s*9\.5\}px/);
