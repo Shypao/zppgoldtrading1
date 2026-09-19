@@ -3231,6 +3231,11 @@ function distributePoolCost(items,targetCost){
   let assigned=0;items.filter(item=>!positive.includes(item)).forEach(item=>{item.cost=0;});
   positive.forEach((item,index)=>{const share=currentCost>0?Number(item.cost||0)/currentCost:Number(item.currentWeight||0)/weight;item.cost=index===positive.length-1?roundMoney(targetCost-assigned):roundMoney(targetCost*share);assigned=roundMoney(assigned+item.cost);});
 }
+function applyInventoryPoolCostEdit(pool,targetCost){
+  const normalizedCost=roundMoney(targetCost);
+  distributePoolCost(inventoryPoolItems(pool),normalizedCost);
+  pool.originalCost=Math.max(Number(pool.originalCost||0),normalizedCost);
+}
 async function saveInventoryPoolEdit(){
   if(!adminEditGuard())return;
   const pool=db.inventoryPools.find(item=>item.id===editingInventoryPoolId);if(!pool)return;
@@ -3240,7 +3245,7 @@ async function saveInventoryPoolEdit(){
   if(!Number.isFinite(targetWeight)||targetWeight<=0||targetWeight>maximumWeight){toast(`Current weight must be between 0.01 g and ${maximumWeight.toFixed(2)} g`);return;}
   if(!Number.isFinite(targetCost)||targetCost<0){toast('Enter a valid remaining cost');return;}
   const beforeState=JSON.parse(JSON.stringify(db)),status=val('edit_pool_status'),karat=val('edit_pool_karat'),itemType=val('edit_pool_type');
-  distributePoolWeight(items,roundWeight(targetWeight));distributePoolCost(items,roundMoney(targetCost));
+  distributePoolWeight(items,roundWeight(targetWeight));applyInventoryPoolCostEdit(pool,targetCost);
   items.forEach(item=>{item.date=val('edit_pool_date');item.status=status==='On Hold'?'On Hold':'Available';item.paymentMethod=val('edit_pool_payment').trim();item.staff=val('edit_pool_staff').trim();if(itemType!=='Mixed')item.itemType=itemType;if(karat&&karat!=='Mixed')item.karat=karat;});
   pool.onHold=status==='On Hold';pool.notes=val('edit_pool_remarks').trim();pool.updatedAt=new Date().toISOString();
   const composition=inventoryPoolComposition(items);pool.metal=composition.metal;pool.karat=composition.karat;syncInventoryPool(pool);

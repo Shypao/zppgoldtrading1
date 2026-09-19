@@ -4280,6 +4280,11 @@ function distributePoolCost(items, targetCost) {
     items.filter(item => !positive.includes(item)).forEach(item => { item.cost = 0; });
     positive.forEach((item, index) => { const share = currentCost > 0 ? Number(item.cost || 0) / currentCost : Number(item.currentWeight || 0) / weight; item.cost = index === positive.length - 1 ? roundMoney(targetCost - assigned) : roundMoney(targetCost * share); assigned = roundMoney(assigned + item.cost); });
 }
+function applyInventoryPoolCostEdit(pool, targetCost) {
+    const normalizedCost = roundMoney(targetCost);
+    distributePoolCost(inventoryPoolItems(pool), normalizedCost);
+    pool.originalCost = Math.max(Number(pool.originalCost || 0), normalizedCost);
+}
 async function saveInventoryPoolEdit() {
     if (!adminEditGuard())
         return;
@@ -4302,7 +4307,7 @@ async function saveInventoryPoolEdit() {
     }
     const beforeState = JSON.parse(JSON.stringify(db)), status = val('edit_pool_status'), karat = val('edit_pool_karat'), itemType = val('edit_pool_type');
     distributePoolWeight(items, roundWeight(targetWeight));
-    distributePoolCost(items, roundMoney(targetCost));
+    applyInventoryPoolCostEdit(pool, targetCost);
     items.forEach(item => { item.date = val('edit_pool_date'); item.status = status === 'On Hold' ? 'On Hold' : 'Available'; item.paymentMethod = val('edit_pool_payment').trim(); item.staff = val('edit_pool_staff').trim(); if (itemType !== 'Mixed')
         item.itemType = itemType; if (karat && karat !== 'Mixed')
         item.karat = karat; });

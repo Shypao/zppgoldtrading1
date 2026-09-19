@@ -261,6 +261,12 @@ async function loadInventoryApi() {
       const snapshot = syncInventoryPool(pool);
       return JSON.parse(JSON.stringify({ pool, snapshot }));
     },
+    overridePoolEditCost(id, cost) {
+      const pool = db.inventoryPools.find(item => item.id === id);
+      applyInventoryPoolCostEdit(pool, cost);
+      const snapshot = syncInventoryPool(pool);
+      return JSON.parse(JSON.stringify({ pool, snapshot, items: inventoryPoolItems(pool) }));
+    },
     stagePool(id, weight, details) {
       const pool = db.inventoryPools.find(item => item.id === id);
       const prepared = preparePooledInventoryAllocation(inventoryPoolItems(pool), weight);
@@ -903,6 +909,23 @@ test('inventory displays a pool as one available row with combined weight and co
   assert.doesNotMatch(liquidationModal, /id="pool_liquidation_cost"[^>]*max=/);
   assert.match(liquidationModal, /Automatic from the pool mean cost\. You may override it\./);
   assert.match(liquidationModal, /Reset automatic cost/);
+});
+
+test('editing a pool can raise its remaining cost for a later liquidation', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'pool-a', date: '2026-09-19', customerName: 'Seller A', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-OVERRIDE', netWeight: 40, currentWeight: 40, cost: 4000 },
+    { id: 'pool-b', date: '2026-09-19', customerName: 'Seller B', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-OVERRIDE', netWeight: 60, currentWeight: 60, cost: 6000 }
+  ];
+  state.inventoryPools = [{ id: 'POOL-OVERRIDE', name: '21K reserve', metal: 'Gold', karat: '21K', itemIds: ['pool-a', 'pool-b'], originalWeight: 100, originalCost: 10000, onHold: false }];
+  api.setState(state);
+
+  const result = api.overridePoolEditCost('POOL-OVERRIDE', 11000);
+
+  assert.equal(result.items.reduce((sum, item) => sum + item.cost, 0), 11000);
+  assert.equal(result.pool.originalCost, 11000);
+  assert.equal(result.pool.remainingCost, 11000);
 });
 
 test('checked inventory pools can be reviewed and merged into one available pool', async () => {
