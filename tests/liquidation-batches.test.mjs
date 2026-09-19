@@ -312,6 +312,16 @@ async function loadInventoryApi() {
     setBuyingDraft(form) {
       buyingDraftForm = form;
     },
+    setPurchaseBatch(items) {
+      purchaseBatch = JSON.parse(JSON.stringify(items));
+    },
+    updatePurchaseBatchItemRemarks(id, value) {
+      updatePurchaseBatchItemRemarks(id, value);
+      return JSON.parse(JSON.stringify(purchaseBatch));
+    },
+    renderPurchaseBatchPanelMarkup() {
+      return renderPurchaseBatchPanelMarkup();
+    },
     today() {
       return todayStr();
     },
@@ -1236,6 +1246,25 @@ test('Buying customer information uses a searchable custom suggestion list', asy
   assert.doesNotMatch(html, /<datalist|id="b_customer_choice"/);
   assert.equal(api.matchingBuyingCustomerNames('mari').join('|'), 'Maria Santos|Mario Reyes');
   assert.equal(api.matchingBuyingCustomerNames('unknown').length, 0);
+});
+
+test('current payout keeps editable remarks separately for every queued item', async () => {
+  const api = await loadInventoryApi();
+  api.setState(stateFixture());
+  api.setPurchaseBatch([
+    { id: 'line-a', metal: 'Gold', karat: '18K', itemType: 'Jewelry', netWeight: 2.5, rate: 6200, payout: 15500, remarks: 'Ring with stone' },
+    { id: 'line-b', metal: 'Silver', karat: '925', itemType: 'Scrap', netWeight: 10, rate: 95, payout: 950, remarks: '' }
+  ]);
+
+  const html = api.renderPurchaseBatchPanelMarkup();
+  assert.match(html, /Remarks for this item/);
+  assert.match(html, /id="purchase_item_remarks_line-a"/);
+  assert.match(html, /Ring with stone/);
+  assert.match(html, /id="purchase_item_remarks_line-b"/);
+
+  const items = api.updatePurchaseBatchItemRemarks('line-b', 'Separate silver lot');
+  assert.equal(items[0].remarks, 'Ring with stone');
+  assert.equal(items[1].remarks, 'Separate silver lot');
 });
 
 test('featured buying range still displays its saved remarks', async () => {

@@ -1973,12 +1973,20 @@ function renderPurchaseBatchPanel(){
   const panel=document.getElementById('purchase_batch_panel');
   if(panel) panel.innerHTML=renderPurchaseBatchPanelMarkup();
 }
+function updatePurchaseBatchItemRemarks(id,value){
+  const item=purchaseBatch.find(line=>line.id===id);
+  if(!item) return;
+  // Keep this on the queued item rather than the shared buying form so every
+  // stock record receives only the note entered for that item.
+  item.remarks=String(value??'');
+  scheduleBuyingDraftSave();
+}
 function renderPurchaseBatchPanelMarkup(){
   const total=roundMoney(purchaseBatch.reduce((sum,item)=>sum+Number(item.payout),0));
   if(!purchaseBatch.length) return `<h2 class="block-title">Current payout</h2><div class="empty-note">Add the first item above. Every added item will remain visible here.</div>`;
   return `<section class="current-payout-card"><div class="current-payout-compact"><div><span>Current payout · ${purchaseBatch.length} item${purchaseBatch.length===1?'':'s'}</span><strong>${fmtMoney(total)}</strong></div></div>
     <div class="purchase-batch-list"><h3>Items in this payout</h3><div class="table-wrap"><table class="purchase-batch-table"><thead><tr><th>Item</th><th>Metal / grade</th><th class="num-col">Net weight</th><th class="num-col">Rate</th><th class="num-col">Payout</th><th></th></tr></thead><tbody>
-    ${purchaseBatch.map((item,index)=>`<tr><td>${index+1}</td><td><span class="metal-tag ${item.metal.toLowerCase()}">${item.metal}</span> ${esc(gradeLabel(item.metal,item.karat))} · ${esc(item.itemType)}</td><td class="num">${fmtWeight(item.netWeight)}</td><td class="num">${fmtMoney(item.rate)}/g${item.rateOverridden?'<br><span class="override-note">Overridden</span>':''}</td><td class="num">${fmtMoney(item.payout)}</td><td><button class="btn secondary small" onclick="requestPurchaseItemRemoval('${item.id}')">Remove</button></td></tr>`).join('')}
+    ${purchaseBatch.map((item,index)=>`<tr><td>${index+1}</td><td><span class="metal-tag ${item.metal.toLowerCase()}">${item.metal}</span> ${esc(gradeLabel(item.metal,item.karat))} · ${esc(item.itemType)}<label class="purchase-item-remarks" for="purchase_item_remarks_${esc(item.id)}"><span>Remarks for this item</span><textarea id="purchase_item_remarks_${esc(item.id)}" rows="2" placeholder="Optional item remarks" oninput="updatePurchaseBatchItemRemarks('${item.id}',this.value)">${esc(item.remarks||'')}</textarea></label></td><td class="num">${fmtWeight(item.netWeight)}</td><td class="num">${fmtMoney(item.rate)}/g${item.rateOverridden?'<br><span class="override-note">Overridden</span>':''}</td><td class="num">${fmtMoney(item.payout)}</td><td><button class="btn secondary small" onclick="requestPurchaseItemRemoval('${item.id}')">Remove</button></td></tr>`).join('')}
     </tbody></table></div></div>
     <div class="form-actions purchase-batch-actions"><button class="btn secondary" onclick="continueAddingPurchaseItems()">Add another item</button><button class="btn" onclick="openPurchaseSummary()">Proceed to payout</button></div></section>`;
 }
@@ -2021,8 +2029,8 @@ async function commitPurchaseBatch(printAfter=false){
   if(customer.isNew){ customerId=uid('cust'); db.customers.push({id:customerId,name:customer.name,contact:'',notes:''}); }
   const batchId=uid('buy');
   const shared={date:val('b_date')||todayStr(),recordedAt:new Date().toISOString(),customerId,customerName:customer.name,paymentMethod:val('b_pay'),staff:val('b_staff').trim(),
-    status:val('b_status'),remarks:val('b_remarks').trim(),batchId};
-  purchaseBatch.forEach(item=>db.stock.push({...item,...shared,id:uid('stk'),cost:item.payout}));
+    status:val('b_status'),batchId};
+  purchaseBatch.forEach(item=>db.stock.push({...item,...shared,id:uid('stk'),cost:item.payout,remarks:String(item.remarks??val('b_remarks')).trim()}));
   const count=purchaseBatch.length,total=roundMoney(purchaseBatch.reduce((sum,item)=>sum+Number(item.payout),0));
   const saved=await saveDB();
   if(!saved){ db.customers.splice(previousCustomerCount); db.stock.splice(previousStockCount); toast('The purchase was not recorded. Your payout draft is still saved.'); return; }
