@@ -590,7 +590,7 @@ async function refreshPhilippineRates(silent) {
         db.pricing.auto.lastFetchedAt = proposal.fetchedAt;
         db.pricing.auto.marketPhp = proposal.marketPhp || {};
         db.pricing.auto.goldSource = proposal.goldSource || '';
-        activateMarketRates(proposal.draft, silent ? 'Automatic 5-second internet update' : 'Manual internet refresh', !silent);
+        activateMarketRates(proposal.draft, silent ? 'Automatic 5-minute internet update' : 'Manual internet refresh', !silent);
         if (isAdmin() && !silent)
             await saveDB();
         if (!silent)
@@ -744,6 +744,7 @@ function boot() {
 }
 let automaticPricingTimer = null;
 let sharedPricingSyncBusy = false;
+const LIVE_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 async function syncSharedPricing() {
     if (sharedPricingSyncBusy || isAdmin() || !(location.protocol === 'http:' || location.protocol === 'https:'))
         return;
@@ -801,10 +802,10 @@ function startAutomaticPricing() {
             if (db.pricing.auto.enabled)
                 refreshPhilippineRates(true);
         }
-        else {
+        else if (currentTab === 'rates' || currentTab === 'buying') {
             syncSharedPricing();
         }
-    }, 5000);
+    }, LIVE_SYNC_INTERVAL_MS);
     document.addEventListener('visibilitychange', () => {
         if (!currentUser || document.hidden)
             return;
@@ -1119,7 +1120,7 @@ function renderRates() {
         <div class="auto-status">${pricingFetchBusy ? '<span class="spinner"></span>Updating Philippine market data…' : `Last checked: ${esc(fetched)}${auto.goldSource ? ` · Gold source: ${esc(auto.goldSource)}` : ''}`}</div>
       </div>
       <div class="auto-controls">
-        <label class="switch-line"><input type="checkbox" ${auto.enabled ? 'checked' : ''} onchange="setAutoEnabled(this.checked)"> Update automatically every 5 seconds</label>
+        <label class="switch-line"><input type="checkbox" ${auto.enabled ? 'checked' : ''} onchange="setAutoEnabled(this.checked)"> Update automatically every 5 minutes</label>
         <button class="btn small" onclick="refreshPhilippineRates(false)" ${pricingFetchBusy ? 'disabled' : ''}>Refresh &amp; apply now</button>
         <button class="btn secondary small" onclick="openDailyBaseEditor('Gold')">Edit today's PHP base</button>
       </div>
@@ -1191,7 +1192,7 @@ function renderStaffRates() {
     const fetched = db.pricing.auto.lastFetchedAt ? new Date(db.pricing.auto.lastFetchedAt).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'medium' }) : 'Not fetched yet';
     return `
   <section class="auto-panel">
-    <div class="auto-panel-head"><div><h3>Active buying rates</h3><div class="metal-section-desc" style="margin:0;">Live base pricing refreshes every five seconds. Staff may override individual grades when needed.</div><div class="auto-status">Effective date: ${fmtDate(db.pricing.effectiveDate)} · Last checked: ${esc(fetched)}</div></div></div>
+    <div class="auto-panel-head"><div><h3>Active buying rates</h3><div class="metal-section-desc" style="margin:0;">Live base pricing refreshes every five minutes. Staff may override individual grades when needed.</div><div class="auto-status">Effective date: ${fmtDate(db.pricing.effectiveDate)} · Last checked: ${esc(fetched)}</div></div></div>
   </section>
   <section class="metal-section">
     <div class="rate-section-title-row"><div class="metal-section-head"><span class="metal-dot gold"></span><h3>Gold</h3><span class="count">${GOLD_GRADES.length} grades</span></div>${renderRateDownloadButton()}</div>
