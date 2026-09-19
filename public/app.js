@@ -2498,7 +2498,7 @@ function purchaseItemFromForm() {
         return null;
     }
     return { id: uid('line'), metal, itemType: val('b_itemtype'), karat, grossWeight: gross, deductions: ded,
-        netWeight: net, currentWeight: net, rate, systemRate, rateOverridden, payoutOverridden, suggestedAmount: suggested, payout, overrideReason: '' };
+        netWeight: net, currentWeight: net, rate, systemRate, rateOverridden, payoutOverridden, suggestedAmount: suggested, payout, remarks: val('b_remarks').trim(), overrideReason: '' };
 }
 async function addPurchaseItem() {
     const item = purchaseItemFromForm();
@@ -2506,11 +2506,12 @@ async function addPurchaseItem() {
         return;
     captureBuyingDraftForm();
     purchaseBatch.push(item);
-    ['b_gross', 'b_ded', 'b_payout'].forEach(id => { const e = document.getElementById(id); if (e)
+    ['b_gross', 'b_ded', 'b_payout', 'b_remarks'].forEach(id => { const e = document.getElementById(id); if (e)
         e.value = ''; });
     buyingDraftForm.b_gross = '';
     buyingDraftForm.b_ded = '';
     buyingDraftForm.b_payout = '';
+    buyingDraftForm.b_remarks = '';
     resetBuyingRate();
     renderPurchaseBatchPanel();
     await saveBuyingDraft();

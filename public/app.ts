@@ -1945,15 +1945,15 @@ function purchaseItemFromForm(){
   const payoutOverridden = payout!==suggested;
   if(!Number.isFinite(payout)||payout<0){ toast('Enter a valid final payout'); return null; }
   return {id:uid('line'),metal,itemType:val('b_itemtype'),karat,grossWeight:gross,deductions:ded,
-    netWeight:net,currentWeight:net,rate,systemRate,rateOverridden,payoutOverridden,suggestedAmount:suggested,payout,overrideReason:''};
+    netWeight:net,currentWeight:net,rate,systemRate,rateOverridden,payoutOverridden,suggestedAmount:suggested,payout,remarks:val('b_remarks').trim(),overrideReason:''};
 }
 async function addPurchaseItem(){
   const item=purchaseItemFromForm();
   if(!item) return;
   captureBuyingDraftForm();
   purchaseBatch.push(item);
-  ['b_gross','b_ded','b_payout'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
-  buyingDraftForm.b_gross=''; buyingDraftForm.b_ded=''; buyingDraftForm.b_payout='';
+  ['b_gross','b_ded','b_payout','b_remarks'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  buyingDraftForm.b_gross=''; buyingDraftForm.b_ded=''; buyingDraftForm.b_payout=''; buyingDraftForm.b_remarks='';
   resetBuyingRate(); renderPurchaseBatchPanel();
   await saveBuyingDraft();
   toast(`${item.metal} ${gradeLabel(item.metal,item.karat)} added to current payout`);
