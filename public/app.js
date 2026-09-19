@@ -253,7 +253,6 @@ async function loadDB() {
                 ensureShape();
                 await saveDB();
             }
-            await loadBuyingDraft();
             boot();
             if (isAdmin() && db.pricing.auto.enabled && db.pricing.auto.lastAppliedDate !== todayStr())
                 refreshPhilippineRates(true);
@@ -361,6 +360,8 @@ async function signOut() {
     db = { rates: [], customers: [], stock: [], inventoryPools: [], liquidationBatches: [], liquidations: [], refiningBatches: [], retailSales: [] };
     userAccounts = [];
     currentCashflow = null;
+    buyingDraftLoaded = false;
+    buyingDraftLoading = false;
     showLogin();
 }
 async function resetDemo() {
@@ -824,8 +825,10 @@ function goTab(id) {
     currentTab = id;
     document.querySelectorAll('nav.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
     render();
-    if (id === 'buying')
+    if (id === 'buying') {
         syncCashflow();
+        loadBuyingDraft();
+    }
     if (id === 'users')
         loadUserAccounts();
 }
@@ -1837,6 +1840,8 @@ let purchaseBatch = [];
 let buyingDraftForm = {};
 let buyingDraftSaveTimer = null;
 let buyingDraftSavedDate = '';
+let buyingDraftLoaded = false;
+let buyingDraftLoading = false;
 let cashflowCardMinimized = false;
 function toggleCashflowCard() {
     cashflowCardMinimized = !cashflowCardMinimized;
@@ -2233,6 +2238,9 @@ function captureBuyingDraftForm() {
     });
 }
 async function loadBuyingDraft() {
+    if (buyingDraftLoaded || buyingDraftLoading)
+        return;
+    buyingDraftLoading = true;
     try {
         const response = await fetch('/api/buying-draft', { cache: 'no-store' });
         if (!response.ok)
@@ -2242,10 +2250,16 @@ async function loadBuyingDraft() {
         buyingDraftForm = draft.form && typeof draft.form === 'object' ? draft.form : {};
         buyingDraftSavedDate = String(draft.savedDate || buyingDraftForm.b_date || '');
         rollDefaultBuyingDraftDateForward();
+        buyingDraftLoaded = true;
     }
     catch (error) {
         console.error('Buying draft load failed', error);
     }
+    finally {
+        buyingDraftLoading = false;
+    }
+    if (currentTab === 'buying')
+        render();
 }
 function rollDefaultBuyingDraftDateForward() {
     const today = todayStr(), draftDate = String(buyingDraftForm.b_date || '');
@@ -2278,6 +2292,7 @@ async function clearBuyingDraft() {
     clearTimeout(buyingDraftSaveTimer);
     buyingDraftForm = {};
     buyingDraftSavedDate = '';
+    buyingDraftLoaded = true;
     try {
         await fetch('/api/buying-draft', { method: 'DELETE' });
     }

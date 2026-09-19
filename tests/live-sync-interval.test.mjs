@@ -13,3 +13,12 @@ test('live pricing refreshes hourly without idle cashflow polling', async () => 
   assert.doesNotMatch(automaticTimer, /syncCashflow\(\)/);
   assert.doesNotMatch(source, /Automatic 5-second internet update/);
 });
+
+test('buying draft loads only after the Buying page is opened', async () => {
+  const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  const loadDatabase = source.match(/async function loadDB\(\) \{([\s\S]*?)\n\}\nfunction isAdmin/)?.[1] || '';
+  const switchTab = source.match(/function goTab\(id\) \{([\s\S]*?)\n\}\nfunction render/)?.[1] || '';
+
+  assert.doesNotMatch(loadDatabase, /loadBuyingDraft\(\)/);
+  assert.match(switchTab, /if \(id === 'buying'\) \{\s*syncCashflow\(\);\s*loadBuyingDraft\(\);\s*\}/);
+});
