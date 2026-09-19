@@ -3717,9 +3717,11 @@ function prepareInventoryItemAllocation(item, requestedWeight, costBasisOverride
     const automaticCost = full ? availableCost : roundMoney(availableCost * (allocatedWeight / availableWeight));
     const hasCostBasisOverride = costBasisOverride !== null && costBasisOverride !== '' && costBasisOverride !== undefined;
     const requestedCost = Number(costBasisOverride);
-    if (hasCostBasisOverride && (!Number.isFinite(requestedCost) || requestedCost < 0 || requestedCost > availableCost + 0.01))
+    // A full move can be revalued before it enters liquidation. A partial move
+    // must still leave a non-negative carrying cost in Inventory.
+    if (hasCostBasisOverride && (!Number.isFinite(requestedCost) || requestedCost < 0 || (!full && requestedCost > availableCost + 0.01)))
         return null;
-    const cost = hasCostBasisOverride ? roundMoney(Math.min(requestedCost, availableCost)) : automaticCost;
+    const cost = hasCostBasisOverride ? roundMoney(full ? requestedCost : Math.min(requestedCost, availableCost)) : automaticCost;
     return { itemId: item.id, previousStatus: item.status, weight: allocatedWeight, cost, automaticCost, originalCost: availableCost, costBasisOverridden: hasCostBasisOverride, pooledAllocation: !full, partialAllocation: !full, remainingWeight: roundWeight(availableWeight - allocatedWeight), remainingCost: roundMoney(availableCost - cost) };
 }
 function inventoryMoveCostBasis(id) {
@@ -3749,8 +3751,9 @@ function updateInventoryMovePartialPreview(id) {
         costInput.dataset.automatic = 'true';
     }
     const allocation = prepareInventoryItemAllocation(item, val(`inventory_move_weight_${id}`), inventoryMoveCostBasis(id));
+    const fullWeight = automatic && Math.abs(Number(automatic.weight) - Number(item?.currentWeight || 0)) < 0.005;
     if (costInput)
-        costInput.setCustomValidity?.(allocation ? '' : 'Enter a cost basis from PHP 0 to the item’s current cost.');
+        costInput.setCustomValidity?.(allocation ? '' : fullWeight ? 'Enter a non-negative cost basis.' : 'Enter a cost basis from PHP 0 to the item’s current cost.');
     const automaticCost = document.getElementById(`inventory_move_automatic_cost_${id}`), weightTotal = document.getElementById('inventory_move_total_weight'), costTotal = document.getElementById('inventory_move_total_cost');
     if (automaticCost)
         automaticCost.textContent = automatic ? fmtMoney(automatic.cost) : '—';
@@ -3818,7 +3821,7 @@ function openInventoryMoveReview(selected, context) {
     </div>
     <div class="field"><label for="inventory_move_destination">Liquidation destination</label><select id="inventory_move_destination" required onchange="changeInventoryMoveDestination(this.value)"><option value="" selected disabled>Select a liquidation destination</option><option value="new">Create new liquidation batch</option>${openBatches.map(batch => `<option value="${esc(batch.id)}">Add to existing open batch · ${esc(batch.id)} · ${esc(batch.name)}</option>`).join('')}</select>${openBatches.length ? '' : '<span class="form-note">No open batch is currently available. Select “Create new liquidation batch”.</span>'}</div>
     <div class="table-wrap move-confirmation-items"><table><thead><tr><th>Inventory item</th><th>Customer</th><th>Status</th><th class="num-head">Weight moving</th><th class="num-head">Cost</th></tr></thead><tbody>
-      ${selected.map(item => `<tr><td><strong>${esc(item.metal)} ${esc(item.karat)}</strong><br><span class="form-note">${esc(item.itemType)}${item.remarks ? ' · ' + esc(item.remarks) : ''}</span></td><td>${esc(item.customerName || '—')}</td><td>${statusPill(item.status)}</td><td class="num">${item.isInventoryPool ? `<label class="field"><span class="form-note">Enter pool weight</span><input id="inventory_move_pool_weight_${item.inventoryPoolId}" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" value="${Number(item.currentWeight)}" oninput="updateInventoryMovePoolPreview('${item.inventoryPoolId}')"></label><span class="form-note">of ${fmtWeight(item.currentWeight)} in pool</span>` : context.individual ? `<label class="field"><span class="form-note">Enter weight</span><input id="inventory_move_weight_${item.id}" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" value="${Number(item.currentWeight)}" oninput="updateInventoryMovePartialPreview('${item.id}')"></label><span class="form-note">of ${fmtWeight(item.currentWeight)} available</span>` : `<strong>${fmtWeight(item.currentWeight)}</strong><br><span class="form-note">full available weight</span>`}</td><td class="num">${context.individual ? `<label class="field"><span class="form-note">Cost basis (PHP)</span><input id="inventory_move_cost_${item.id}" type="number" min="0" max="${Number(item.cost)}" step="0.01" data-automatic="true" oninput="markInventoryMoveCostOverride('${item.id}')"><span class="form-note">Automatic: <strong id="inventory_move_automatic_cost_${item.id}">—</strong></span><button class="link-button" type="button" onclick="resetInventoryMoveCostBasis('${item.id}')">Reset automatic cost</button></label>` : `<span id="inventory_move_cost_${item.id}">${fmtMoney(item.cost)}</span>`}</td></tr>`).join('')}
+      ${selected.map(item => `<tr><td><strong>${esc(item.metal)} ${esc(item.karat)}</strong><br><span class="form-note">${esc(item.itemType)}${item.remarks ? ' · ' + esc(item.remarks) : ''}</span></td><td>${esc(item.customerName || '—')}</td><td>${statusPill(item.status)}</td><td class="num">${item.isInventoryPool ? `<label class="field"><span class="form-note">Enter pool weight</span><input id="inventory_move_pool_weight_${item.inventoryPoolId}" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" value="${Number(item.currentWeight)}" oninput="updateInventoryMovePoolPreview('${item.inventoryPoolId}')"></label><span class="form-note">of ${fmtWeight(item.currentWeight)} in pool</span>` : context.individual ? `<label class="field"><span class="form-note">Enter weight</span><input id="inventory_move_weight_${item.id}" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" value="${Number(item.currentWeight)}" oninput="updateInventoryMovePartialPreview('${item.id}')"></label><span class="form-note">of ${fmtWeight(item.currentWeight)} available</span>` : `<strong>${fmtWeight(item.currentWeight)}</strong><br><span class="form-note">full available weight</span>`}</td><td class="num">${context.individual ? `<label class="field"><span class="form-note">Cost basis (PHP)</span><input id="inventory_move_cost_${item.id}" type="number" min="0" step="0.01" data-automatic="true" oninput="markInventoryMoveCostOverride('${item.id}')"><span class="form-note">Automatic: <strong id="inventory_move_automatic_cost_${item.id}">—</strong></span><button class="link-button" type="button" onclick="resetInventoryMoveCostBasis('${item.id}')">Reset automatic cost</button></label>` : `<span id="inventory_move_cost_${item.id}">${fmtMoney(item.cost)}</span>`}</td></tr>`).join('')}
     </tbody></table></div>
     <div class="move-confirmation-note"><strong>What happens next?</strong><span>${context.individual ? 'Enter the exact weight to move, then use the automatic cost or enter a cost-basis override. The remaining weight and cost stay in Inventory.' : poolIds.length ? 'Enter the exact weight to move. Its cost is calculated automatically; remaining pool weight and cost stay in Inventory.' : 'Assign a name and buyer to the batch. Gold, Silver, and Platinum items may remain together. The records will then become For Liquidation and leave Current Inventory until sold or returned.'}</span></div>
     <div class="form-actions"><button class="btn secondary" onclick="closeInventoryMoveConfirmation()">Cancel</button><button class="btn" id="inventory_move_continue" onclick="confirmInventoryMoveToLiquidation()" disabled>Continue to batch details</button></div>
@@ -3908,7 +3911,10 @@ function appendItemsToLiquidationBatch(batch, items) {
 }
 function stageInventoryAllocationsForLiquidation(batch, allocations) {
     const resolved = allocations.map(line => ({ line, item: db.stock.find(stock => stock.id === line.itemId) }));
-    if (resolved.some(({ line, item }) => !item || !selectableInventory(item) || Number(line.weight) <= 0 || Number(line.weight) > Number(item.currentWeight) + 0.005 || Number(line.cost) < 0 || Number(line.cost) > Number(item.cost) + 0.01))
+    if (resolved.some(({ line, item }) => {
+        const fullOverride = line?.costBasisOverridden === true && line?.pooledAllocation !== true && Number(line.weight) >= Number(item?.currentWeight || 0) - 0.005;
+        return !line || !item || !selectableInventory(item) || Number(line.weight) <= 0 || Number(line.weight) > Number(item.currentWeight) + 0.005 || Number(line.cost) < 0 || (!fullOverride && Number(line.cost) > Number(item.cost) + 0.01);
+    }))
         return false;
     batch.lines = [];
     for (const { line, item } of resolved) {
