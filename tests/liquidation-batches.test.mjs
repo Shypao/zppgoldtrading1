@@ -667,6 +667,10 @@ test('pool liquidation can use an overridden cost basis while preserving the rem
   assert.equal(prepared.remainingCost, 140000);
   assert.equal(prepared.costBasisOverridden, true);
   assert.equal(api.preparePoolCost(['silver-a', 'silver-b'], 500, 200001), null);
+  const entire = api.preparePoolCost(['silver-a', 'silver-b'], 2000, 220000);
+  assert.equal(entire.cost, 220000);
+  assert.equal(entire.remainingWeight, 0);
+  assert.equal(entire.remainingCost, 0);
 });
 
 test('a manually created On Hold pool stays On Hold after partial liquidation', async () => {
@@ -896,6 +900,7 @@ test('inventory displays a pool as one available row with combined weight and co
   assert.match(liquidationModal, /Create new liquidation batch/);
   assert.match(liquidationModal, /Add to existing open batch/);
   assert.match(liquidationModal, /id="pool_liquidation_cost"/);
+  assert.doesNotMatch(liquidationModal, /id="pool_liquidation_cost"[^>]*max=/);
   assert.match(liquidationModal, /Automatic from the pool mean cost\. You may override it\./);
   assert.match(liquidationModal, /Reset automatic cost/);
 });
