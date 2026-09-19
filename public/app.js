@@ -3359,13 +3359,18 @@ function inventoryPoolComposition(items) {
     const label = mixedMetals ? 'Mixed metals / purities' : mixedPurities ? `${metal} · Mixed purities` : `${metal} ${gradeLabel(metal, karat)}`;
     return { metal, karat, label };
 }
-function preparePooledInventoryAllocation(items, requestedWeight) {
+function preparePooledInventoryAllocation(items, requestedWeight, costBasisOverride = null) {
     const weight = roundWeight(Number(requestedWeight));
     const totalWeight = roundWeight(items.reduce((sum, item) => sum + Number(item.currentWeight || 0), 0));
     const totalCost = roundMoney(items.reduce((sum, item) => sum + Number(item.cost || 0), 0));
     if (!weight || weight < 0.01 || weight > totalWeight)
         return null;
-    const cost = roundMoney(totalCost * (weight / totalWeight));
+    const automaticCost = roundMoney(totalCost * (weight / totalWeight));
+    const hasCostBasisOverride = costBasisOverride !== null && costBasisOverride !== '' && costBasisOverride !== undefined;
+    const requestedCost = Number(costBasisOverride);
+    if (hasCostBasisOverride && (!Number.isFinite(requestedCost) || requestedCost < 0 || requestedCost > totalCost + 0.01))
+        return null;
+    const cost = hasCostBasisOverride ? roundMoney(Math.min(requestedCost, totalCost)) : automaticCost;
     const averageCost = totalCost / totalWeight;
     let weightLeft = weight, costAssigned = 0;
     const allocations = [];
@@ -3376,13 +3381,13 @@ function preparePooledInventoryAllocation(items, requestedWeight) {
         if (portion <= 0)
             continue;
         weightLeft = roundWeight(weightLeft - portion);
-        const portionCost = weightLeft <= 0 ? roundMoney(cost - costAssigned) : roundMoney(averageCost * portion);
+        const portionCost = weightLeft <= 0 ? roundMoney(cost - costAssigned) : roundMoney(cost * (portion / weight));
         costAssigned = roundMoney(costAssigned + portionCost);
-        allocations.push({ itemId: item.id, previousStatus: item.status, weight: portion, cost: portionCost, pooledAllocation: true });
+        allocations.push({ itemId: item.id, previousStatus: item.status, weight: portion, cost: portionCost, automaticCost: roundMoney(automaticCost * (portion / weight)), costBasisOverridden: hasCostBasisOverride, pooledAllocation: true });
     }
     if (weightLeft > 0.005)
         return null;
-    return { weight, cost, totalWeight, totalCost, averageCost, remainingWeight: roundWeight(totalWeight - weight), remainingCost: roundMoney(totalCost - cost), allocations };
+    return { weight, cost, automaticCost, costBasisOverridden: hasCostBasisOverride, totalWeight, totalCost, averageCost, remainingWeight: roundWeight(totalWeight - weight), remainingCost: roundMoney(totalCost - cost), allocations };
 }
 function applyPooledInventoryAllocation(prepared) {
     if (!prepared)
@@ -3498,6 +3503,26 @@ function poolLiquidationRequestedWeight(pool) {
     const snapshot = inventoryPoolSnapshot(pool), type = document.querySelector('input[name="pool_liquidation_type"]:checked')?.value || 'partial';
     return type === 'entire' ? snapshot.weight : roundWeight(Number(val('pool_liquidation_weight')) || 0);
 }
+function poolLiquidationCostBasis() {
+    const input = document.getElementById('pool_liquidation_cost');
+    if (!input || input.dataset.automatic === 'true' || !String(input.value || '').trim())
+        return null;
+    return Number(input.value);
+}
+function markPoolLiquidationCostOverride() {
+    const input = document.getElementById('pool_liquidation_cost');
+    if (input)
+        input.dataset.automatic = 'false';
+    updatePoolLiquidationPreview();
+}
+function resetPoolLiquidationCostBasis() {
+    const input = document.getElementById('pool_liquidation_cost');
+    if (input) {
+        input.dataset.automatic = 'true';
+        input.value = '';
+    }
+    updatePoolLiquidationPreview();
+}
 function updatePoolLiquidationPreview() {
     const pool = db.inventoryPools.find(item => item.id === val('pool_liquidation_id'));
     if (!pool)
@@ -3509,9 +3534,17 @@ function updatePoolLiquidationPreview() {
         if (entire)
             input.value = String(snapshot.weight);
     }
-    const requested = poolLiquidationRequestedWeight(pool), prepared = preparePooledInventoryAllocation(snapshot.items, requested);
+    const costInput = document.getElementById('pool_liquidation_cost');
+    const requested = poolLiquidationRequestedWeight(pool), automatic = preparePooledInventoryAllocation(snapshot.items, requested);
+    if (costInput && (costInput.dataset.automatic === 'true' || !String(costInput.value || '').trim())) {
+        costInput.value = automatic ? String(automatic.cost) : '';
+        costInput.dataset.automatic = 'true';
+    }
+    const prepared = preparePooledInventoryAllocation(snapshot.items, requested, poolLiquidationCostBasis());
+    if (costInput)
+        costInput.setCustomValidity(prepared ? '' : 'Enter a cost basis from PHP 0 to the total pool cost.');
     const values = {
-        pool_liquidation_available: fmtWeight(snapshot.weight), pool_liquidation_average: snapshot.weight ? `${fmtMoneyExact(snapshot.averageCost)}/g` : '—', pool_liquidation_cost: prepared ? fmtMoneyExact(prepared.cost) : '—', pool_liquidation_remaining: prepared ? `${fmtWeight(prepared.remainingWeight)} · ${fmtMoneyExact(prepared.remainingCost)}` : `${fmtWeight(snapshot.weight)} · ${fmtMoneyExact(snapshot.cost)}`
+        pool_liquidation_available: fmtWeight(snapshot.weight), pool_liquidation_average: snapshot.weight ? `${fmtMoneyExact(snapshot.averageCost)}/g` : '—', pool_liquidation_automatic_cost: automatic ? fmtMoneyExact(automatic.cost) : '—', pool_liquidation_remaining: prepared ? `${fmtWeight(prepared.remainingWeight)} · ${fmtMoneyExact(prepared.remainingCost)}` : `${fmtWeight(snapshot.weight)} · ${fmtMoneyExact(snapshot.cost)}`
     };
     Object.entries(values).forEach(([id, value]) => { const element = document.getElementById(id); if (element)
         element.textContent = value; });
@@ -3540,7 +3573,7 @@ function openPoolLiquidationModal(id) {
     const modal = document.createElement('div');
     modal.id = 'pool_liquidation_modal';
     modal.className = 'modal-backdrop';
-    modal.innerHTML = `<div class="summary-modal" role="dialog" aria-modal="true" aria-labelledby="pool_liquidation_title"><div class="summary-modal-head"><div><div class="eyebrow">${esc(pool.id)} · Available</div><h2 id="pool_liquidation_title">Move ${esc(pool.name)} to Liquidation</h2></div><button class="modal-close" onclick="closePoolLiquidationModal()" aria-label="Close">×</button></div><p class="move-confirmation-intro">Choose a partial weight or the entire pool, then choose whether to create a new batch or add it to an existing open batch.</p><input id="pool_liquidation_id" type="hidden" value="${esc(pool.id)}"><div class="field"><label for="pool_liquidation_destination">Liquidation destination</label><select id="pool_liquidation_destination" required onchange="changePoolLiquidationDestination(this.value)"><option value="" selected disabled>Select a liquidation destination</option><option value="new">Create new liquidation batch</option>${openBatches.map(batch => `<option value="${esc(batch.id)}">Add to existing open batch · ${esc(batch.id)} · ${esc(batch.name)}</option>`).join('')}</select>${openBatches.length ? '' : '<span class="form-note">No open batch is currently available. Select “Create new liquidation batch”.</span>'}</div><div class="field"><label>Liquidation type</label><div class="pool-liquidation-types"><label><input type="radio" name="pool_liquidation_type" value="partial" onchange="updatePoolLiquidationPreview()" checked> Partial</label><label><input type="radio" name="pool_liquidation_type" value="entire" onchange="updatePoolLiquidationPreview()"> Entire pool</label></div></div><div class="form-grid"><div class="field"><label>Weight for liquidation (g)</label><input id="pool_liquidation_weight" type="number" min="0.01" max="${snapshot.weight}" step="0.01" oninput="updatePoolLiquidationPreview()"></div><div class="field"><label>Cost basis (automatic)</label><output id="pool_liquidation_cost">—</output></div></div><div id="pool_liquidation_new_batch_fields" class="form-grid"><div class="field"><label>Assigned buyer</label><input id="pool_liquidation_buyer" placeholder="Buyer name"></div><div class="field"><label>Batch name</label><input id="pool_liquidation_name" value="${esc(pool.name)} liquidation"></div><div class="field span-2"><label>Notes</label><textarea id="pool_liquidation_notes"></textarea></div></div><div class="move-confirmation-summary"><div><span>Available in pool</span><strong id="pool_liquidation_available">${fmtWeight(snapshot.weight)}</strong></div><div><span>Mean cost / g</span><strong id="pool_liquidation_average">${fmtMoneyExact(snapshot.averageCost)}/g</strong></div><div><span>Remaining in inventory</span><strong id="pool_liquidation_remaining">—</strong></div></div><div class="form-actions"><button class="btn secondary" onclick="closePoolLiquidationModal()">Cancel</button><button class="btn" id="confirm_pool_liquidation" onclick="confirmPoolLiquidation()" disabled>Move to Liquidation</button></div></div>`;
+    modal.innerHTML = `<div class="summary-modal" role="dialog" aria-modal="true" aria-labelledby="pool_liquidation_title"><div class="summary-modal-head"><div><div class="eyebrow">${esc(pool.id)} · Available</div><h2 id="pool_liquidation_title">Move ${esc(pool.name)} to Liquidation</h2></div><button class="modal-close" onclick="closePoolLiquidationModal()" aria-label="Close">×</button></div><p class="move-confirmation-intro">Choose a partial weight or the entire pool, then choose whether to create a new batch or add it to an existing open batch.</p><input id="pool_liquidation_id" type="hidden" value="${esc(pool.id)}"><div class="field"><label for="pool_liquidation_destination">Liquidation destination</label><select id="pool_liquidation_destination" required onchange="changePoolLiquidationDestination(this.value)"><option value="" selected disabled>Select a liquidation destination</option><option value="new">Create new liquidation batch</option>${openBatches.map(batch => `<option value="${esc(batch.id)}">Add to existing open batch · ${esc(batch.id)} · ${esc(batch.name)}</option>`).join('')}</select>${openBatches.length ? '' : '<span class="form-note">No open batch is currently available. Select “Create new liquidation batch”.</span>'}</div><div class="field"><label>Liquidation type</label><div class="pool-liquidation-types"><label><input type="radio" name="pool_liquidation_type" value="partial" onchange="updatePoolLiquidationPreview()" checked> Partial</label><label><input type="radio" name="pool_liquidation_type" value="entire" onchange="updatePoolLiquidationPreview()"> Entire pool</label></div></div><div class="form-grid"><div class="field"><label>Weight for liquidation (g)</label><input id="pool_liquidation_weight" type="number" min="0.01" max="${snapshot.weight}" step="0.01" oninput="updatePoolLiquidationPreview()"></div><div class="field"><label>Cost basis (PHP)</label><input id="pool_liquidation_cost" type="number" min="0" max="${snapshot.cost}" step="0.01" data-automatic="true" oninput="markPoolLiquidationCostOverride()"><span class="form-note">Automatic from the pool mean cost. You may override it.</span><button class="link-button" type="button" onclick="resetPoolLiquidationCostBasis()">Reset automatic cost</button></div></div><div id="pool_liquidation_new_batch_fields" class="form-grid"><div class="field"><label>Assigned buyer</label><input id="pool_liquidation_buyer" placeholder="Buyer name"></div><div class="field"><label>Batch name</label><input id="pool_liquidation_name" value="${esc(pool.name)} liquidation"></div><div class="field span-2"><label>Notes</label><textarea id="pool_liquidation_notes"></textarea></div></div><div class="move-confirmation-summary"><div><span>Available in pool</span><strong id="pool_liquidation_available">${fmtWeight(snapshot.weight)}</strong></div><div><span>Mean cost / g</span><strong id="pool_liquidation_average">${fmtMoneyExact(snapshot.averageCost)}/g</strong></div><div><span>Automatic cost</span><strong id="pool_liquidation_automatic_cost">—</strong></div><div><span>Remaining in inventory</span><strong id="pool_liquidation_remaining">—</strong></div></div><div class="form-actions"><button class="btn secondary" onclick="closePoolLiquidationModal()">Cancel</button><button class="btn" id="confirm_pool_liquidation" onclick="confirmPoolLiquidation()" disabled>Move to Liquidation</button></div></div>`;
     modal.addEventListener('click', event => { if (event.target === modal)
         closePoolLiquidationModal(); });
     document.body.appendChild(modal);
@@ -3564,8 +3597,8 @@ function stagePoolLiquidationBatch(pool, prepared, details) {
 function prepareEntirePoolMove(pool) {
     return preparePoolMove(pool, inventoryPoolSnapshot(pool).weight);
 }
-function preparePoolMove(pool, requestedWeight) {
-    const snapshot = inventoryPoolSnapshot(pool), prepared = preparePooledInventoryAllocation(snapshot.items, requestedWeight);
+function preparePoolMove(pool, requestedWeight, costBasisOverride = null) {
+    const snapshot = inventoryPoolSnapshot(pool), prepared = preparePooledInventoryAllocation(snapshot.items, requestedWeight, costBasisOverride);
     if (!prepared)
         return null;
     return { poolId: pool.id, prepared, allocations: prepared.allocations.map(line => ({ ...line, sourcePoolId: pool.id })) };
@@ -3599,7 +3632,7 @@ async function confirmPoolLiquidation() {
     const pool = db.inventoryPools.find(item => item.id === val('pool_liquidation_id'));
     if (!pool)
         return;
-    const snapshot = inventoryPoolSnapshot(pool), requested = poolLiquidationRequestedWeight(pool), prepared = preparePooledInventoryAllocation(snapshot.items, requested);
+    const snapshot = inventoryPoolSnapshot(pool), requested = poolLiquidationRequestedWeight(pool), costBasisOverride = poolLiquidationCostBasis(), prepared = preparePooledInventoryAllocation(snapshot.items, requested, costBasisOverride);
     const destination = val('pool_liquidation_destination') || 'new';
     const buyer = val('pool_liquidation_buyer').trim(), name = val('pool_liquidation_name').trim(), notes = val('pool_liquidation_notes').trim();
     if (!val('pool_liquidation_destination')) {
@@ -3608,7 +3641,7 @@ async function confirmPoolLiquidation() {
         return;
     }
     if (!prepared) {
-        toast(`Enter a weight between 0.01 g and ${snapshot.weight.toFixed(2)} g`);
+        toast(`Enter a valid weight and a cost basis from PHP 0 to ${fmtMoneyExact(snapshot.cost)}`);
         return;
     }
     if (destination !== 'new') {
@@ -3617,7 +3650,7 @@ async function confirmPoolLiquidation() {
             toast('The selected liquidation batch is no longer available');
             return;
         }
-        const beforeState = JSON.parse(JSON.stringify(db)), move = preparePoolMove(pool, requested);
+        const beforeState = JSON.parse(JSON.stringify(db)), move = preparePoolMove(pool, requested, costBasisOverride);
         if (!move || !appendPoolMovesToLiquidationBatch(batch, [move])) {
             db = beforeState;
             toast('The pool could not be added to this liquidation batch');

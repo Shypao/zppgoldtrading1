@@ -248,6 +248,10 @@ async function loadInventoryApi() {
       const applied = applyPooledInventoryAllocation(prepared);
       return JSON.parse(JSON.stringify({ prepared, applied, items }));
     },
+    preparePoolCost(itemIds, weight, costBasis) {
+      const items = itemIds.map(id => db.stock.find(item => item.id === id)).filter(Boolean);
+      return JSON.parse(JSON.stringify(preparePooledInventoryAllocation(items, weight, costBasis)));
+    },
     restorePool(lines) {
       lines.forEach(restorePooledLiquidationLine);
       return JSON.parse(JSON.stringify(db.stock));
@@ -608,6 +612,26 @@ test('partial pooled Silver liquidation uses mean cost and keeps the running bal
   assert.equal(restored.reduce((sum, item) => sum + item.cost, 0), 244194);
 });
 
+test('pool liquidation can use an overridden cost basis while preserving the remaining balance', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'silver-a', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-SILVER', netWeight: 1000, currentWeight: 1000, payout: 100000, cost: 100000 },
+    { id: 'silver-b', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-SILVER', netWeight: 1000, currentWeight: 1000, payout: 100000, cost: 100000 }
+  ];
+  api.setState(state);
+
+  const prepared = api.preparePoolCost(['silver-a', 'silver-b'], 500, 60000);
+
+  assert.equal(prepared.weight, 500);
+  assert.equal(prepared.automaticCost, 50000);
+  assert.equal(prepared.cost, 60000);
+  assert.equal(prepared.remainingWeight, 1500);
+  assert.equal(prepared.remainingCost, 140000);
+  assert.equal(prepared.costBasisOverridden, true);
+  assert.equal(api.preparePoolCost(['silver-a', 'silver-b'], 500, 200001), null);
+});
+
 test('a manually created On Hold pool stays On Hold after partial liquidation', async () => {
   const api = await loadInventoryApi();
   const state = stateFixture();
@@ -834,6 +858,9 @@ test('inventory displays a pool as one available row with combined weight and co
   assert.match(liquidationModal, /Select a liquidation destination/);
   assert.match(liquidationModal, /Create new liquidation batch/);
   assert.match(liquidationModal, /Add to existing open batch/);
+  assert.match(liquidationModal, /id="pool_liquidation_cost"/);
+  assert.match(liquidationModal, /Automatic from the pool mean cost\. You may override it\./);
+  assert.match(liquidationModal, /Reset automatic cost/);
 });
 
 test('checked inventory pools can be reviewed and merged into one available pool', async () => {
