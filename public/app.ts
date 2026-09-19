@@ -2809,19 +2809,41 @@ function liquidateInventoryItem(id){
   inventoryMoveSelection.clear(); inventoryMoveSelection.add(id);
   openInventoryMoveReview([item],{total:1,automatic:false,individual:true});
 }
-function prepareInventoryItemAllocation(item,requestedWeight){
+function prepareInventoryItemAllocation(item,requestedWeight,costBasisOverride=null){
   const availableWeight=roundWeight(Number(item?.currentWeight||0)),availableCost=roundMoney(Number(item?.cost||0));
   const weight=roundWeight(Number(requestedWeight));
   if(!item||weight<0.01||weight>availableWeight+0.005) return null;
   const full=weight>=availableWeight-0.005;
   const allocatedWeight=full?availableWeight:weight;
-  const cost=full?availableCost:roundMoney(availableCost*(allocatedWeight/availableWeight));
-  return {itemId:item.id,previousStatus:item.status,weight:allocatedWeight,cost,pooledAllocation:!full,partialAllocation:!full};
+  const automaticCost=full?availableCost:roundMoney(availableCost*(allocatedWeight/availableWeight));
+  const hasCostBasisOverride=costBasisOverride!==null&&costBasisOverride!==''&&costBasisOverride!==undefined;
+  const requestedCost=Number(costBasisOverride);
+  if(hasCostBasisOverride&&(!Number.isFinite(requestedCost)||requestedCost<0||requestedCost>availableCost+0.01)) return null;
+  const cost=hasCostBasisOverride?roundMoney(Math.min(requestedCost,availableCost)):automaticCost;
+  return {itemId:item.id,previousStatus:item.status,weight:allocatedWeight,cost,automaticCost,originalCost:availableCost,costBasisOverridden:hasCostBasisOverride,pooledAllocation:!full,partialAllocation:!full,remainingWeight:roundWeight(availableWeight-allocatedWeight),remainingCost:roundMoney(availableCost-cost)};
+}
+function inventoryMoveCostBasis(id){
+  const input=document.getElementById(`inventory_move_cost_${id}`);
+  if(!input||input.dataset.automatic==='true'||!String(input.value||'').trim()) return null;
+  return Number(input.value);
+}
+function markInventoryMoveCostOverride(id){
+  const input=document.getElementById(`inventory_move_cost_${id}`);
+  if(input) input.dataset.automatic='false';
+  updateInventoryMovePartialPreview(id);
+}
+function resetInventoryMoveCostBasis(id){
+  const input=document.getElementById(`inventory_move_cost_${id}`);
+  if(input){input.dataset.automatic='true';input.value='';}
+  updateInventoryMovePartialPreview(id);
 }
 function updateInventoryMovePartialPreview(id){
-  const item=db.stock.find(stock=>stock.id===id),allocation=prepareInventoryItemAllocation(item,val(`inventory_move_weight_${id}`));
-  const cost=document.getElementById(`inventory_move_cost_${id}`),weightTotal=document.getElementById('inventory_move_total_weight'),costTotal=document.getElementById('inventory_move_total_cost');
-  if(cost) cost.textContent=allocation?fmtMoney(allocation.cost):'—';
+  const item=db.stock.find(stock=>stock.id===id),costInput=document.getElementById(`inventory_move_cost_${id}`),automatic=prepareInventoryItemAllocation(item,val(`inventory_move_weight_${id}`));
+  if(costInput&&(costInput.dataset.automatic==='true'||!String(costInput.value||'').trim())){costInput.value=automatic?String(automatic.cost):'';costInput.dataset.automatic='true';}
+  const allocation=prepareInventoryItemAllocation(item,val(`inventory_move_weight_${id}`),inventoryMoveCostBasis(id));
+  if(costInput) costInput.setCustomValidity?.(allocation?'':'Enter a cost basis from PHP 0 to the item’s current cost.');
+  const automaticCost=document.getElementById(`inventory_move_automatic_cost_${id}`),weightTotal=document.getElementById('inventory_move_total_weight'),costTotal=document.getElementById('inventory_move_total_cost');
+  if(automaticCost) automaticCost.textContent=automatic?fmtMoney(automatic.cost):'—';
   if(weightTotal) weightTotal.textContent=allocation?fmtWeight(allocation.weight):'—';
   if(costTotal) costTotal.textContent=allocation?fmtMoney(allocation.cost):'—';
   updateInventoryMoveContinueState();
@@ -2844,7 +2866,7 @@ function updateInventoryMovePoolPreview(id){
 function updateInventoryMoveContinueState(){
   const pending=pendingInventoryMove,button=document.getElementById('inventory_move_continue');if(!pending||!button)return;
   const destination=val('inventory_move_destination');
-  const itemValid=pending.mode!=='individual'||(pending.ids||[]).every(id=>prepareInventoryItemAllocation(db.stock.find(item=>item.id===id),val(`inventory_move_weight_${id}`)));
+  const itemValid=pending.mode!=='individual'||(pending.ids||[]).every(id=>prepareInventoryItemAllocation(db.stock.find(item=>item.id===id),val(`inventory_move_weight_${id}`),inventoryMoveCostBasis(id)));
   const poolsValid=(pending.poolIds||[]).every(id=>{const pool=db.inventoryPools.find(item=>item.id===id);return pool&&preparePoolMove(pool,val(`inventory_move_pool_weight_${id}`)||pending.poolWeights?.[id]);});
   button.disabled=!destination||!itemValid||!poolsValid;
 }
@@ -2873,13 +2895,14 @@ function openInventoryMoveReview(selected,context){
     </div>
     <div class="field"><label for="inventory_move_destination">Liquidation destination</label><select id="inventory_move_destination" required onchange="changeInventoryMoveDestination(this.value)"><option value="" selected disabled>Select a liquidation destination</option><option value="new">Create new liquidation batch</option>${openBatches.map(batch=>`<option value="${esc(batch.id)}">Add to existing open batch · ${esc(batch.id)} · ${esc(batch.name)}</option>`).join('')}</select>${openBatches.length?'':'<span class="form-note">No open batch is currently available. Select “Create new liquidation batch”.</span>'}</div>
     <div class="table-wrap move-confirmation-items"><table><thead><tr><th>Inventory item</th><th>Customer</th><th>Status</th><th class="num-head">Weight moving</th><th class="num-head">Cost</th></tr></thead><tbody>
-      ${selected.map(item=>`<tr><td><strong>${esc(item.metal)} ${esc(item.karat)}</strong><br><span class="form-note">${esc(item.itemType)}${item.remarks?' · '+esc(item.remarks):''}</span></td><td>${esc(item.customerName||'—')}</td><td>${statusPill(item.status)}</td><td class="num">${item.isInventoryPool?`<label class="field"><span class="form-note">Enter pool weight</span><input id="inventory_move_pool_weight_${item.inventoryPoolId}" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" value="${Number(item.currentWeight)}" oninput="updateInventoryMovePoolPreview('${item.inventoryPoolId}')"></label><span class="form-note">of ${fmtWeight(item.currentWeight)} in pool</span>`:context.individual?`<label class="field"><span class="form-note">Enter weight</span><input id="inventory_move_weight_${item.id}" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" value="${Number(item.currentWeight)}" oninput="updateInventoryMovePartialPreview('${item.id}')"></label><span class="form-note">of ${fmtWeight(item.currentWeight)} available</span>`:`<strong>${fmtWeight(item.currentWeight)}</strong><br><span class="form-note">full available weight</span>`}</td><td class="num" id="inventory_move_cost_${item.id}">${fmtMoney(item.cost)}</td></tr>`).join('')}
+      ${selected.map(item=>`<tr><td><strong>${esc(item.metal)} ${esc(item.karat)}</strong><br><span class="form-note">${esc(item.itemType)}${item.remarks?' · '+esc(item.remarks):''}</span></td><td>${esc(item.customerName||'—')}</td><td>${statusPill(item.status)}</td><td class="num">${item.isInventoryPool?`<label class="field"><span class="form-note">Enter pool weight</span><input id="inventory_move_pool_weight_${item.inventoryPoolId}" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" value="${Number(item.currentWeight)}" oninput="updateInventoryMovePoolPreview('${item.inventoryPoolId}')"></label><span class="form-note">of ${fmtWeight(item.currentWeight)} in pool</span>`:context.individual?`<label class="field"><span class="form-note">Enter weight</span><input id="inventory_move_weight_${item.id}" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" value="${Number(item.currentWeight)}" oninput="updateInventoryMovePartialPreview('${item.id}')"></label><span class="form-note">of ${fmtWeight(item.currentWeight)} available</span>`:`<strong>${fmtWeight(item.currentWeight)}</strong><br><span class="form-note">full available weight</span>`}</td><td class="num">${context.individual?`<label class="field"><span class="form-note">Cost basis (PHP)</span><input id="inventory_move_cost_${item.id}" type="number" min="0" max="${Number(item.cost)}" step="0.01" data-automatic="true" oninput="markInventoryMoveCostOverride('${item.id}')"><span class="form-note">Automatic: <strong id="inventory_move_automatic_cost_${item.id}">—</strong></span><button class="link-button" type="button" onclick="resetInventoryMoveCostBasis('${item.id}')">Reset automatic cost</button></label>`:`<span id="inventory_move_cost_${item.id}">${fmtMoney(item.cost)}</span>`}</td></tr>`).join('')}
     </tbody></table></div>
-    <div class="move-confirmation-note"><strong>What happens next?</strong><span>${context.individual||poolIds.length?'Enter the exact weight to move. Its cost is calculated automatically; remaining pool weight and cost stay in Inventory.':'Assign a name and buyer to the batch. Gold, Silver, and Platinum items may remain together. The records will then become For Liquidation and leave Current Inventory until sold or returned.'}</span></div>
+    <div class="move-confirmation-note"><strong>What happens next?</strong><span>${context.individual?'Enter the exact weight to move, then use the automatic cost or enter a cost-basis override. The remaining weight and cost stay in Inventory.':poolIds.length?'Enter the exact weight to move. Its cost is calculated automatically; remaining pool weight and cost stay in Inventory.':'Assign a name and buyer to the batch. Gold, Silver, and Platinum items may remain together. The records will then become For Liquidation and leave Current Inventory until sold or returned.'}</span></div>
     <div class="form-actions"><button class="btn secondary" onclick="closeInventoryMoveConfirmation()">Cancel</button><button class="btn" id="inventory_move_continue" onclick="confirmInventoryMoveToLiquidation()" disabled>Continue to batch details</button></div>
   </div>`;
   modal.addEventListener('click',event=>{if(event.target===modal)closeInventoryMoveConfirmation();});
   document.body.appendChild(modal);
+  if(context.individual) selected.forEach(item=>updateInventoryMovePartialPreview(item.id));
   updateInventoryMoveContinueState();
   modal.querySelector('.btn:last-child')?.focus();
 }
@@ -2892,8 +2915,8 @@ function confirmInventoryMoveToLiquidation(){
   if(selected.length!==pending.ids.length){ closeInventoryMoveConfirmation(); toast('One or more selected records are no longer available. Review the inventory again.'); render(); return; }
   const pools=(pending.poolIds||[]).map(id=>db.inventoryPools.find(pool=>pool.id===id)).filter(Boolean);
   if(pools.length!==(pending.poolIds||[]).length||pools.some(pool=>inventoryPoolSnapshot(pool).weight<=0)){closeInventoryMoveConfirmation();toast('One or more selected pools changed. Review the inventory again.');render();return;}
-  const allocations=pending.mode==='individual'?selected.map(item=>prepareInventoryItemAllocation(item,val(`inventory_move_weight_${item.id}`))):null;
-  if(allocations?.some(allocation=>!allocation)){toast(`Enter a weight between 0.01 g and ${Number(selected[0]?.currentWeight||0).toFixed(2)} g`);return;}
+  const allocations=pending.mode==='individual'?selected.map(item=>prepareInventoryItemAllocation(item,val(`inventory_move_weight_${item.id}`),inventoryMoveCostBasis(item.id))):null;
+  if(allocations?.some(allocation=>!allocation)){toast(`Enter a valid weight and cost basis from PHP 0 to ${fmtMoney(selected[0]?.cost||0)}`);return;}
   const poolMoves=pools.map(pool=>{const input=document.getElementById(`inventory_move_pool_weight_${pool.id}`),requested=input?input.value:pending.poolWeights?.[pool.id];return preparePoolMove(pool,requested);});
   if(poolMoves.some(move=>!move)){toast('Enter a valid weight for every selected pool');return;}
   const poolItems=pools.flatMap(inventoryPoolItems),allItems=[...selected,...poolItems];
@@ -2935,7 +2958,7 @@ function stageInventoryAllocationsForLiquidation(batch,allocations){
   for(const {line,item} of resolved){
     const full=!line.pooledAllocation;
     batch.lines.push({...line});
-    if(full){item.status='For Liquidation';item.liquidationBatchId=batch.id;}
+    if(full){if(line.costBasisOverridden)item.cost=roundMoney(line.cost);item.status='For Liquidation';item.liquidationBatchId=batch.id;}
     else{
       item.currentWeight=roundWeight(Number(item.currentWeight)-Number(line.weight));
       item.cost=roundMoney(Number(item.cost)-Number(line.cost));
@@ -3424,7 +3447,7 @@ function detachLiquidationBatchLine(batch,lineIndex){
   const index=Number(lineIndex),line=batch?.lines?.[index],item=line?db.stock.find(stock=>stock.id===line.itemId):null;
   if(!batch||!Number.isInteger(index)||index<0||!line||!item)return false;
   if(line.pooledAllocation){if(!restorePooledLiquidationLine(line))return false;}
-  else{item.status=line.previousStatus==='For Selling'?'Available':line.previousStatus||'Available';delete item.liquidationBatchId;}
+  else{item.status=line.previousStatus==='For Selling'?'Available':line.previousStatus||'Available';if(line.costBasisOverridden&&Number.isFinite(Number(line.originalCost)))item.cost=roundMoney(line.originalCost);delete item.liquidationBatchId;}
   batch.lines.splice(index,1);
   const poolId=line.sourcePoolId||batch.poolId||'';
   if(poolId){const pool=db.inventoryPools.find(record=>record.id===poolId);if(pool){pool.updatedAt=new Date().toISOString();syncInventoryPool(pool);}}
@@ -3532,7 +3555,7 @@ async function submitLiquidationBatch(batchId){
     const sellingAmount=index===prepared.length-1?roundMoney(totalSold-allocatedSold):roundMoney(totalSold*ratio);
     allocatedSold=roundMoney(allocatedSold+sellingAmount);
     if(!line.pooledAllocation){item.currentWeight=0; item.cost=0; item.status='Liquidated'; delete item.liquidationBatchId;}
-    return {itemId:item.id,assay:item.karat,weight:roundWeight(weight),sellingAmount,sellingRate:roundMoney(sellingAmount/weight),proceeds:sellingAmount,costPortion:roundMoney(costPortion),previousStatus:line.previousStatus||'Available',pooledAllocation:line.pooledAllocation===true,partialAllocation:line.partialAllocation===true,sourcePoolId:line.sourcePoolId||null,originalSourcePoolId:line.originalSourcePoolId||null};
+    return {itemId:item.id,assay:item.karat,weight:roundWeight(weight),sellingAmount,sellingRate:roundMoney(sellingAmount/weight),proceeds:sellingAmount,costPortion:roundMoney(costPortion),automaticCost:line.automaticCost??null,originalCost:line.originalCost??null,costBasisOverridden:line.costBasisOverridden===true,previousStatus:line.previousStatus||'Available',pooledAllocation:line.pooledAllocation===true,partialAllocation:line.partialAllocation===true,sourcePoolId:line.sourcePoolId||null,originalSourcePoolId:line.originalSourcePoolId||null};
   });
   const uniqueRates=Array.from(new Set(lines.map(line=>line.sellingRate))),liquidationId=nextSequenceId('L',db.liquidations);
   const pool=batch.poolId?db.inventoryPools.find(record=>record.id===batch.poolId):null,remaining=pool?syncInventoryPool(pool):null,poolIds=syncPoolsForLiquidationLines(lines,batch.poolId);

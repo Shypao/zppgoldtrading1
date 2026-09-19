@@ -224,13 +224,13 @@ async function loadInventoryApi() {
       liquidateInventoryItem(id);
       return appended.at(-1)?.innerHTML || '';
     },
-    preparePartialItem(id, weight) {
+    preparePartialItem(id, weight, costBasis) {
       const item = db.stock.find(record => record.id === id);
-      return JSON.parse(JSON.stringify(prepareInventoryItemAllocation(item, weight)));
+      return JSON.parse(JSON.stringify(prepareInventoryItemAllocation(item, weight, costBasis)));
     },
-    stagePartialItem(id, weight) {
+    stagePartialItem(id, weight, costBasis) {
       const item = db.stock.find(record => record.id === id);
-      const allocation = prepareInventoryItemAllocation(item, weight);
+      const allocation = prepareInventoryItemAllocation(item, weight, costBasis);
       const batch = { id: 'LB-PARTIAL', name: 'Partial item', buyer: 'Buyer', metal: item.metal, lines: [] };
       const result = stageInventoryAllocationsForLiquidation(batch, [allocation]);
       return JSON.parse(JSON.stringify({ result, batch, item }));
@@ -417,10 +417,36 @@ test('individual liquidation movement accepts a configurable partial weight', as
   assert.match(modal, /id="inventory_move_continue"[^>]*disabled/);
   assert.match(modal, /Create new liquidation batch/);
   assert.match(modal, /Add to existing open batch · LB-0001/);
+  assert.match(modal, /Cost basis \(PHP\)/);
+  assert.match(modal, /Reset automatic cost/);
   assert.equal(allocation.weight, 1);
   assert.equal(allocation.cost, 6210.12);
   assert.equal(allocation.partialAllocation, true);
   assert.equal(allocation.pooledAllocation, true);
+});
+
+test('a single inventory liquidation can use an overridden cost basis', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  Object.assign(state.stock[0], { currentWeight: 4, netWeight: 4, cost: 40000 });
+  api.setState(state);
+
+  const partial = api.preparePartialItem('stock-on-hand', 1.5, 18000);
+  const entire = api.preparePartialItem('stock-on-hand', 4, 36000);
+
+  assert.equal(partial.automaticCost, 15000);
+  assert.equal(partial.cost, 18000);
+  assert.equal(partial.remainingCost, 22000);
+  assert.equal(partial.costBasisOverridden, true);
+  assert.equal(entire.cost, 36000);
+  assert.equal(entire.costBasisOverridden, true);
+  assert.equal(api.preparePartialItem('stock-on-hand', 1, 40001), null);
+
+  const stagedEntire = api.stagePartialItem('stock-on-hand', 4, 36000);
+  assert.equal(stagedEntire.result, true);
+  assert.equal(stagedEntire.batch.lines[0].cost, 36000);
+  assert.equal(stagedEntire.item.cost, 36000);
+  assert.equal(stagedEntire.item.status, 'For Liquidation');
 });
 
 test('staging a partial item keeps its proportional balance in current inventory', async () => {
