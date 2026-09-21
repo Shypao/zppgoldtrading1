@@ -3771,9 +3771,10 @@ function renderRefining(){
       <div class="combined-output-label"><span>Result</span><strong>1 refined item</strong></div>
     </div>
     <div class="form-grid refining-simple-output">
-      <div class="field"><label>Output purity / karat</label><select id="rf_purity" required>
-        <option value="">— select purity —</option>${outputPurities.map(purity=>`<option value="${esc(purity)}">${esc(purity)}</option>`).join('')}
+      <div class="field"><label>Output purity / karat</label><select id="rf_purity" required onchange="changeRefiningOutputPurity()">
+        <option value="">— select purity —</option>${outputPurities.map(purity=>`<option value="${esc(purity)}">${esc(purity)}</option>`).join('')}<option value="__custom__">Custom karat / purity</option>
       </select></div>
+      <div class="field is-hidden" id="rf_custom_purity_field"><label>Custom output karat / purity</label><input id="rf_custom_purity" type="text" maxlength="40" placeholder="e.g. 23K or 99.9%"></div>
       <div class="field"><label>Final refined weight (g)</label><input id="rf_returned" type="number" min="0.01" step="0.01" placeholder="e.g. 10.00"></div>
     </div>
     <div class="form-actions">
@@ -3794,11 +3795,20 @@ function renderRefining(){
 }
 let pendingRefiningBatch=null;
 function closeRefiningConfirmation(){ document.getElementById('refining_confirmation_modal')?.remove(); pendingRefiningBatch=null; }
+function changeRefiningOutputPurity(){
+  const isCustom=val('rf_purity')==='__custom__';
+  document.getElementById('rf_custom_purity_field')?.classList.toggle('is-hidden',!isCustom);
+  if(isCustom) document.getElementById('rf_custom_purity')?.focus();
+}
+function selectedRefiningOutputPurity(){
+  const selected=val('rf_purity');
+  return selected==='__custom__' ? val('rf_custom_purity').trim() : selected;
+}
 function submitRefining(){
   const chosen=selectedRefiningItems().map(item=>item.id);
   if(!chosen.length){ toast('Select at least one item for refining'); return; }
-  const date=todayStr(),refiner='In-house refining',outputPurity=val('rf_purity');
-  if(!outputPurity){ toast('Select the output purity or karat'); return; }
+  const date=todayStr(),refiner='In-house refining',outputPurity=selectedRefiningOutputPurity();
+  if(!outputPurity){ toast(val('rf_purity')==='__custom__'?'Enter the custom output purity or karat':'Select the output purity or karat'); return; }
   const returned=Number(val('rf_returned'));
   if(!Number.isFinite(returned)||returned<=0){ toast('Enter the output weight returned to inventory'); return; }
   const items=chosen.map(id=>db.stock.find(s=>s.id===id)).filter(Boolean);

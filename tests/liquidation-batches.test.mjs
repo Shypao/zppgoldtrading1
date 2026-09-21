@@ -29,6 +29,7 @@ async function loadInventoryApi() {
     renderFeaturedBox,
     renderInventory,
     renderLiquidation,
+    renderRefining,
     renderRetail,
     matchingBuyingCustomerNames(query) {
       return Array.from(matchingBuyingCustomers(query), customer => customer.name);
@@ -276,6 +277,19 @@ async function loadInventoryApi() {
     renderPools() {
       return renderInventory();
     },
+    selectedRefiningOutputPurity(purity, customPurity = '') {
+      const fields = {
+        rf_purity: { value: purity },
+        rf_custom_purity: { value: customPurity }
+      };
+      const originalGetElementById = document.getElementById;
+      document.getElementById = id => fields[id] || null;
+      try {
+        return selectedRefiningOutputPurity();
+      } finally {
+        document.getElementById = originalGetElementById;
+      }
+    },
     openCashflowResetModal() {
       appended.length = 0;
       if (typeof openCashflowResetConfirmation === 'function') openCashflowResetConfirmation();
@@ -415,6 +429,18 @@ test('Refine selected does not combine different metals into one refining select
   assert.deepEqual(Array.from(preview.pendingIds), []);
   assert.equal(state.stock[0].status, 'Available');
   assert.equal(state.stock.at(-1).status, 'Available');
+});
+
+test('refining output accepts a custom karat or purity without changing preset options', async () => {
+  const api = await loadInventoryApi();
+  api.setState(stateFixture());
+
+  const html = api.renderRefining();
+  assert.match(html, /<option value="__custom__">Custom karat \/ purity<\/option>/);
+  assert.match(html, /id="rf_custom_purity"/);
+  assert.equal(api.selectedRefiningOutputPurity('24K'), '24K');
+  assert.equal(api.selectedRefiningOutputPurity('__custom__', '23K'), '23K');
+  assert.equal(api.selectedRefiningOutputPurity('__custom__', ' 99.9% '), '99.9%');
 });
 
 test('individual liquidation movement accepts a configurable partial weight', async () => {
