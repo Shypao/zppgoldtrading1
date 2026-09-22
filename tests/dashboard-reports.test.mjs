@@ -102,6 +102,17 @@ test('opening purchase history formats its rows', async () => {
   assert.match(html, /Example seller/);
 });
 
+test('dashboard record labels use Purchase and Liquidation without the history suffix', async () => {
+  const api = await loadDashboardReports();
+  api.setState(testState([]));
+
+  const html = api.renderReports();
+  assert.match(html, /<span>Purchase<\/span>/);
+  assert.match(html, /<span>Liquidation<\/span>/);
+  assert.doesNotMatch(html, /<span>Purchase history<\/span>/);
+  assert.doesNotMatch(html, /<span>Liquidation history<\/span>/);
+});
+
 test('dashboard groups only today purchases into clickable metal totals', async () => {
   const api = await loadDashboardReports();
   const today = api.todayStr();

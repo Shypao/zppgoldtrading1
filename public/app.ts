@@ -4285,7 +4285,7 @@ function renderLiquidationHistory(){
   const totalSold=liquidations.reduce((sum,item)=>sum+Number(item.proceeds||0),0);
   const totalProfit=liquidations.reduce((sum,item)=>sum+Number(item.margin||0),0);
   return `<section class="block">
-    <div class="batch-head"><div><h2 class="block-title">Liquidation history</h2><p class="form-note">Administrator record of all completed liquidation batches.</p></div><button class="btn small" onclick="exportLiquidations()">Download liquidation CSV</button></div>
+    <div class="batch-head"><div><h2 class="block-title">Liquidation</h2><p class="form-note">Administrator record of all completed liquidation batches.</p></div><button class="btn small" onclick="exportLiquidations()">Download liquidation CSV</button></div>
     <div class="purchase-history-filter-card">
       <div class="purchase-history-filter-top"><div><strong>Liquidation date</strong><span>Choose a date range or use a quick option.</span></div><div class="purchase-history-presets"><button class="btn secondary small" onclick="setLiquidationHistoryDatePreset('today')">Today</button><button class="btn secondary small" onclick="setLiquidationHistoryDatePreset('month')">This month</button><button class="btn secondary small" onclick="setLiquidationHistoryDatePreset('all')" ${liquidationHistoryFrom||liquidationHistoryTo?'':'disabled'}>Clear dates</button></div></div>
       <div class="purchase-history-date-row"><div class="field"><label for="liquidation_history_from">From</label><input id="liquidation_history_from" type="date" value="${esc(liquidationHistoryFrom)}"></div><div class="field"><label for="liquidation_history_to">To</label><input id="liquidation_history_to" type="date" value="${esc(liquidationHistoryTo)}"></div><button class="btn" onclick="applyLiquidationHistoryDates()">Apply dates</button></div>
@@ -4316,7 +4316,7 @@ function renderReports(){
     const purchasePayout=purchases.reduce((sum,item)=>sum+Number(item.payout||0),0);
     return `<div id="dashboard_report_content" class="dashboard-report-content">
   <section class="block recent-purchases purchase-history">
-    <div class="batch-head"><div><h2 class="block-title">Purchase history</h2><p class="form-note">All recorded purchases are kept here in one view.</p></div><div class="form-actions"><button class="btn secondary small" onclick="openCustomerHistoryModal()">View customer history</button><button class="btn small" onclick="exportPurchases()">Download purchase CSV</button></div></div>
+    <div class="batch-head"><div><h2 class="block-title">Purchase</h2><p class="form-note">All recorded purchases are kept here in one view.</p></div><div class="form-actions"><button class="btn secondary small" onclick="openCustomerHistoryModal()">View customer history</button><button class="btn small" onclick="exportPurchases()">Download purchase CSV</button></div></div>
     <div class="purchase-history-filter-card">
       <div class="purchase-history-filter-top"><div><strong>Purchase date</strong><span>Choose a date range or use a quick option.</span></div><div class="purchase-history-presets"><button class="btn secondary small" onclick="setPurchaseHistoryDatePreset('today')">Today</button><button class="btn secondary small" onclick="setPurchaseHistoryDatePreset('month')">This month</button><button class="btn secondary small" onclick="setPurchaseHistoryDatePreset('all')" ${purchaseHistoryFrom||purchaseHistoryTo?'':'disabled'}>Clear dates</button></div></div>
       <div class="purchase-history-date-row"><div class="field"><label for="purchase_history_from">From</label><input id="purchase_history_from" type="date" value="${esc(purchaseHistoryFrom)}"></div><div class="field"><label for="purchase_history_to">To</label><input id="purchase_history_to" type="date" value="${esc(purchaseHistoryTo)}"></div><button class="btn" onclick="applyPurchaseHistoryDates()">Apply dates</button></div>
@@ -4355,8 +4355,8 @@ function renderReports(){
   return `<section class="block dashboard-report-menu">
     <div><h2 class="block-title">Dashboard records</h2><p class="form-note">Open only the report you need. Select the active button again to close it.</p></div>
     <div class="dashboard-report-buttons">
-      <button class="btn ${dashboardReportPanel==='purchases'?'':'secondary'}" aria-pressed="${dashboardReportPanel==='purchases'}" onclick="toggleDashboardReport('purchases')"><span>Purchase history</span><strong>${allPurchases.length}</strong></button>
-      <button class="btn ${dashboardReportPanel==='liquidations'?'':'secondary'}" aria-pressed="${dashboardReportPanel==='liquidations'}" onclick="toggleDashboardReport('liquidations')"><span>Liquidation history</span><strong>${db.liquidations.length}</strong></button>
+      <button class="btn ${dashboardReportPanel==='purchases'?'':'secondary'}" aria-pressed="${dashboardReportPanel==='purchases'}" onclick="toggleDashboardReport('purchases')"><span>Purchase</span><strong>${allPurchases.length}</strong></button>
+      <button class="btn ${dashboardReportPanel==='liquidations'?'':'secondary'}" aria-pressed="${dashboardReportPanel==='liquidations'}" onclick="toggleDashboardReport('liquidations')"><span>Liquidation</span><strong>${db.liquidations.length}</strong></button>
       <button class="btn ${dashboardReportPanel==='readiness'?'':'secondary'}" aria-pressed="${dashboardReportPanel==='readiness'}" onclick="toggleDashboardReport('readiness')"><span>Liquidation readiness</span><strong>${allReadyStock.length}</strong></button>
     </div>
   </section>
@@ -4364,7 +4364,7 @@ function renderReports(){
   <section class="block export-ledger-compact">
     <details><summary>Export ledger data</summary><div class="stat-row">
       <div class="stat"><div class="label">Inventory ledger</div><button class="btn small" style="margin-top:8px;" onclick="exportStock()">Download CSV</button></div>
-      <div class="stat"><div class="label">Liquidation history</div><button class="btn small" style="margin-top:8px;" onclick="exportLiquidations()">Download CSV</button></div>
+      <div class="stat"><div class="label">Liquidation</div><button class="btn small" style="margin-top:8px;" onclick="exportLiquidations()">Download CSV</button></div>
       <div class="stat"><div class="label">Refining history</div><button class="btn small" style="margin-top:8px;" onclick="exportRefining()">Download CSV</button></div>
       <div class="stat"><div class="label">Retail sales</div><button class="btn small" style="margin-top:8px;" onclick="exportRetail()">Download CSV</button></div>
       <div class="stat"><div class="label">Customers</div><button class="btn small" style="margin-top:8px;" onclick="exportCustomers()">Download CSV</button></div>
