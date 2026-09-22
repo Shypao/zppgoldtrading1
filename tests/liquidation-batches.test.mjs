@@ -36,6 +36,16 @@ async function loadInventoryApi() {
     customerSalesLeaderboard(month, year, rankBy) {
       return JSON.parse(JSON.stringify(customerSalesLeaderboard(month, year, rankBy)));
     },
+    toggleCustomerSalesLeaderboard() {
+      const originalRender = render;
+      render = () => '';
+      try {
+        toggleCustomerSalesLeaderboard();
+        return renderCustomers();
+      } finally {
+        render = originalRender;
+      }
+    },
     matchingBuyingCustomerNames(query) {
       return Array.from(matchingBuyingCustomers(query), customer => customer.name);
     },
@@ -1357,8 +1367,14 @@ test('customer leaderboard monthly and yearly headers align with payout values',
   api.setState(state);
 
   const html = api.renderCustomers();
+  assert.match(html, /customer-sales-rank-head/);
+  assert.match(html, /customer-sales-rank/);
   assert.match(html, /<th class="num-head">Monthly ·/);
   assert.match(html, /<th class="num-head">Yearly ·/);
+  assert.match(html, />Minimize</);
+  const minimized = api.toggleCustomerSalesLeaderboard();
+  assert.match(minimized, />Expand</);
+  assert.doesNotMatch(minimized, /customer_sales_month/);
 });
 
 test('downloadable rate sheets add section spacing before Silver and Platinum', async () => {

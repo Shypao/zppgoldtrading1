@@ -857,9 +857,9 @@ function tableOrEmpty(rows, rowFn, headers, emptyMsg){
   const numericHeaders=new Set([
     'Net weight','Weight','Current weight','Weight available','Gross weight','Available weight','Input wt','Output weight',
     'Rate','Payout','Cost','Input cost','Output value','Total cost','Total sold','Profit','Margin','Charges',
-    'Items','Transactions','Selling history','Total weight sold','Total payout','Expected yield','Actual yield','Variance'
+    'Items','Transactions','Selling history','Total weight sold','Total payout','Expected yield','Actual yield','Variance','Rank'
   ]);
-  return `<div class="table-wrap"><table><thead><tr>${headers.map(h=>`<th class="${numericHeaders.has(h)||String(h).startsWith('Monthly ·')||String(h).startsWith('Yearly ·')?'num-head':''}">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(rowFn).join('')}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr>${headers.map(h=>`<th class="${numericHeaders.has(h)||String(h).startsWith('Monthly ·')||String(h).startsWith('Yearly ·')?'num-head':''}${h==='Rank'?' customer-sales-rank-head':''}">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(rowFn).join('')}</tbody></table></div>`;
 }
 
 /* ============================= RATES ============================= */
@@ -1365,7 +1365,7 @@ function confirmDeletion(title,message,details=[]){
 
 /* ============================= CUSTOMERS ============================= */
 let custSearch = '', custOpen = null;
-let customerSalesMonth=todayStr().slice(0,7), customerSalesYear=todayStr().slice(0,4), customerSalesRankBy='monthly';
+let customerSalesMonth=todayStr().slice(0,7), customerSalesYear=todayStr().slice(0,4), customerSalesRankBy='monthly', customerSalesLeaderboardMinimized=false;
 function customerStockHistory(customer){
   const normalizedName=String(customer?.name||'').trim().toLowerCase();
   return db.stock.filter(item=>item.customerId===customer.id||(!item.customerId&&normalizedName&&String(item.customerName||'').trim().toLowerCase()===normalizedName));
@@ -1400,20 +1400,23 @@ function customerSalesCell(total){
 function setCustomerSalesMonth(value){ if(/^\d{4}-\d{2}$/.test(value)){customerSalesMonth=value;render();} }
 function setCustomerSalesYear(value){ if(/^\d{4}$/.test(value)){customerSalesYear=value;render();} }
 function setCustomerSalesRankBy(value){ customerSalesRankBy=value==='yearly'?'yearly':'monthly';render(); }
+function toggleCustomerSalesLeaderboard(){ customerSalesLeaderboardMinimized=!customerSalesLeaderboardMinimized; render(); }
 function renderCustomers(){
   const list = db.customers.filter(c=> (c.name+c.contact).toLowerCase().includes(custSearch.toLowerCase()));
   const leaderboard=customerSalesLeaderboard();
   const topSeller=leaderboard[0];
   return `
   <section class="block">
-    <div class="batch-head"><div><h2 class="block-title">Customer sales leaderboard</h2><p class="form-note">Compare monthly and yearly purchases from each customer. The highest payout is ranked first.</p></div></div>
+    <div class="batch-head"><div><h2 class="block-title">Customer sales leaderboard</h2><p class="form-note">Compare monthly and yearly purchases from each customer. The highest payout is ranked first.</p></div><button class="btn secondary small" type="button" onclick="toggleCustomerSalesLeaderboard()">${customerSalesLeaderboardMinimized?'Expand':'Minimize'}</button></div>
+    ${customerSalesLeaderboardMinimized?'<div class="empty-note">Customer sales rankings are minimized.</div>':`
     <div class="filter-row">
       <div class="field"><label for="customer_sales_month">Month</label><input id="customer_sales_month" type="month" value="${esc(customerSalesMonth)}" onchange="setCustomerSalesMonth(this.value)"></div>
       <div class="field"><label for="customer_sales_year">Year</label><input id="customer_sales_year" type="number" min="2000" max="2100" value="${esc(customerSalesYear)}" onchange="setCustomerSalesYear(this.value)"></div>
       <div class="field"><label for="customer_sales_rank">Rank customers by</label><select id="customer_sales_rank" onchange="setCustomerSalesRankBy(this.value)"><option value="monthly" ${customerSalesRankBy==='monthly'?'selected':''}>Monthly payout</option><option value="yearly" ${customerSalesRankBy==='yearly'?'selected':''}>Yearly payout</option></select></div>
     </div>
     ${topSeller&&topSeller[customerSalesRankBy].payout>0?`<div class="summary-grand"><div><span>Top seller by ${customerSalesRankBy==='monthly'?customerSalesPeriodLabel(customerSalesMonth):customerSalesYear}</span><strong>${esc(topSeller.customer.name)}</strong></div><div>${fmtMoney(topSeller[customerSalesRankBy].payout)}</div></div>`:'<div class="empty-note">No customer purchases were recorded for the selected ranking period.</div>'}
-    ${tableOrEmpty(leaderboard,(entry,index)=>`<tr><td class="num"><strong>${index+1}</strong></td><td><strong>${esc(entry.customer.name)}</strong><br><span class="form-note">${esc(entry.customer.contact||'No contact')}</span></td><td class="num">${customerSalesCell(entry.monthly)}</td><td class="num">${customerSalesCell(entry.yearly)}</td></tr>`,['Rank','Customer',`Monthly · ${customerSalesPeriodLabel(customerSalesMonth)}`,`Yearly · ${customerSalesYear}`],'No customers on file yet.')}
+    ${tableOrEmpty(leaderboard,(entry,index)=>`<tr><td class="num customer-sales-rank"><strong>${index+1}</strong></td><td><strong>${esc(entry.customer.name)}</strong><br><span class="form-note">${esc(entry.customer.contact||'No contact')}</span></td><td class="num">${customerSalesCell(entry.monthly)}</td><td class="num">${customerSalesCell(entry.yearly)}</td></tr>`,['Rank','Customer',`Monthly · ${customerSalesPeriodLabel(customerSalesMonth)}`,`Yearly · ${customerSalesYear}`],'No customers on file yet.')}
+    `}
   </section>
 
   <section class="block">
