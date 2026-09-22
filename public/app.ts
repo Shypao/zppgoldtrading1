@@ -1762,6 +1762,8 @@ function scheduleBuyingDraftSave(){
 }
 async function clearBuyingDraft(){
   clearTimeout(buyingDraftSaveTimer); buyingDraftForm={}; buyingDraftSavedDate='';buyingDraftLoaded=true;
+  const defaults={b_seller_name:'',b_date:'',b_pay:'Cash',b_metal:'Gold',b_itemtype:'Scrap',b_karat:'',b_custom_purity:'',b_gross:'',b_ded:'',b_rate:'',b_payout:'',b_staff:'',b_status:'Available',b_remarks:''};
+  Object.entries(defaults).forEach(([id,value])=>{const input=document.getElementById(id);if(input) input.value=value;});
   try{ await fetch('/api/buying-draft',{method:'DELETE'}); }catch(error){ console.error('Buying draft clear failed',error); }
 }
 function renderBuying(){

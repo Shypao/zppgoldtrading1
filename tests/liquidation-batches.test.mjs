@@ -291,6 +291,19 @@ async function loadInventoryApi() {
         document.getElementById = originalGetElementById;
       }
     },
+    async clearBuyingDraftWithFields(fields) {
+      const originalGetElementById = document.getElementById;
+      const originalFetch = globalThis.fetch;
+      document.getElementById = id => fields[id] || null;
+      globalThis.fetch = async () => ({ ok: true });
+      try {
+        await clearBuyingDraft();
+        return JSON.parse(JSON.stringify(fields));
+      } finally {
+        document.getElementById = originalGetElementById;
+        globalThis.fetch = originalFetch;
+      }
+    },
     openCashflowResetModal() {
       appended.length = 0;
       if (typeof openCashflowResetConfirmation === 'function') openCashflowResetConfirmation();
@@ -1270,6 +1283,33 @@ test('daily rate setup keeps the Gold karat multiplier editor visible to adminis
   api.setState(stateFixture());
 
   assert.match(api.renderRates(), /Edit Gold karat multipliers/);
+});
+
+test('clearing a completed buying payout also clears the seller name from the visible form', async () => {
+  const api = await loadInventoryApi();
+  const fields = {
+    b_seller_name: { value: 'Irene Cerna' },
+    b_date: { value: '2026-09-22' },
+    b_pay: { value: 'GCash' },
+    b_metal: { value: 'Silver' },
+    b_itemtype: { value: 'Jewelry' },
+    b_karat: { value: '925' },
+    b_custom_purity: { value: '89' },
+    b_gross: { value: '10' },
+    b_ded: { value: '1' },
+    b_rate: { value: '99' },
+    b_payout: { value: '900' },
+    b_staff: { value: 'Admin' },
+    b_status: { value: 'On Hold' },
+    b_remarks: { value: 'Old purchase' }
+  };
+
+  const cleared = await api.clearBuyingDraftWithFields(fields);
+  assert.equal(cleared.b_seller_name.value, '');
+  assert.equal(cleared.b_pay.value, 'Cash');
+  assert.equal(cleared.b_metal.value, 'Gold');
+  assert.equal(cleared.b_status.value, 'Available');
+  assert.equal(cleared.b_remarks.value, '');
 });
 
 test('downloadable rate sheets add section spacing before Silver and Platinum', async () => {
