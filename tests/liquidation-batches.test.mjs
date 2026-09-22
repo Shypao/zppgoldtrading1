@@ -26,12 +26,16 @@ async function loadInventoryApi() {
     cashflowDetailSnapshot,
     ensureShape,
     renderBuying,
+    renderCustomers,
     renderFeaturedBox,
     renderInventory,
     renderLiquidation,
     renderRefining,
     renderRetail,
     renderRates,
+    customerSalesLeaderboard(month, year, rankBy) {
+      return JSON.parse(JSON.stringify(customerSalesLeaderboard(month, year, rankBy)));
+    },
     matchingBuyingCustomerNames(query) {
       return Array.from(matchingBuyingCustomers(query), customer => customer.name);
     },
@@ -1310,6 +1314,40 @@ test('clearing a completed buying payout also clears the seller name from the vi
   assert.equal(cleared.b_metal.value, 'Gold');
   assert.equal(cleared.b_status.value, 'Available');
   assert.equal(cleared.b_remarks.value, '');
+});
+
+test('customer sales leaderboard ranks monthly and yearly customer totals', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.customers = [
+    { id: 'cust-alice', name: 'Alice', contact: '', notes: '' },
+    { id: 'cust-ben', name: 'Ben', contact: '', notes: '' }
+  ];
+  state.stock = [
+    { id: 'alice-sep', batchId: 'buy-alice-sep', customerId: 'cust-alice', customerName: 'Alice', date: '2026-09-05', netWeight: 5, payout: 5000 },
+    { id: 'alice-aug', batchId: 'buy-alice-aug', customerId: 'cust-alice', customerName: 'Alice', date: '2026-08-04', netWeight: 3, payout: 3000 },
+    { id: 'ben-sep-a', batchId: 'buy-ben-sep', customerId: 'cust-ben', customerName: 'Ben', date: '2026-09-02', netWeight: 8, payout: 8000 },
+    { id: 'ben-sep-b', batchId: 'buy-ben-sep', customerId: 'cust-ben', customerName: 'Ben', date: '2026-09-02', netWeight: 2, payout: 2000 },
+    { id: 'ben-aug', batchId: 'buy-ben-aug', customerId: 'cust-ben', customerName: 'Ben', date: '2026-08-12', netWeight: 1, payout: 1000 },
+    { id: 'ben-old', batchId: 'buy-ben-old', customerId: 'cust-ben', customerName: 'Ben', date: '2025-09-02', netWeight: 20, payout: 20000 }
+  ];
+  api.setState(state);
+
+  const monthly = api.customerSalesLeaderboard('2026-09', '2026', 'monthly');
+  assert.equal(monthly[0].customer.name, 'Ben');
+  assert.equal(monthly[0].monthly.transactions, 1);
+  assert.equal(monthly[0].monthly.items, 2);
+  assert.equal(monthly[0].monthly.weight, 10);
+  assert.equal(monthly[0].monthly.payout, 10000);
+  assert.equal(monthly[0].yearly.transactions, 2);
+  assert.equal(monthly[0].yearly.items, 3);
+  assert.equal(monthly[0].yearly.weight, 11);
+  assert.equal(monthly[0].yearly.payout, 11000);
+
+  const yearly = api.customerSalesLeaderboard('2026-09', '2026', 'yearly');
+  assert.equal(yearly[0].customer.name, 'Ben');
+  assert.equal(yearly[1].customer.name, 'Alice');
+  assert.equal(yearly[1].yearly.payout, 8000);
 });
 
 test('downloadable rate sheets add section spacing before Silver and Platinum', async () => {
