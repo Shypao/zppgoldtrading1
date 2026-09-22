@@ -149,6 +149,13 @@ async function loadInventoryApi() {
       openInventoryPoolEdit(id);
       return appended.at(-1)?.innerHTML || '';
     },
+    setPoolClassification(id, status) {
+      const pool = db.inventoryPools.find(record => record.id === id);
+      const result = typeof setInventoryPoolClassification === 'function'
+        ? setInventoryPoolClassification(pool, status)
+        : false;
+      return JSON.parse(JSON.stringify({ result, pool, stock: db.stock, inventory: renderInventory(), refining: renderRefining() }));
+    },
     openPoolLiquidation(id) {
       appended.length = 0;
       openPoolLiquidationModal(id);
@@ -963,6 +970,33 @@ test('inventory displays a pool as one available row with combined weight and co
   assert.doesNotMatch(liquidationModal, /id="pool_liquidation_cost"[^>]*max=/);
   assert.match(liquidationModal, /Automatic from the pool mean cost\. You may override it\./);
   assert.match(liquidationModal, /Reset automatic cost/);
+});
+
+test('editing a pool can classify its active balance for refining', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'pool-a', date: '2026-09-19', customerName: 'Seller A', metal: 'Gold', karat: '18K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-REFINE', netWeight: 4, currentWeight: 4, cost: 20000 },
+    { id: 'pool-b', date: '2026-09-19', customerName: 'Seller B', metal: 'Gold', karat: '18K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-REFINE', netWeight: 6, currentWeight: 6, cost: 30000 }
+  ];
+  state.inventoryPools = [{ id: 'POOL-REFINE', name: '18K refining pool', metal: 'Gold', karat: '18K', itemIds: ['pool-a', 'pool-b'], originalWeight: 10, originalCost: 50000, onHold: false }];
+  api.setState(state);
+
+  const editModal = api.openPoolEdit('POOL-REFINE');
+  assert.match(editModal, /<option[^>]*>For Refining<\/option>/);
+
+  const refining = api.setPoolClassification('POOL-REFINE', 'For Refining');
+  assert.equal(refining.result, true);
+  assert.equal(refining.pool.onHold, false);
+  assert.equal(refining.pool.inventoryStatus, 'For Refining');
+  assert.equal(refining.stock.every(item => item.status === 'For Refining'), true);
+  assert.match(refining.inventory, />For Refining</);
+  assert.match(refining.refining, /Seller A/);
+  assert.match(refining.refining, /Seller B/);
+
+  const available = api.setPoolClassification('POOL-REFINE', 'Available');
+  assert.equal(available.stock.every(item => item.status === 'Available'), true);
+  assert.match(available.inventory, />Available</);
 });
 
 test('editing a pool can raise its remaining cost for a later liquidation', async () => {

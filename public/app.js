@@ -3232,6 +3232,27 @@ function inventoryPoolStatus(pool, snapshot = inventoryPoolSnapshot(pool)) {
         return 'PARTIALLY LIQUIDATED';
     return 'ACTIVE';
 }
+function poolInventoryClassification(pool, snapshot = inventoryPoolSnapshot(pool)) {
+    if (pool.onHold)
+        return 'On Hold';
+    if (pool.inventoryStatus === 'For Refining')
+        return 'For Refining';
+    const activeItems = snapshot.items.filter(item => Number(item.currentWeight || 0) > 0);
+    return activeItems.length && activeItems.every(item => item.status === 'For Refining') ? 'For Refining' : 'Available';
+}
+function setInventoryPoolClassification(pool, status) {
+    if (!pool || !['Available', 'For Refining', 'On Hold'].includes(status))
+        return false;
+    pool.onHold = status === 'On Hold';
+    pool.inventoryStatus = status === 'For Refining' ? 'For Refining' : 'Available';
+    inventoryPoolItems(pool).forEach(item => {
+        if (Number(item.currentWeight || 0) > 0)
+            item.status = status;
+    });
+    pool.updatedAt = new Date().toISOString();
+    syncInventoryPool(pool);
+    return true;
+}
 function syncInventoryPool(pool) {
     const snapshot = inventoryPoolSnapshot(pool);
     pool.remainingWeight = snapshot.weight;
@@ -3271,7 +3292,7 @@ function inventoryDisplayRows(records) {
             metal: composition.metal,
             karat: composition.karat,
             itemType: types.length === 1 ? types[0] : 'Mixed',
-            status: pool.onHold ? 'On Hold' : 'Available',
+            status: poolInventoryClassification(pool, snapshot),
             currentWeight: snapshot.weight,
             cost: snapshot.cost,
             remarks: pool.notes || `${pool.itemIds.length} pooled inventory records`,
@@ -4249,7 +4270,7 @@ function openInventoryPoolEdit(id) {
     const itemType = sharedPoolItemValue(snapshot.items, 'itemType') || 'Mixed';
     openAdminEditModal('Edit pooled inventory', `<div class="form-grid">
     <div class="field"><label>Date</label><input id="edit_pool_date" type="date" value="${esc(date)}"></div>
-    <div class="field"><label>Classification</label><select id="edit_pool_status"><option ${pool.onHold ? '' : 'selected'}>Available</option><option ${pool.onHold ? 'selected' : ''}>On Hold</option></select></div>
+    <div class="field"><label>Classification</label><select id="edit_pool_status">${['Available', 'For Refining', 'On Hold'].map(status => `<option ${poolInventoryClassification(pool, snapshot) === status ? 'selected' : ''}>${status}</option>`).join('')}</select></div>
     <div class="field"><label>Karat / purity</label><select id="edit_pool_karat" ${composition.metal === 'Mixed' ? 'disabled' : ''}>${composition.metal === 'Mixed' ? '<option value="Mixed" selected>Mixed metals / purities</option>' : `${mixedPurities ? '<option value="Mixed" selected>Mixed purities</option>' : ''}${gradeKeys.map(key => `<option value="${esc(key)}" ${key === composition.karat ? 'selected' : ''}>${esc(gradeLabel(composition.metal, key))}</option>`).join('')}`}</select></div>
     <div class="field"><label>Current weight (g)</label><input id="edit_pool_weight" type="number" min="0.01" max="${roundWeight(snapshot.items.reduce((sum, item) => sum + Number(item.netWeight || 0), 0))}" step="0.01" value="${snapshot.weight}"></div>
     <div class="field"><label>Remaining cost (PHP)</label><input id="edit_pool_cost" type="number" min="0" step="0.01" value="${snapshot.cost}"></div>
@@ -4385,10 +4406,13 @@ async function saveInventoryPoolEdit() {
     const beforeState = JSON.parse(JSON.stringify(db)), status = val('edit_pool_status'), karat = val('edit_pool_karat'), itemType = val('edit_pool_type');
     distributePoolWeight(items, roundWeight(targetWeight));
     applyInventoryPoolCostEdit(pool, targetCost);
-    items.forEach(item => { item.date = val('edit_pool_date'); item.status = status === 'On Hold' ? 'On Hold' : 'Available'; item.paymentMethod = val('edit_pool_payment').trim(); item.staff = val('edit_pool_staff').trim(); if (itemType !== 'Mixed')
+    items.forEach(item => { item.date = val('edit_pool_date'); item.paymentMethod = val('edit_pool_payment').trim(); item.staff = val('edit_pool_staff').trim(); if (itemType !== 'Mixed')
         item.itemType = itemType; if (karat && karat !== 'Mixed')
         item.karat = karat; });
-    pool.onHold = status === 'On Hold';
+    if (!setInventoryPoolClassification(pool, status)) {
+        toast('Choose a valid classification');
+        return;
+    }
     pool.notes = val('edit_pool_remarks').trim();
     pool.updatedAt = new Date().toISOString();
     const composition = inventoryPoolComposition(items);
@@ -5050,7 +5074,7 @@ function toggleRefiningSelection(id, checked) {
 }
 function changeRefiningMetal(metal) { refMetal = metal; refiningSelection.clear(); render(); }
 function selectedRefiningItems() {
-    return db.stock.filter(item => refiningSelection.has(item.id) && !item.inventoryPoolId && item.metal === refMetal && item.status === 'For Refining' && Number(item.currentWeight) > 0);
+    return db.stock.filter(item => refiningSelection.has(item.id) && item.metal === refMetal && item.status === 'For Refining' && Number(item.currentWeight) > 0);
 }
 function updateRefiningCombinedSummary() {
     const items = selectedRefiningItems();
@@ -5136,7 +5160,7 @@ async function confirmInventoryForRefining() {
     toast(`${itemCount} ${itemCount === 1 ? 'item' : 'items'} moved to Refining`);
 }
 function renderRefining() {
-    const eligible = db.stock.filter(s => !s.inventoryPoolId && s.metal === refMetal && s.status === 'For Refining' && s.currentWeight > 0);
+    const eligible = db.stock.filter(s => s.metal === refMetal && s.status === 'For Refining' && s.currentWeight > 0);
     Array.from(refiningSelection).forEach(id => { if (!eligible.some(item => item.id === id))
         refiningSelection.delete(id); });
     const selected = selectedRefiningItems();
