@@ -1103,7 +1103,7 @@ function tableOrEmpty(rows, rowFn, headers, emptyMsg) {
         'Rate', 'Payout', 'Cost', 'Input cost', 'Output value', 'Total cost', 'Total sold', 'Profit', 'Margin', 'Charges',
         'Items', 'Transactions', 'Selling history', 'Total weight sold', 'Total payout', 'Expected yield', 'Actual yield', 'Variance'
     ]);
-    return `<div class="table-wrap"><table><thead><tr>${headers.map(h => `<th class="${numericHeaders.has(h) ? 'num-head' : ''}">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(rowFn).join('')}</tbody></table></div>`;
+    return `<div class="table-wrap"><table><thead><tr>${headers.map(h => `<th class="${numericHeaders.has(h) || String(h).startsWith('Monthly ·') || String(h).startsWith('Yearly ·') ? 'num-head' : ''}">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(rowFn).join('')}</tbody></table></div>`;
 }
 /* ============================= RATES ============================= */
 function renderRates() {

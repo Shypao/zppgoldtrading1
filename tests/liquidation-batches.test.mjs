@@ -1350,6 +1350,17 @@ test('customer sales leaderboard ranks monthly and yearly customer totals', asyn
   assert.equal(yearly[1].yearly.payout, 8000);
 });
 
+test('customer leaderboard monthly and yearly headers align with payout values', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.customers = [{ id: 'cust-alice', name: 'Alice', contact: '', notes: '' }];
+  api.setState(state);
+
+  const html = api.renderCustomers();
+  assert.match(html, /<th class="num-head">Monthly ·/);
+  assert.match(html, /<th class="num-head">Yearly ·/);
+});
+
 test('downloadable rate sheets add section spacing before Silver and Platinum', async () => {
   const api = await loadInventoryApi();
   const margins = api.rateSheetSectionMargins();
