@@ -31,6 +31,7 @@ async function loadInventoryApi() {
     renderLiquidation,
     renderRefining,
     renderRetail,
+    renderRates,
     matchingBuyingCustomerNames(query) {
       return Array.from(matchingBuyingCustomers(query), customer => customer.name);
     },
@@ -1262,6 +1263,13 @@ test('downloadable rate sheets omit 73 percent without removing it from website 
 
   assert.equal(api.rateSheetGoldGradeKeys().includes('73%'), false);
   assert.match(api.renderBuying(), /73%/);
+});
+
+test('daily rate setup keeps the Gold karat multiplier editor visible to administrators', async () => {
+  const api = await loadInventoryApi();
+  api.setState(stateFixture());
+
+  assert.match(api.renderRates(), /Edit Gold karat multipliers/);
 });
 
 test('downloadable rate sheets add section spacing before Silver and Platinum', async () => {

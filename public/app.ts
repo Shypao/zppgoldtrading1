@@ -880,6 +880,7 @@ function renderRates(){
         <label class="switch-line"><input type="checkbox" ${auto.enabled?'checked':''} onchange="setAutoEnabled(this.checked)"> Update automatically every hour</label>
         <button class="btn small" onclick="refreshPhilippineRates(false)" ${pricingFetchBusy?'disabled':''}>Refresh &amp; apply now</button>
         <button class="btn secondary small" onclick="openDailyBaseEditor('Gold')">Edit today's PHP base</button>
+        <button class="btn secondary small" onclick="openGoldMultiplierEditor()">Edit Gold karat multipliers</button>
       </div>
     </div>
     <div class="stat-row" style="margin-top:16px">
