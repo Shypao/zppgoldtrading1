@@ -340,6 +340,7 @@ async function saveStaffAdditions(candidate: LedgerState): Promise<void> {
   }
   const newCustomers = candidate.customers.filter(record => !currentCustomers.has(record.id));
   const newStock = candidate.stock.filter(record => !currentStock.has(record.id));
+  const staffRateOverridesUnlocked = currentPricing.staffRateEditingUnlocked === true;
   const knownCustomerIds = new Set([...current.customers, ...newCustomers].map(record => record.id));
   for (const customer of newCustomers) {
     if (!customer.id || !String(customer.name ?? '').trim()) throw new Error('Invalid customer record');
@@ -353,6 +354,10 @@ async function saveStaffAdditions(candidate: LedgerState): Promise<void> {
         Number(item.netWeight) <= 0 || Number(item.currentWeight) !== Number(item.netWeight) ||
         Number(item.payout) < 0 || Number(item.cost) !== Number(item.payout)) {
       throw new Error('Invalid purchase record');
+    }
+    if (!staffRateOverridesUnlocked &&
+        (Number(item.rate) !== Number(item.systemRate) || item.rateOverridden === true)) {
+      throw new Error('Buying-rate overrides are locked by an administrator');
     }
   }
   await dbBatch([

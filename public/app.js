@@ -292,6 +292,7 @@ async function loadDB() {
 function isAdmin() { return currentUser?.role === 'admin'; }
 function staffRateEditingUnlocked() { return db.pricing?.staffRateEditingUnlocked === true; }
 function canEditDailyRates() { return isAdmin() || staffRateEditingUnlocked(); }
+function canOverrideBuyingRate() { return isAdmin() || staffRateEditingUnlocked(); }
 function allowedTabs() { return TABS.filter(tab => isAdmin() || tab.staff); }
 function showLogin() {
     currentUser = null;
@@ -2330,7 +2331,8 @@ function renderBuying() {
     const systemRate = rateObj ? roundPeso(rateObj.rate) : 0;
     const enteredRate = buyingDraftValue('b_rate');
     const parsedRate = Number(enteredRate);
-    const savedRateOverride = buyingDraftForm.b_rate_overridden === 'true';
+    const rateOverrideAllowed = canOverrideBuyingRate();
+    const savedRateOverride = rateOverrideAllowed && buyingDraftForm.b_rate_overridden === 'true';
     const rate = savedRateOverride && enteredRate !== '' && Number.isFinite(parsedRate) ? roundPeso(parsedRate) : systemRate;
     const rateOverridden = Boolean(rateObj && savedRateOverride && rate !== systemRate);
     const suggested = roundPeso(net * rate);
@@ -2384,7 +2386,7 @@ function renderBuying() {
 
         <div class="payout-calculator">
           <div><span>Net weight</span><strong id="b_net_display">${fmtWeight(net)}</strong></div>
-          <div class="buying-rate ${rateOverridden ? 'is-overridden' : ''}" id="b_rate_panel"><label id="b_rate_label" for="b_rate">${rateOverridden ? 'Buying rate override (this item only)' : 'Buying rate (uses Daily Rate Setup)'}</label><div><span>₱</span><input id="b_rate" type="number" min="1" step="1" value="${rateObj ? rate : ''}" placeholder="0" onfocus="selectBuyingOverrideValue(this)" oninput="markBuyingRateOverride();recalcBuying();scheduleBuyingDraftSave()"><span>/g</span></div><span id="b_daily_rate_reference" class="daily-rate-reference ${rateOverridden ? '' : 'is-hidden'}">Daily rate: ${fmtMoney(systemRate)}/g</span><button type="button" id="b_rate_reset" class="rate-reset ${rateOverridden ? '' : 'is-hidden'}" onclick="resetBuyingRate();scheduleBuyingDraftSave()">Use daily rate</button></div>
+          <div class="buying-rate ${rateOverridden ? 'is-overridden' : ''}" id="b_rate_panel"><label id="b_rate_label" for="b_rate">${rateOverridden ? 'Buying rate override (this item only)' : rateOverrideAllowed ? 'Buying rate (uses Daily Rate Setup)' : 'Buying rate (Daily Rate Setup · locked)'}</label><div><span>₱</span><input id="b_rate" type="number" min="1" step="1" value="${rateObj ? rate : ''}" placeholder="0" ${rateOverrideAllowed ? 'onfocus="selectBuyingOverrideValue(this)" oninput="markBuyingRateOverride();recalcBuying();scheduleBuyingDraftSave()"' : 'readonly aria-readonly="true"'}><span>/g</span></div>${rateOverrideAllowed ? `<span id="b_daily_rate_reference" class="daily-rate-reference ${rateOverridden ? '' : 'is-hidden'}">Daily rate: ${fmtMoney(systemRate)}/g</span><button type="button" id="b_rate_reset" class="rate-reset ${rateOverridden ? '' : 'is-hidden'}" onclick="resetBuyingRate();scheduleBuyingDraftSave()">Use daily rate</button>` : '<span class="form-note">Rate override is locked by administrator</span>'}</div>
           <div class="suggested"><span>Calculated amount</span><strong id="b_suggested_display">${fmtMoney(suggested)}</strong></div>
           <div class="final-payout"><label for="b_payout">Final payout</label><div><span>₱</span><input id="b_payout" type="number" min="0" step="1" value="${esc(buyingDraftValue('b_payout'))}" placeholder="${suggested}" onfocus="selectBuyingOverrideValue(this)" oninput="scheduleBuyingDraftSave()"></div></div>
         </div>
@@ -2463,7 +2465,14 @@ function selectedBuyingGrade() {
         return customPurityGradeKey(val('b_custom_purity'));
     return val('b_karat');
 }
-function markBuyingRateOverride() { buyingDraftForm.b_rate_overridden = 'true'; }
+function markBuyingRateOverride() {
+    if (!canOverrideBuyingRate()) {
+        resetBuyingRate();
+        toast('Buying-rate overrides are locked by administrator');
+        return;
+    }
+    buyingDraftForm.b_rate_overridden = 'true';
+}
 function selectBuyingOverrideValue(input) { if (input?.value)
     input.select(); }
 function resetBuyingRate() {
@@ -2476,14 +2485,17 @@ function resetBuyingRate() {
 function recalcBuying() {
     const metal = val('b_metal'), karat = selectedBuyingGrade(), gross = parseFloat(val('b_gross')) || 0, ded = parseFloat(val('b_ded')) || 0;
     const net = Math.max(roundWeight(gross - ded), 0), rateObj = karat ? activeRate(metal, karat) : null, systemRate = rateObj ? roundPeso(rateObj.rate) : 0;
-    const rateInput = document.getElementById('b_rate'), enteredRate = Number(rateInput?.value), rate = rateInput?.value !== '' && Number.isFinite(enteredRate) ? roundPeso(enteredRate) : 0;
-    const rateOverridden = Boolean(rateObj && Number.isFinite(rate) && rate !== systemRate);
+    const rateOverrideAllowed = canOverrideBuyingRate(), rateInput = document.getElementById('b_rate');
+    if (!rateOverrideAllowed && rateInput)
+        rateInput.value = systemRate ? String(systemRate) : '';
+    const enteredRate = Number(rateInput?.value), rate = rateInput?.value !== '' && Number.isFinite(enteredRate) ? roundPeso(enteredRate) : 0;
+    const rateOverridden = Boolean(rateOverrideAllowed && rateObj && Number.isFinite(rate) && rate !== systemRate);
     buyingDraftForm.b_rate_overridden = rateOverridden ? 'true' : 'false';
     const netEl = document.getElementById('b_net_display'), rateLabel = document.getElementById('b_rate_label'), ratePanel = document.getElementById('b_rate_panel'), dailyRateReference = document.getElementById('b_daily_rate_reference'), rateReset = document.getElementById('b_rate_reset'), suggestedEl = document.getElementById('b_suggested_display'), payoutEl = document.getElementById('b_payout');
     if (netEl)
         netEl.textContent = fmtWeight(net);
     if (rateLabel)
-        rateLabel.textContent = rateOverridden ? 'Buying rate override (this item only)' : karat && customPurityFromKey(karat) !== null ? `Buying rate (${gradeLabel(metal, karat)} × ${metal} base)` : 'Buying rate (uses Daily Rate Setup)';
+        rateLabel.textContent = rateOverridden ? 'Buying rate override (this item only)' : !rateOverrideAllowed ? 'Buying rate (Daily Rate Setup · locked)' : karat && customPurityFromKey(karat) !== null ? `Buying rate (${gradeLabel(metal, karat)} × ${metal} base)` : 'Buying rate (uses Daily Rate Setup)';
     ratePanel?.classList.toggle('is-overridden', rateOverridden);
     if (dailyRateReference)
         dailyRateReference.textContent = `Daily rate: ${fmtMoney(systemRate)}/g`;
@@ -2513,12 +2525,12 @@ function purchaseItemFromForm() {
     }
     const rateObj = activeRate(metal, karat);
     const systemRate = rateObj ? roundPeso(rateObj.rate) : 0;
-    const rate = roundPeso(Number(val('b_rate')));
+    const rate = canOverrideBuyingRate() ? roundPeso(Number(val('b_rate'))) : systemRate;
     if (!Number.isFinite(rate) || rate <= 0) {
         toast('Enter a valid buying rate');
         return null;
     }
-    const rateOverridden = Boolean(rateObj && rate !== systemRate);
+    const rateOverridden = Boolean(canOverrideBuyingRate() && rateObj && rate !== systemRate);
     const suggested = roundPeso(net * rate);
     const payoutInput = val('b_payout');
     const payout = payoutInput ? roundPeso(parseFloat(payoutInput)) : suggested;
