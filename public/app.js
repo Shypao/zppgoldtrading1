@@ -106,7 +106,7 @@ function ensureShape() {
     db.pricing.silver.overrides = db.pricing.silver.overrides || {};
     db.pricing.platinum = db.pricing.platinum || { base: 0, overrides: {} };
     db.pricing.platinum.overrides = db.pricing.platinum.overrides || {};
-    db.pricing.auto = Object.assign({ enabled: true, lastFetchDate: '', lastAppliedDate: '', lastFetchedAt: '', marketPhp: {}, goldSource: '', draft: null }, db.pricing.auto || {});
+    db.pricing.auto = Object.assign({ enabled: false, lastFetchDate: '', lastAppliedDate: '', lastFetchedAt: '', marketPhp: {}, goldSource: '', draft: null }, db.pricing.auto || {});
     db.pricing.gradeMultipliers = db.pricing.gradeMultipliers || {};
     db.pricing.dailyFormula = db.pricing.dailyFormula || { effectiveDate: '', baseRates: {} };
     db.pricing.dailyFormula.baseRates = db.pricing.dailyFormula.baseRates || {};
@@ -217,7 +217,7 @@ function seedEmptyLedger() {
         gold: { base: 8500, overrides: {} },
         silver: { base: 105, overrides: {} },
         platinum: { base: 2450, overrides: {} },
-        auto: { enabled: true, lastFetchDate: '', lastAppliedDate: '', lastFetchedAt: '', usdPhp: 0, spotUsd: {}, draft: null },
+        auto: { enabled: false, lastFetchDate: '', lastAppliedDate: '', lastFetchedAt: '', usdPhp: 0, spotUsd: {}, draft: null },
         dailyFormula: { effectiveDate: todayStr(), baseRates: { Gold: 8500, Silver: 105, Platinum: 2450 } },
         featured: { metal: 'Gold', key: '18K-BUO', low: 6360, high: 6560 }
     };
@@ -254,8 +254,6 @@ async function loadDB() {
                 await saveDB();
             }
             boot();
-            if (isAdmin() && db.pricing.auto.enabled && db.pricing.auto.lastAppliedDate !== todayStr())
-                refreshPhilippineRates(true);
             return;
         }
         ledgerDB = await openLedgerDB();
@@ -288,8 +286,6 @@ async function loadDB() {
         ensureShape();
     }
     boot();
-    if (isAdmin() && db.pricing.auto.enabled && db.pricing.auto.lastAppliedDate !== todayStr())
-        refreshPhilippineRates(true);
 }
 function isAdmin() { return currentUser?.role === 'admin'; }
 function allowedTabs() { return TABS.filter(tab => isAdmin() || tab.staff); }
@@ -636,7 +632,6 @@ function visiblePricingHistory() {
         return true;
     });
 }
-async function setAutoEnabled(checked) { db.pricing.auto.enabled = checked; await savePricingDB(); render(); }
 function overrideEditorId(metal, key) { return metal + '|' + key; }
 function beginOverride(metal, key) {
     const id = overrideEditorId(metal, key);
@@ -741,83 +736,6 @@ function boot() {
     nav.innerHTML = allowedTabs().map(t => `<button data-tab="${t.id}" class="${t.id === currentTab ? 'active' : ''}" onclick="goTab('${t.id}')"><span class="dot"></span>${t.label}</button>`).join('');
     document.getElementById('pageDate').textContent = fmtDate(todayStr());
     render();
-    startAutomaticPricing();
-}
-let automaticPricingTimer = null;
-let sharedPricingSyncBusy = false;
-const LIVE_SYNC_INTERVAL_MS = 60 * 60 * 1000;
-async function syncSharedPricing() {
-    if (sharedPricingSyncBusy || isAdmin() || !(location.protocol === 'http:' || location.protocol === 'https:'))
-        return;
-    sharedPricingSyncBusy = true;
-    try {
-        const previousPricing = JSON.stringify(db.pricing);
-        const buyingMetal = currentTab === 'buying' ? val('b_metal') : '';
-        const buyingKarat = currentTab === 'buying' ? selectedBuyingGrade() : '';
-        const buyingRateInput = document.getElementById('b_rate');
-        const buyingRateOverridden = buyingDraftForm.b_rate_overridden === 'true';
-        const response = await fetch('/api/pricing', { cache: 'no-store' });
-        if (response.status === 401) {
-            showLogin();
-            return;
-        }
-        const result = await response.json().catch(() => null);
-        if (!response.ok)
-            throw new Error(result?.error || 'Pricing sync failed');
-        if (Number.isInteger(result?.revision))
-            db._revision = result.revision;
-        if (!result?.pricing || JSON.stringify(result.pricing) === previousPricing)
-            return;
-        db.pricing = result.pricing;
-        ensureShape();
-        if (currentTab === 'rates') {
-            const editingRateField = document.activeElement?.matches('input,select,textarea');
-            if (!editingRateField)
-                render();
-        }
-        else if (currentTab === 'buying' && buyingRateInput && !buyingRateOverridden) {
-            const currentRate = buyingMetal && buyingKarat ? roundPeso(activeRate(buyingMetal, buyingKarat)?.rate) : 0;
-            buyingRateInput.value = currentRate ? String(currentRate) : '';
-            buyingDraftForm.b_rate = buyingRateInput.value;
-            buyingDraftForm.b_rate_overridden = 'false';
-            recalcBuying();
-            scheduleBuyingDraftSave();
-        }
-    }
-    catch (error) {
-        console.error('Shared pricing sync failed', error);
-    }
-    finally {
-        sharedPricingSyncBusy = false;
-    }
-}
-function startAutomaticPricing() {
-    if (automaticPricingTimer)
-        return;
-    automaticPricingTimer = setInterval(() => {
-        if (!currentUser || document.hidden)
-            return;
-        if (isAdmin()) {
-            if (db.pricing.auto.enabled)
-                refreshPhilippineRates(true);
-        }
-        else if (currentTab === 'rates' || currentTab === 'buying') {
-            syncSharedPricing();
-        }
-    }, LIVE_SYNC_INTERVAL_MS);
-    document.addEventListener('visibilitychange', () => {
-        if (!currentUser || document.hidden)
-            return;
-        if (currentTab === 'buying')
-            syncCashflow();
-        if (isAdmin()) {
-            if (db.pricing.auto.enabled)
-                refreshPhilippineRates(true);
-        }
-        else {
-            syncSharedPricing();
-        }
-    });
 }
 function goTab(id) {
     if (!allowedTabs().some(tab => tab.id === id))
@@ -1116,12 +1034,11 @@ function renderRates() {
   <section class="auto-panel">
     <div class="auto-panel-head">
       <div>
-        <h3>Automatic Philippine internet pricing</h3>
-        <div class="metal-section-desc" style="margin:0;">Philippine market prices are shown in PHP per gram and activated automatically. You can set today's exact PHP base rate for each metal.</div>
+        <h3>Philippine internet pricing</h3>
+        <div class="metal-section-desc" style="margin:0;">Rates stay unchanged until an administrator manually refreshes or edits them. You can set today's exact PHP base rate for each metal.</div>
         <div class="auto-status">${pricingFetchBusy ? '<span class="spinner"></span>Updating Philippine market data…' : `Last checked: ${esc(fetched)}${auto.goldSource ? ` · Gold source: ${esc(auto.goldSource)}` : ''}`}</div>
       </div>
       <div class="auto-controls">
-        <label class="switch-line"><input type="checkbox" ${auto.enabled ? 'checked' : ''} onchange="setAutoEnabled(this.checked)"> Update automatically every hour</label>
         <button class="btn small" onclick="refreshPhilippineRates(false)" ${pricingFetchBusy ? 'disabled' : ''}>Refresh &amp; apply now</button>
         <button class="btn secondary small" onclick="openDailyBaseEditor('Gold')">Edit today's PHP base</button>
         <button class="btn secondary small" onclick="openGoldMultiplierEditor()">Edit Gold karat multipliers</button>
@@ -1194,7 +1111,7 @@ function renderStaffRates() {
     const fetched = db.pricing.auto.lastFetchedAt ? new Date(db.pricing.auto.lastFetchedAt).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'medium' }) : 'Not fetched yet';
     return `
   <section class="auto-panel">
-    <div class="auto-panel-head"><div><h3>Active buying rates</h3><div class="metal-section-desc" style="margin:0;">Live base pricing refreshes every hour. Staff may override individual grades when needed.</div><div class="auto-status">Effective date: ${fmtDate(db.pricing.effectiveDate)} · Last checked: ${esc(fetched)}</div></div></div>
+    <div class="auto-panel-head"><div><h3>Active buying rates</h3><div class="metal-section-desc" style="margin:0;">Rates are updated by an administrator and stay fixed until the next manual update. Staff may override individual grades when needed.</div><div class="auto-status">Effective date: ${fmtDate(db.pricing.effectiveDate)} · Last checked: ${esc(fetched)}</div></div></div>
   </section>
   <section class="metal-section">
     <div class="rate-section-title-row"><div class="metal-section-head"><span class="metal-dot gold"></span><h3>Gold</h3><span class="count">${GOLD_GRADES.length} grades</span></div>${renderRateDownloadButton()}</div>

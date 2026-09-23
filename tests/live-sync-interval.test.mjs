@@ -2,15 +2,14 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-test('live pricing refreshes hourly without idle cashflow polling', async () => {
+test('pricing updates only through the manual refresh action', async () => {
   const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 
-  assert.match(source, /const LIVE_SYNC_INTERVAL_MS = 60 \* 60 \* 1000;/);
-  assert.match(source, /\}, LIVE_SYNC_INTERVAL_MS\);/);
-  assert.match(source, /currentTab === 'rates' \|\| currentTab === 'buying'/);
-  assert.match(source, /Update automatically every hour/);
-  const automaticTimer = source.match(/automaticPricingTimer = setInterval\(\(\) => \{([\s\S]*?)\}, LIVE_SYNC_INTERVAL_MS\);/)?.[1] || '';
-  assert.doesNotMatch(automaticTimer, /syncCashflow\(\)/);
+  assert.doesNotMatch(source, /LIVE_SYNC_INTERVAL_MS/);
+  assert.doesNotMatch(source, /startAutomaticPricing/);
+  assert.doesNotMatch(source, /Update automatically every hour/);
+  assert.doesNotMatch(source, /refreshPhilippineRates\(true\)/);
+  assert.match(source, /Refresh &amp; apply now/);
   assert.doesNotMatch(source, /Automatic 5-second internet update/);
 });
 
