@@ -5698,8 +5698,9 @@ function openUserEdit(id) {
     <div class="field"><label>Username</label><input value="${esc(account.username)}" disabled><span class="hint">Usernames cannot be changed.</span></div>
     <div class="field"><label>Role and access</label><select id="edit_user_role"><option value="staff" ${account.role === 'staff' ? 'selected' : ''}>Staff — limited access</option><option value="admin" ${account.role === 'admin' ? 'selected' : ''}>Admin — full access</option></select></div>
     <div class="field"><label>Account status</label><select id="edit_user_active"><option value="true" ${account.active ? 'selected' : ''}>Active</option><option value="false" ${!account.active ? 'selected' : ''}>Disabled</option></select></div>
-    <div class="field span-2"><label>Reset password <span class="hint">optional</span></label><input id="edit_user_password" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current password"></div>
-  </div><p class="form-note">Role and status changes take effect on the server. A disabled user is signed out on their next request.</p>`, 'saveUserEdit', 'deleteUserRecord');
+    <div class="field"><label>New password <span class="hint">optional</span></label><input id="edit_user_password" type="password" autocomplete="new-password" placeholder="At least 8 characters"></div>
+    <div class="field"><label>Confirm new password</label><input id="edit_user_password_confirm" type="password" autocomplete="new-password" placeholder="Re-enter the new password"></div>
+  </div><p class="form-note">Leave both password fields blank to keep the current password. Changing your own password signs you out so you can verify the new one.</p>`, 'saveUserEdit', 'deleteUserRecord');
 }
 async function saveUserEdit() {
     if (!adminEditGuard())
@@ -5707,7 +5708,7 @@ async function saveUserEdit() {
     const account = userAccounts.find(user => user.id === editingUserId);
     if (!account)
         return;
-    const displayName = val('edit_user_name').trim(), role = val('edit_user_role'), active = val('edit_user_active') === 'true', password = val('edit_user_password');
+    const displayName = val('edit_user_name').trim(), role = val('edit_user_role'), active = val('edit_user_active') === 'true', password = val('edit_user_password'), passwordConfirm = val('edit_user_password_confirm');
     if (!displayName) {
         toast('Account holder name is required');
         return;
@@ -5716,12 +5717,21 @@ async function saveUserEdit() {
         toast('New password must be at least 8 characters');
         return;
     }
+    if (password !== passwordConfirm) {
+        toast('New passwords do not match');
+        return;
+    }
     try {
         const response = await fetch(`/api/users/${encodeURIComponent(account.id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ displayName, role, active, password }) });
         const result = await response.json();
         if (!response.ok)
             throw new Error(result.error || 'Could not update account');
         closeAdminEditModal();
+        if (currentUser?.id === account.id && password) {
+            await signOut();
+            toast('Password updated. Sign in again using the new password.');
+            return;
+        }
         if (currentUser?.id === account.id) {
             currentUser = { ...currentUser, displayName: result.user.displayName };
             showApp();
