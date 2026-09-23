@@ -692,8 +692,10 @@
   .customer-match-status.is-new{color:var(--brass-deep);}
   .buying-item-grid{grid-template-columns:repeat(5,minmax(135px,1fr));}
   .custom-purity-field{margin-top:10px;padding:10px;border-left:3px solid var(--brass);background:var(--gold-wash);}
-  .buying-grade-rate{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:5px;color:var(--ink-soft);font-size:10px;line-height:1.25;}
-  .rate-setup-link{all:unset;cursor:pointer;color:var(--brass-deep);font-size:10px;font-weight:700;text-decoration:underline;white-space:nowrap;}
+  .buying-grade-rate{margin-top:7px;color:var(--ink-soft);font-size:10px;line-height:1.25;}
+  .buying-grade-rate>label{display:block;margin-bottom:3px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;}
+  .buying-grade-rate>div{display:flex;align-items:center;gap:4px;}
+  .buying-grade-rate input{min-width:0;width:72px;padding:3px 5px;border:1px solid var(--line);background:var(--paper);color:var(--ink);font:700 11px 'Inter',sans-serif;font-variant-numeric:tabular-nums;}
   .custom-purity-field>label{display:block;margin-bottom:5px;font-size:10.5px;font-weight:700;color:var(--brass-deep);}
   .custom-purity-input{display:flex;align-items:center;gap:6px;}
   .custom-purity-input input{min-width:0;flex:1;background:var(--paper);}
@@ -1082,6 +1084,6 @@
   </main>
 </div>
 
-<script src="./app.js?v=20260923-buying-grade-rate-setup"></script>
+<script src="./app.js?v=20260923-buying-rate-override-box"></script>
 </body>
 </html>
