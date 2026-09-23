@@ -1813,7 +1813,7 @@ function renderBuying(){
           ${karats.length? karats.map(k=>`<option value="${k}" ${k===karatSelection?'selected':''}>${esc(gradeLabel(metal,k))}</option>`).join('') : `<option value="">No rate set</option>`}
           <option value="__custom__" ${customSelected?'selected':''}>Custom purity (%)</option>
         </select>
-        <div class="buying-grade-rate"><label for="b_grade_daily_rate">Daily Rate Setup</label><div><span>₱</span><input id="b_grade_daily_rate" type="text" value="${rateObj?esc(String(systemRate)):''}" placeholder="No rate set" readonly><span>/g</span></div></div>
+        <div class="buying-grade-rate"><label for="b_grade_daily_rate">Daily Rate Setup <span>(edit to override this buying item)</span></label><div><span>₱</span><input id="b_grade_daily_rate" type="number" min="1" step="1" value="${rateObj?esc(String(rate)):''}" placeholder="No rate set" onfocus="selectBuyingOverrideValue(this)" oninput="setBuyingRateFromGradeBox(this.value)"><span>/g</span></div></div>
         <div id="b_custom_purity_field" class="custom-purity-field ${customSelected?'':'is-hidden'}">
           <label for="b_custom_purity">Custom ${esc(metal)} purity (%)</label>
           <div class="custom-purity-input"><input id="b_custom_purity" type="number" min="0.01" max="100" step="0.01" value="${esc(customPurityValue)}" placeholder="Example: 89" oninput="resetBuyingRate();scheduleBuyingDraftSave()"><span>%</span></div>
@@ -1903,6 +1903,10 @@ function selectedBuyingGrade(){
 }
 function markBuyingRateOverride(){ buyingDraftForm.b_rate_overridden='true'; }
 function selectBuyingOverrideValue(input){ if(input?.value) input.select(); }
+function setBuyingRateFromGradeBox(value){
+  const rateInput=document.getElementById('b_rate'); if(rateInput) rateInput.value=value;
+  markBuyingRateOverride(); recalcBuying(); scheduleBuyingDraftSave();
+}
 function resetBuyingRate(){
   const metal=val('b_metal'),karat=selectedBuyingGrade(),active=karat?activeRate(metal,karat):null,input=document.getElementById('b_rate');
   if(input) input.value=active?String(roundPeso(active.rate)):'';
@@ -1919,7 +1923,7 @@ function recalcBuying(){
   buyingDraftForm.b_rate_overridden=rateOverridden?'true':'false';
   const netEl=document.getElementById('b_net_display'),rateLabel=document.getElementById('b_rate_label'),gradeDailyRate=document.getElementById('b_grade_daily_rate'),ratePanel=document.getElementById('b_rate_panel'),dailyRateReference=document.getElementById('b_daily_rate_reference'),rateReset=document.getElementById('b_rate_reset'),suggestedEl=document.getElementById('b_suggested_display'),payoutEl=document.getElementById('b_payout');
   if(netEl) netEl.textContent=fmtWeight(net);
-  if(gradeDailyRate) gradeDailyRate.value=rateObj?String(systemRate):'';
+  if(gradeDailyRate) gradeDailyRate.value=rateObj?String(rate):'';
   if(rateLabel) rateLabel.textContent=rateOverridden?'Buying rate override (this item only)':karat&&customPurityFromKey(karat)!==null?`Buying rate (${gradeLabel(metal,karat)} × ${metal} base)`:'Buying rate (uses Daily Rate Setup)';
   ratePanel?.classList.toggle('is-overridden',rateOverridden);
   if(dailyRateReference) dailyRateReference.textContent=`Daily rate: ${fmtMoney(systemRate)}/g`;
