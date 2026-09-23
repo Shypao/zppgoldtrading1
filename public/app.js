@@ -110,6 +110,7 @@ function ensureShape() {
     db.pricing.gradeMultipliers = db.pricing.gradeMultipliers || {};
     db.pricing.dailyFormula = db.pricing.dailyFormula || { effectiveDate: '', baseRates: {} };
     db.pricing.dailyFormula.baseRates = db.pricing.dailyFormula.baseRates || {};
+    db.pricing.staffRateEditingUnlocked = Boolean(db.pricing.staffRateEditingUnlocked);
 }
 function openLedgerDB() {
     return new Promise((resolve, reject) => {
@@ -185,7 +186,7 @@ async function saveDB() {
     }
 }
 async function savePricingDB(includeHistory = false) {
-    if (!isAdmin() || !(location.protocol === 'http:' || location.protocol === 'https:'))
+    if (!(location.protocol === 'http:' || location.protocol === 'https:'))
         return saveDB();
     try {
         ensureShape();
@@ -219,6 +220,7 @@ function seedEmptyLedger() {
         platinum: { base: 2450, overrides: {} },
         auto: { enabled: false, lastFetchDate: '', lastAppliedDate: '', lastFetchedAt: '', usdPhp: 0, spotUsd: {}, draft: null },
         dailyFormula: { effectiveDate: todayStr(), baseRates: { Gold: 8500, Silver: 105, Platinum: 2450 } },
+        staffRateEditingUnlocked: false,
         featured: { metal: 'Gold', key: '18K-BUO', low: 6360, high: 6560 }
     };
     db.pricingHistory = [{ id: uid('rate'), ts: Date.now(), effectiveDate: todayStr(), enteredBy: 'Admin', snapshot: JSON.parse(JSON.stringify(db.pricing)) }];
@@ -288,6 +290,8 @@ async function loadDB() {
     boot();
 }
 function isAdmin() { return currentUser?.role === 'admin'; }
+function staffRateEditingUnlocked() { return db.pricing?.staffRateEditingUnlocked === true; }
+function canEditDailyRates() { return isAdmin() || staffRateEditingUnlocked(); }
 function allowedTabs() { return TABS.filter(tab => isAdmin() || tab.staff); }
 function showLogin() {
     currentUser = null;
@@ -526,6 +530,15 @@ async function setSilver925Base(value) {
         toast('Silver 925 basis rate updated for today');
     }
 }
+async function toggleStaffRateEditing() {
+    if (!isAdmin())
+        return;
+    db.pricing.staffRateEditingUnlocked = !staffRateEditingUnlocked();
+    if (await savePricingDB()) {
+        render();
+        toast(db.pricing.staffRateEditingUnlocked ? 'Staff can now edit daily buying rates' : 'Staff daily buying-rate editing is locked');
+    }
+}
 async function setOverride(metal, key, value) {
     const b = bucketFor(metal);
     if (value === '') {
@@ -534,12 +547,12 @@ async function setOverride(metal, key, value) {
     else {
         b.overrides[key] = roundPeso(parseFloat(value));
     }
-    await (isAdmin() ? savePricingDB() : saveDB());
+    await savePricingDB();
     render();
 }
 async function resetOverride(metal, key) {
     delete bucketFor(metal).overrides[key];
-    await (isAdmin() ? savePricingDB() : saveDB());
+    await savePricingDB();
     render();
 }
 async function setFeatured(metal, key, low, high, remarks = '') {
@@ -1025,8 +1038,9 @@ function tableOrEmpty(rows, rowFn, headers, emptyMsg) {
 }
 /* ============================= RATES ============================= */
 function renderRates() {
-    if (!isAdmin())
+    if (!canEditDailyRates())
         return renderStaffRates();
+    const admin = isAdmin(), staffUnlocked = staffRateEditingUnlocked();
     const goldGrid = GOLD_GRADES.filter(g => g.key !== '24K');
     const auto = db.pricing.auto;
     const fetched = auto.lastFetchedAt ? new Date(auto.lastFetchedAt).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'medium' }) : 'Not fetched yet';
@@ -1034,14 +1048,16 @@ function renderRates() {
   <section class="auto-panel">
     <div class="auto-panel-head">
       <div>
-        <h3>Philippine internet pricing</h3>
-        <div class="metal-section-desc" style="margin:0;">Rates stay unchanged until an administrator manually refreshes or edits them. You can set today's exact PHP base rate for each metal.</div>
+        <h3>${admin ? 'Philippine internet pricing' : 'Daily buying rates'}</h3>
+        <div class="metal-section-desc" style="margin:0;">${admin ? 'Rates stay unchanged until an administrator manually refreshes or edits them. You can set today\'s exact PHP base rate for each metal.' : 'An administrator has temporarily unlocked daily buying-rate editing for staff. Changes apply immediately to new purchases.'}</div>
         <div class="auto-status">${pricingFetchBusy ? '<span class="spinner"></span>Updating Philippine market data…' : `Last checked: ${esc(fetched)}${auto.goldSource ? ` · Gold source: ${esc(auto.goldSource)}` : ''}`}</div>
       </div>
       <div class="auto-controls">
+        ${admin ? `<button class="btn secondary small" onclick="toggleStaffRateEditing()">${staffUnlocked ? 'Lock staff rate editing' : 'Unlock staff rate editing'}</button>` : ''}
+        ${admin ? `
         <button class="btn small" onclick="refreshPhilippineRates(false)" ${pricingFetchBusy ? 'disabled' : ''}>Refresh &amp; apply now</button>
         <button class="btn secondary small" onclick="openDailyBaseEditor('Gold')">Edit today's PHP base</button>
-        <button class="btn secondary small" onclick="openGoldMultiplierEditor()">Edit Gold karat multipliers</button>
+        <button class="btn secondary small" onclick="openGoldMultiplierEditor()">Edit Gold karat multipliers</button>` : ''}
       </div>
     </div>
     <div class="stat-row" style="margin-top:16px">
@@ -1062,7 +1078,7 @@ function renderRates() {
         <div class="base-label">24K rate — pure gold</div>
         <div class="base-input"><span>₱</span><input type="text" inputmode="numeric" value="${roundPeso(configuredBaseRate('Gold')) || ''}" onchange="setBase('Gold', this.value)"></div>
       </div>
-      ${renderFeaturedBox()}
+      ${admin ? renderFeaturedBox() : ''}
     </div>
     <div class="grade-grid">${goldGrid.map(g => renderGradeCard('Gold', g.key, g.label)).join('')}</div>
   </section>
@@ -1093,7 +1109,7 @@ function renderRates() {
     <div class="grade-grid">${PLATINUM_GRADES.map(g => renderGradeCard('Platinum', g.key, g.label)).join('')}</div>
   </section>
 
-  <section class="block">
+  ${admin ? `<section class="block">
     <h2 class="block-title">Save today's rate sheet</h2>
     <div class="form-grid">
       <div class="field"><label>Effective date</label><input id="px_date" type="date" value="${db.pricing.effectiveDate || todayStr()}"></div>
@@ -1103,7 +1119,7 @@ function renderRates() {
       <button class="btn" onclick="savePricingSnapshot()">Save rate sheet</button>
       <span class="form-note">Rates above already apply to new purchases as you edit them. Saving records this sheet in the audit history below.</span>
     </div>
-  </section>
+  </section>` : ''}
 
   `;
 }
@@ -1111,7 +1127,7 @@ function renderStaffRates() {
     const fetched = db.pricing.auto.lastFetchedAt ? new Date(db.pricing.auto.lastFetchedAt).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'medium' }) : 'Not fetched yet';
     return `
   <section class="auto-panel">
-    <div class="auto-panel-head"><div><h3>Active buying rates</h3><div class="metal-section-desc" style="margin:0;">Rates are updated by an administrator and stay fixed until the next manual update. Staff may override individual grades when needed.</div><div class="auto-status">Effective date: ${fmtDate(db.pricing.effectiveDate)} · Last checked: ${esc(fetched)}</div></div></div>
+    <div class="auto-panel-head"><div><h3>Active buying rates</h3><div class="metal-section-desc" style="margin:0;">Rates are locked by an administrator. Ask an administrator to unlock daily buying-rate editing when a staff update is needed.</div><div class="auto-status">Effective date: ${fmtDate(db.pricing.effectiveDate)} · Last checked: ${esc(fetched)}</div></div></div>
   </section>
   <section class="metal-section">
     <div class="rate-section-title-row"><div class="metal-section-head"><span class="metal-dot gold"></span><h3>Gold</h3><span class="count">${GOLD_GRADES.length} grades</span></div>${renderRateDownloadButton()}</div>
@@ -1414,10 +1430,11 @@ function renderGradeCard(metal, key, label) {
     const ov = isOverridden(metal, key);
     const editing = overrideEditors.has(overrideEditorId(metal, key));
     const rate = metalRate(metal, key);
-    const rateControl = editing || ov
+    const editable = canEditDailyRates();
+    const rateControl = editable && (editing || ov)
         ? `<input data-rate-editor="${metal}-${key}" type="text" inputmode="decimal" value="${rate}" onchange="commitOverride('${metal}','${key}', this.value)">`
         : `<span class="gc-value">${rate}</span>`;
-    const rateAction = ov ? `<span class="ov-tag">overridden</span> · <button onclick="resetOverride('${metal}','${key}')">reset PHP rate</button>` : editing ? `<button onclick="cancelOverride('${metal}','${key}')">cancel override</button>` : `<button onclick="beginOverride('${metal}','${key}')">Override PHP rate</button>`;
+    const rateAction = !editable ? '<span class="form-note">Locked by administrator</span>' : ov ? `<span class="ov-tag">overridden</span> · <button onclick="resetOverride('${metal}','${key}')">reset PHP rate</button>` : editing ? `<button onclick="cancelOverride('${metal}','${key}')">cancel override</button>` : `<button onclick="beginOverride('${metal}','${key}')">Override PHP rate</button>`;
     return `<div class="grade-card ${ov ? 'is-override' : ''}">
     <div class="gc-top"><span>${esc(label)}</span>${metal === 'Gold' ? `<span>×${configuredGradeMultiplier(metal, key).toFixed(3)}</span>` : ''}</div>
     <div class="gc-rate"><span class="unit">₱</span>${rateControl}<span class="unit">/g</span></div>
@@ -1426,7 +1443,7 @@ function renderGradeCard(metal, key, label) {
 }
 let formulaEditTarget = null;
 function openDailyBaseEditor(metal) {
-    if (!adminEditGuard())
+    if (!canEditDailyRates())
         return;
     if (!GRADES[metal])
         return;
@@ -1466,7 +1483,7 @@ function updateGradeFormulaPreview() {
 function closeGradeFormulaEditor() { document.getElementById('formula_edit_modal')?.remove(); formulaEditTarget = null; }
 async function saveGradeFormula(event) {
     event.preventDefault();
-    if (!formulaEditTarget || !adminEditGuard())
+    if (!formulaEditTarget || !canEditDailyRates())
         return;
     const baseRate = roundPeso(Number(val('formula_base_rate')));
     if (!Number.isFinite(baseRate) || baseRate <= 0) {
@@ -1493,7 +1510,7 @@ async function saveGradeFormula(event) {
     }
 }
 async function resetGradeFormula() {
-    if (!formulaEditTarget || !adminEditGuard())
+    if (!formulaEditTarget || !canEditDailyRates())
         return;
     const { metal } = formulaEditTarget;
     if (db.pricing.dailyFormula?.baseRates)

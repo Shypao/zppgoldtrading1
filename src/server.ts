@@ -193,6 +193,7 @@ function defaultPricingSettings(): PricingSettings {
     platinum:{base:2450,overrides:{}},
     auto:{enabled:true,lastFetchDate:'',lastAppliedDate:'',lastFetchedAt:'',usdPhp:0,spotUsd:{},draft:null},
     dailyFormula:{effectiveDate,baseRates:{Gold:8500,Silver:105,Platinum:2450}},
+    staffRateEditingUnlocked:false,
     featured:{metal:'Gold',key:'18K-BUO',low:6360,high:6560}
   } as PricingSettings;
 }
@@ -755,6 +756,36 @@ async function savePricingState(pricing: PricingSettings, pricingHistory?: Ledge
   return nextRevision;
 }
 
+function staffEditablePricing(currentPricing: PricingSettings, candidatePricing: PricingSettings): PricingSettings {
+  const current = JSON.parse(JSON.stringify(currentPricing)) as Record<string, any>;
+  const candidate = JSON.parse(JSON.stringify(candidatePricing)) as Record<string, any>;
+  if (current.staffRateEditingUnlocked !== true) throw new Error('Daily buying rates are locked by an administrator');
+  const metals = ['gold', 'silver', 'platinum'];
+  const permittedBaseRates = new Set(['Gold', 'Silver', 'Platinum', 'Silver925']);
+  const candidateFormula = candidate.dailyFormula ?? { effectiveDate: '', baseRates: {} };
+  const candidateBaseRates = candidateFormula.baseRates ?? {};
+  if (typeof candidateFormula.effectiveDate !== 'string' || !candidateFormula.effectiveDate ||
+      Object.entries(candidateBaseRates).some(([metal, value]) => !permittedBaseRates.has(metal) || !Number.isFinite(Number(value)) || Number(value) <= 0)) {
+    throw new Error('Invalid staff daily buying rate');
+  }
+  const immutableCandidate = JSON.parse(JSON.stringify(candidate)) as Record<string, any>;
+  const immutableCurrent = JSON.parse(JSON.stringify(current)) as Record<string, any>;
+  delete immutableCandidate.dailyFormula; delete immutableCurrent.dailyFormula;
+  for (const metal of metals) {
+    immutableCandidate[metal] = immutableCandidate[metal] ?? {};
+    immutableCurrent[metal] = immutableCurrent[metal] ?? {};
+    delete immutableCandidate[metal].overrides;
+    delete immutableCurrent[metal].overrides;
+  }
+  if (JSON.stringify(immutableCandidate) !== JSON.stringify(immutableCurrent)) {
+    throw new Error('Staff may only edit daily buying rates');
+  }
+  const next = JSON.parse(JSON.stringify(current)) as Record<string, any>;
+  next.dailyFormula = { effectiveDate: candidateFormula.effectiveDate, baseRates: candidateBaseRates };
+  for (const metal of metals) next[metal].overrides = candidate[metal]?.overrides ?? {};
+  return next as PricingSettings;
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { headers: { 'User-Agent': 'ZPP-Gold-Trading/1.0' } });
   if (!response.ok) throw new Error(`Market provider returned HTTP ${response.status}`);
@@ -989,7 +1020,6 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
       return sendJson(response, 200, { pricing: state.pricing, revision: state._revision });
     }
     if (request.method === 'PUT' && url.pathname === '/api/pricing') {
-      if (user!.role !== 'admin') return sendJson(response, 403, { error: 'Administrator access required' });
       const body = await readJsonBody(request) as Record<string, unknown>;
       const pricing = body.pricing;
       const pricingHistory = body.pricingHistory;
@@ -999,10 +1029,12 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
       if (pricingHistory !== undefined && (!Array.isArray(pricingHistory) || pricingHistory.some(record => !record || typeof record !== 'object'))) {
         return sendJson(response, 400, { error: 'Invalid pricing history' });
       }
-      const revision = await savePricingState(
-        pricing as PricingSettings,
-        pricingHistory as LedgerRecord[] | undefined
-      );
+      if (user!.role !== 'admin' && pricingHistory !== undefined) return sendJson(response, 403, { error: 'Only administrators can save rate-sheet history' });
+      const current = await loadState();
+      const nextPricing = user!.role === 'admin'
+        ? pricing as PricingSettings
+        : staffEditablePricing(current.pricing as PricingSettings, pricing as PricingSettings);
+      const revision = await savePricingState(nextPricing, user!.role === 'admin' ? pricingHistory as LedgerRecord[] | undefined : undefined);
       return sendJson(response, 200, { ok: true, revision });
     }
     if (request.method === 'GET' && url.pathname === '/api/buying-draft') {
