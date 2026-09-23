@@ -1329,6 +1329,8 @@ test('buying form preserves an intentional per-item rate override', async () => 
 
   const html=api.renderBuying();
   assert.match(html, /id="b_rate"[^>]*value="6200"/);
+  assert.match(html, /id="b_rate"[^>]*onfocus="selectBuyingOverrideValue\(this\)"/);
+  assert.match(html, /id="b_payout"[^>]*onfocus="selectBuyingOverrideValue\(this\)"/);
   assert.match(html, /class="buying-rate is-overridden"/);
 });
 
