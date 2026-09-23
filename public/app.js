@@ -2355,7 +2355,7 @@ function renderBuying() {
 
         <div class="payout-calculator">
           <div><span>Net weight</span><strong id="b_net_display">${fmtWeight(net)}</strong></div>
-          <div class="buying-rate ${rateOverridden ? 'is-overridden' : ''}" id="b_rate_panel"><label id="b_rate_label" for="b_rate">Buying rate (Daily Rate Setup)</label><div><span>₱</span><input id="b_rate" type="number" min="1" step="1" value="${rateObj ? rate : ''}" placeholder="0" onfocus="selectBuyingOverrideValue(this)" oninput="markBuyingRateOverride();recalcBuying();scheduleBuyingDraftSave()"><span>/g</span></div><button type="button" id="b_rate_reset" class="rate-reset ${rateOverridden ? '' : 'is-hidden'}" onclick="resetBuyingRate();scheduleBuyingDraftSave()">Use daily rate</button><label class="continue-rate-override"><input id="b_continue_rate_override" type="checkbox" ${buyingDraftForm.b_continue_rate_override === 'true' ? 'checked' : ''} onchange="scheduleBuyingDraftSave()"> Continue using this overridden rate for next items</label></div>
+          <div class="buying-rate ${rateOverridden ? 'is-overridden' : ''}" id="b_rate_panel"><label id="b_rate_label" for="b_rate">Buying rate (Daily Rate Setup)</label><div><span>₱</span><input id="b_rate" type="number" min="1" step="1" value="${rateObj ? rate : ''}" placeholder="0" onfocus="selectBuyingOverrideValue(this)" oninput="markBuyingRateOverride();recalcBuying();scheduleBuyingDraftSave()"><span>/g</span></div><span id="b_daily_rate_reference" class="daily-rate-reference ${rateOverridden ? '' : 'is-hidden'}">Daily rate: ${fmtMoney(systemRate)}/g</span><button type="button" id="b_rate_reset" class="rate-reset ${rateOverridden ? '' : 'is-hidden'}" onclick="resetBuyingRate();scheduleBuyingDraftSave()">Use daily rate</button><label class="continue-rate-override"><input id="b_continue_rate_override" type="checkbox" ${buyingDraftForm.b_continue_rate_override === 'true' ? 'checked' : ''} onchange="scheduleBuyingDraftSave()"> Continue using this overridden rate for next items</label></div>
           <div class="suggested"><span>Calculated amount</span><strong id="b_suggested_display">${fmtMoney(suggested)}</strong></div>
           <div class="final-payout"><label for="b_payout">Final payout</label><div><span>₱</span><input id="b_payout" type="number" min="0" step="1" value="${esc(buyingDraftValue('b_payout'))}" placeholder="${suggested}" onfocus="selectBuyingOverrideValue(this)" oninput="scheduleBuyingDraftSave()"></div></div>
         </div>
@@ -2454,12 +2454,15 @@ function recalcBuying() {
     const rateInput = document.getElementById('b_rate'), enteredRate = Number(rateInput?.value), rate = rateInput?.value !== '' && Number.isFinite(enteredRate) ? roundPeso(enteredRate) : 0;
     const rateOverridden = Boolean(rateObj && Number.isFinite(rate) && rate !== systemRate);
     buyingDraftForm.b_rate_overridden = rateOverridden ? 'true' : 'false';
-    const netEl = document.getElementById('b_net_display'), rateLabel = document.getElementById('b_rate_label'), ratePanel = document.getElementById('b_rate_panel'), rateReset = document.getElementById('b_rate_reset'), suggestedEl = document.getElementById('b_suggested_display'), payoutEl = document.getElementById('b_payout');
+    const netEl = document.getElementById('b_net_display'), rateLabel = document.getElementById('b_rate_label'), ratePanel = document.getElementById('b_rate_panel'), dailyRateReference = document.getElementById('b_daily_rate_reference'), rateReset = document.getElementById('b_rate_reset'), suggestedEl = document.getElementById('b_suggested_display'), payoutEl = document.getElementById('b_payout');
     if (netEl)
         netEl.textContent = fmtWeight(net);
     if (rateLabel)
         rateLabel.textContent = rateOverridden ? 'Buying rate (overridden)' : karat && customPurityFromKey(karat) !== null ? `Buying rate (${gradeLabel(metal, karat)} × ${metal} base)` : 'Buying rate (Daily Rate Setup)';
     ratePanel?.classList.toggle('is-overridden', rateOverridden);
+    if (dailyRateReference)
+        dailyRateReference.textContent = `Daily rate: ${fmtMoney(systemRate)}/g`;
+    dailyRateReference?.classList.toggle('is-hidden', !rateOverridden);
     rateReset?.classList.toggle('is-hidden', !rateOverridden);
     const suggested = roundPeso(net * rate);
     if (suggestedEl)
