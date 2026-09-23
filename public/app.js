@@ -2207,10 +2207,10 @@ function buyingDraftValue(key, fallback = '') {
     return element ? element.value : String(buyingDraftForm[key] ?? fallback);
 }
 function captureBuyingDraftForm() {
-    ['b_seller_name', 'b_date', 'b_pay', 'b_metal', 'b_itemtype', 'b_karat', 'b_custom_purity', 'b_gross', 'b_ded', 'b_rate', 'b_payout', 'b_staff', 'b_status', 'b_remarks'].forEach(key => {
+    ['b_seller_name', 'b_date', 'b_pay', 'b_metal', 'b_itemtype', 'b_karat', 'b_custom_purity', 'b_gross', 'b_ded', 'b_rate', 'b_payout', 'b_staff', 'b_status', 'b_remarks', 'b_continue_rate_override'].forEach(key => {
         const element = document.getElementById(key);
         if (element)
-            buyingDraftForm[key] = element.value;
+            buyingDraftForm[key] = element.type === 'checkbox' ? (element.checked ? 'true' : 'false') : element.value;
     });
 }
 async function loadBuyingDraft() {
@@ -2269,8 +2269,11 @@ async function clearBuyingDraft() {
     buyingDraftForm = {};
     buyingDraftSavedDate = '';
     buyingDraftLoaded = true;
-    const defaults = { b_seller_name: '', b_date: '', b_pay: 'Cash', b_metal: 'Gold', b_itemtype: 'Scrap', b_karat: '', b_custom_purity: '', b_gross: '', b_ded: '', b_rate: '', b_payout: '', b_staff: '', b_status: 'Available', b_remarks: '' };
-    Object.entries(defaults).forEach(([id, value]) => { const input = document.getElementById(id); if (input)
+    const defaults = { b_seller_name: '', b_date: '', b_pay: 'Cash', b_metal: 'Gold', b_itemtype: 'Scrap', b_karat: '', b_custom_purity: '', b_gross: '', b_ded: '', b_rate: '', b_payout: '', b_staff: '', b_status: 'Available', b_remarks: '', b_continue_rate_override: 'false' };
+    Object.entries(defaults).forEach(([id, value]) => { const input = document.getElementById(id); if (!input)
+        return; if (input.type === 'checkbox')
+        input.checked = value === 'true';
+    else
         input.value = value; });
     try {
         await fetch('/api/buying-draft', { method: 'DELETE' });
@@ -2352,7 +2355,7 @@ function renderBuying() {
 
         <div class="payout-calculator">
           <div><span>Net weight</span><strong id="b_net_display">${fmtWeight(net)}</strong></div>
-          <div class="buying-rate ${rateOverridden ? 'is-overridden' : ''}" id="b_rate_panel"><label id="b_rate_label" for="b_rate">Buying rate (Daily Rate Setup)</label><div><span>₱</span><input id="b_rate" type="number" min="1" step="1" value="${rateObj ? rate : ''}" placeholder="0" onfocus="selectBuyingOverrideValue(this)" oninput="markBuyingRateOverride();recalcBuying();scheduleBuyingDraftSave()"><span>/g</span></div><button type="button" id="b_rate_reset" class="rate-reset ${rateOverridden ? '' : 'is-hidden'}" onclick="resetBuyingRate();scheduleBuyingDraftSave()">Use daily rate</button></div>
+          <div class="buying-rate ${rateOverridden ? 'is-overridden' : ''}" id="b_rate_panel"><label id="b_rate_label" for="b_rate">Buying rate (Daily Rate Setup)</label><div><span>₱</span><input id="b_rate" type="number" min="1" step="1" value="${rateObj ? rate : ''}" placeholder="0" onfocus="selectBuyingOverrideValue(this)" oninput="markBuyingRateOverride();recalcBuying();scheduleBuyingDraftSave()"><span>/g</span></div><button type="button" id="b_rate_reset" class="rate-reset ${rateOverridden ? '' : 'is-hidden'}" onclick="resetBuyingRate();scheduleBuyingDraftSave()">Use daily rate</button><label class="continue-rate-override"><input id="b_continue_rate_override" type="checkbox" ${buyingDraftForm.b_continue_rate_override === 'true' ? 'checked' : ''} onchange="scheduleBuyingDraftSave()"> Continue using this overridden rate for next items</label></div>
           <div class="suggested"><span>Calculated amount</span><strong id="b_suggested_display">${fmtMoney(suggested)}</strong></div>
           <div class="final-payout"><label for="b_payout">Final payout</label><div><span>₱</span><input id="b_payout" type="number" min="0" step="1" value="${esc(buyingDraftValue('b_payout'))}" placeholder="${suggested}" onfocus="selectBuyingOverrideValue(this)" oninput="scheduleBuyingDraftSave()"></div></div>
         </div>
@@ -2439,6 +2442,10 @@ function resetBuyingRate() {
     if (input)
         input.value = active ? String(roundPeso(active.rate)) : '';
     buyingDraftForm.b_rate_overridden = 'false';
+    buyingDraftForm.b_continue_rate_override = 'false';
+    const continueOverride = document.getElementById('b_continue_rate_override');
+    if (continueOverride)
+        continueOverride.checked = false;
     recalcBuying();
 }
 function recalcBuying() {
@@ -2500,6 +2507,7 @@ async function addPurchaseItem() {
     if (!item)
         return;
     captureBuyingDraftForm();
+    const keepOverriddenRate = item.rateOverridden && buyingDraftForm.b_continue_rate_override === 'true';
     purchaseBatch.push(item);
     ['b_gross', 'b_ded', 'b_payout', 'b_remarks'].forEach(id => { const e = document.getElementById(id); if (e)
         e.value = ''; });
@@ -2507,7 +2515,16 @@ async function addPurchaseItem() {
     buyingDraftForm.b_ded = '';
     buyingDraftForm.b_payout = '';
     buyingDraftForm.b_remarks = '';
-    resetBuyingRate();
+    if (keepOverriddenRate) {
+        const rateInput = document.getElementById('b_rate');
+        if (rateInput)
+            rateInput.value = String(item.rate);
+        buyingDraftForm.b_rate = String(item.rate);
+        buyingDraftForm.b_rate_overridden = 'true';
+        recalcBuying();
+    }
+    else
+        resetBuyingRate();
     renderPurchaseBatchPanel();
     await saveBuyingDraft();
     toast(`${item.metal} ${gradeLabel(item.metal, item.karat)} added to current payout`);
