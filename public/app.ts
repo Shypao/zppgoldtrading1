@@ -2499,6 +2499,7 @@ function inventoryDisplayRows(records){
     const composition=inventoryPoolComposition(snapshot.items);
     const types=Array.from(new Set(snapshot.items.map(source=>source.itemType).filter(Boolean)));
     const dates=snapshot.items.map(source=>source.date).filter(Boolean).sort();
+    const recordedAt=snapshot.items.map(source=>String(source.recordedAt||source.date||'')).filter(Boolean).sort().at(-1)||'';
     rows.push({
       id:pool.id,
       date:dates.at(-1)||String(pool.createdAt||'').slice(0,10)||todayStr(),
@@ -2510,12 +2511,14 @@ function inventoryDisplayRows(records){
       currentWeight:snapshot.weight,
       cost:snapshot.cost,
       remarks:pool.notes||`${pool.itemIds.length} pooled inventory records`,
+      recordedAt,
       inventoryPoolId:pool.id,
       isInventoryPool:true
     });
   });
   return rows;
 }
+function inventoryTransactionSortKey(record){ return String(record?.recordedAt||record?.date||''); }
 function poolableInventoryItem(item){
   return activeInventoryRecord(item)&&!item.inventoryPoolId&&!item.liquidationBatchId;
 }
@@ -3092,7 +3095,7 @@ function renderInventory(){
     (invFilter.type==='All'||s.itemType===invFilter.type) &&
     (invFilter.status==='All'||s.status===invFilter.status) &&
     inventorySearchMatch(s)
-  ).sort((a,b)=>b.date.localeCompare(a.date));
+  ).sort((a,b)=>inventoryTransactionSortKey(b).localeCompare(inventoryTransactionSortKey(a))||b.date.localeCompare(a.date));
   const dailyPurchaseSource=inventorySelectedDate==='All'?[]:selectedDay.purchases.filter(item=>invFilter.metal==='All'||item.metal===invFilter.metal);
   const dailyPurchaseTotals=purchaseTotalsByPurity(dailyPurchaseSource);
 

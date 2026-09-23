@@ -972,6 +972,20 @@ test('inventory displays a pool as one available row with combined weight and co
   assert.match(liquidationModal, /Reset automatic cost/);
 });
 
+test('inventory lists transactions newest first, including transactions on the same date', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'older', date: '2026-09-23', recordedAt: '2026-09-23T08:00:00.000Z', customerName: 'Older transaction', metal: 'Gold', karat: '18K', itemType: 'Scrap', status: 'Available', netWeight: 1, currentWeight: 1, cost: 6000 },
+    { id: 'newer', date: '2026-09-23', recordedAt: '2026-09-23T16:00:00.000Z', customerName: 'Newer transaction', metal: 'Gold', karat: '18K', itemType: 'Scrap', status: 'Available', netWeight: 1, currentWeight: 1, cost: 6100 }
+  ];
+  state.inventoryPools = [];
+  api.setState(state);
+
+  const html = api.renderInventory();
+  assert.ok(html.indexOf('Newer transaction') < html.indexOf('Older transaction'));
+});
+
 test('editing a pool can classify its active balance for refining', async () => {
   const api = await loadInventoryApi();
   const state = stateFixture();
