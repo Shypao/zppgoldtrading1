@@ -916,8 +916,9 @@
   .thermal-receipt .receipt-items td{padding:4px 1px;vertical-align:top;border-bottom:1px dotted #000;}
   .thermal-receipt .receipt-items tr{break-inside:avoid;page-break-inside:avoid;}
   .thermal-receipt .receipt-description{text-align:left;overflow-wrap:anywhere;word-break:normal;}
-  .thermal-receipt .receipt-item-title,.thermal-receipt .receipt-item-detail,.thermal-receipt .receipt-item-rate{display:block;}
-  .thermal-receipt .receipt-item-detail{margin-top:1px;}.thermal-receipt .receipt-item-rate{margin-top:1px;font-size:8px;font-weight:900;line-height:1.1;white-space:normal;}
+  .thermal-receipt .receipt-item-title,.thermal-receipt .receipt-item-detail{display:block;}
+  .thermal-receipt .receipt-item-title,.thermal-receipt .receipt-qty,.thermal-receipt .receipt-weight,.thermal-receipt .receipt-amount{font-family:Arial,Helvetica,sans-serif;font-size:10px;font-weight:900;line-height:1.1;-webkit-text-stroke:.16px #000;}
+  .thermal-receipt .receipt-item-detail{margin-top:1px;}
   .thermal-receipt .receipt-qty,.thermal-receipt .receipt-weight,.thermal-receipt .receipt-amount{text-align:right;white-space:nowrap;}
   .thermal-receipt .receipt-total{display:flex;justify-content:space-between;align-items:baseline;gap:5px;font-size:13px;font-weight:900;}
   .thermal-receipt .receipt-total span:last-child{margin-left:auto;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}
@@ -1076,6 +1077,6 @@
   </main>
 </div>
 
-<script src="./app.js?v=20260923-clear-receipt-headers"></script>
+<script src="./app.js?v=20260923-bold-receipt-item-values"></script>
 </body>
 </html>
