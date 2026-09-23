@@ -530,13 +530,25 @@ async function setSilver925Base(value) {
         toast('Silver 925 basis rate updated for today');
     }
 }
+let staffRateEditingToggleBusy = false;
 async function toggleStaffRateEditing() {
-    if (!isAdmin())
+    if (!isAdmin() || staffRateEditingToggleBusy)
         return;
-    db.pricing.staffRateEditingUnlocked = !staffRateEditingUnlocked();
-    if (await savePricingDB()) {
+    const wasUnlocked = staffRateEditingUnlocked();
+    staffRateEditingToggleBusy = true;
+    db.pricing.staffRateEditingUnlocked = !wasUnlocked;
+    render();
+    try {
+        if (await savePricingDB()) {
+            toast(!wasUnlocked ? 'Staff can now edit daily buying rates' : 'Staff daily buying-rate editing is locked');
+        }
+        else {
+            db.pricing.staffRateEditingUnlocked = wasUnlocked;
+        }
+    }
+    finally {
+        staffRateEditingToggleBusy = false;
         render();
-        toast(db.pricing.staffRateEditingUnlocked ? 'Staff can now edit daily buying rates' : 'Staff daily buying-rate editing is locked');
     }
 }
 async function setOverride(metal, key, value) {
@@ -1053,7 +1065,7 @@ function renderRates() {
         <div class="auto-status">${pricingFetchBusy ? '<span class="spinner"></span>Updating Philippine market data…' : `Last checked: ${esc(fetched)}${auto.goldSource ? ` · Gold source: ${esc(auto.goldSource)}` : ''}`}</div>
       </div>
       <div class="auto-controls">
-        ${admin ? `<button class="btn secondary small" onclick="toggleStaffRateEditing()">${staffUnlocked ? 'Lock staff rate editing' : 'Unlock staff rate editing'}</button>` : ''}
+        ${admin ? `<button class="btn secondary small" onclick="toggleStaffRateEditing()" ${staffRateEditingToggleBusy ? 'disabled aria-busy="true"' : ''}>${staffRateEditingToggleBusy ? `<span class="spinner"></span>${staffUnlocked ? 'Unlocking…' : 'Locking…'}` : staffUnlocked ? 'Lock staff rate editing' : 'Unlock staff rate editing'}</button>` : ''}
         ${admin ? `
         <button class="btn small" onclick="refreshPhilippineRates(false)" ${pricingFetchBusy ? 'disabled' : ''}>Refresh &amp; apply now</button>
         <button class="btn secondary small" onclick="openDailyBaseEditor('Gold')">Edit today's PHP base</button>
