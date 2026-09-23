@@ -1706,7 +1706,7 @@ function buyingDraftValue(key,fallback=''){
   return element?element.value:String(buyingDraftForm[key]??fallback);
 }
 function captureBuyingDraftForm(){
-  ['b_seller_name','b_date','b_pay','b_metal','b_itemtype','b_karat','b_custom_purity','b_gross','b_ded','b_rate','b_payout','b_staff','b_status','b_remarks','b_continue_rate_override'].forEach(key=>{
+  ['b_seller_name','b_date','b_pay','b_metal','b_itemtype','b_karat','b_custom_purity','b_gross','b_ded','b_rate','b_payout','b_staff','b_status','b_remarks'].forEach(key=>{
     const element=document.getElementById(key); if(element) buyingDraftForm[key]=element.type==='checkbox'?(element.checked?'true':'false'):element.value;
   });
 }
@@ -1748,7 +1748,7 @@ function scheduleBuyingDraftSave(){
 }
 async function clearBuyingDraft(){
   clearTimeout(buyingDraftSaveTimer); buyingDraftForm={}; buyingDraftSavedDate='';buyingDraftLoaded=true;
-  const defaults={b_seller_name:'',b_date:'',b_pay:'Cash',b_metal:'Gold',b_itemtype:'Scrap',b_karat:'',b_custom_purity:'',b_gross:'',b_ded:'',b_rate:'',b_payout:'',b_staff:'',b_status:'Available',b_remarks:'',b_continue_rate_override:'false'};
+  const defaults={b_seller_name:'',b_date:'',b_pay:'Cash',b_metal:'Gold',b_itemtype:'Scrap',b_karat:'',b_custom_purity:'',b_gross:'',b_ded:'',b_rate:'',b_payout:'',b_staff:'',b_status:'Available',b_remarks:''};
   Object.entries(defaults).forEach(([id,value])=>{const input=document.getElementById(id);if(!input)return;if(input.type==='checkbox')input.checked=value==='true';else input.value=value;});
   try{ await fetch('/api/buying-draft',{method:'DELETE'}); }catch(error){ console.error('Buying draft clear failed',error); }
 }
@@ -1813,7 +1813,6 @@ function renderBuying(){
           ${karats.length? karats.map(k=>`<option value="${k}" ${k===karatSelection?'selected':''}>${esc(gradeLabel(metal,k))}</option>`).join('') : `<option value="">No rate set</option>`}
           <option value="__custom__" ${customSelected?'selected':''}>Custom purity (%)</option>
         </select>
-        <div class="buying-grade-rate"><label for="b_grade_daily_rate">Daily Rate Setup <span>(edit to override this buying item)</span></label><div><span>₱</span><input id="b_grade_daily_rate" type="number" min="1" step="1" value="${rateObj?esc(String(rate)):''}" placeholder="No rate set" onfocus="selectBuyingOverrideValue(this)" oninput="setBuyingRateFromGradeBox(this.value)"><span>/g</span></div></div>
         <div id="b_custom_purity_field" class="custom-purity-field ${customSelected?'':'is-hidden'}">
           <label for="b_custom_purity">Custom ${esc(metal)} purity (%)</label>
           <div class="custom-purity-input"><input id="b_custom_purity" type="number" min="0.01" max="100" step="0.01" value="${esc(customPurityValue)}" placeholder="Example: 89" oninput="resetBuyingRate();scheduleBuyingDraftSave()"><span>%</span></div>
@@ -1827,7 +1826,7 @@ function renderBuying(){
 
         <div class="payout-calculator">
           <div><span>Net weight</span><strong id="b_net_display">${fmtWeight(net)}</strong></div>
-          <div class="buying-rate ${rateOverridden?'is-overridden':''}" id="b_rate_panel"><label id="b_rate_label" for="b_rate">${rateOverridden?'Buying rate override (this item only)':'Buying rate (uses Daily Rate Setup)'}</label><div><span>₱</span><input id="b_rate" type="number" min="1" step="1" value="${rateObj?rate:''}" placeholder="0" onfocus="selectBuyingOverrideValue(this)" oninput="markBuyingRateOverride();recalcBuying();scheduleBuyingDraftSave()"><span>/g</span></div><span id="b_daily_rate_reference" class="daily-rate-reference ${rateOverridden?'':'is-hidden'}">Daily rate: ${fmtMoney(systemRate)}/g</span><button type="button" id="b_rate_reset" class="rate-reset ${rateOverridden?'':'is-hidden'}" onclick="resetBuyingRate();scheduleBuyingDraftSave()">Use daily rate</button><label class="continue-rate-override"><input id="b_continue_rate_override" type="checkbox" ${buyingDraftForm.b_continue_rate_override==='true'?'checked':''} onchange="scheduleBuyingDraftSave()"> Continue using this overridden rate for next items</label></div>
+          <div class="buying-rate ${rateOverridden?'is-overridden':''}" id="b_rate_panel"><label id="b_rate_label" for="b_rate">${rateOverridden?'Buying rate override (this item only)':'Buying rate (uses Daily Rate Setup)'}</label><div><span>₱</span><input id="b_rate" type="number" min="1" step="1" value="${rateObj?rate:''}" placeholder="0" onfocus="selectBuyingOverrideValue(this)" oninput="markBuyingRateOverride();recalcBuying();scheduleBuyingDraftSave()"><span>/g</span></div><span id="b_daily_rate_reference" class="daily-rate-reference ${rateOverridden?'':'is-hidden'}">Daily rate: ${fmtMoney(systemRate)}/g</span><button type="button" id="b_rate_reset" class="rate-reset ${rateOverridden?'':'is-hidden'}" onclick="resetBuyingRate();scheduleBuyingDraftSave()">Use daily rate</button></div>
           <div class="suggested"><span>Calculated amount</span><strong id="b_suggested_display">${fmtMoney(suggested)}</strong></div>
           <div class="final-payout"><label for="b_payout">Final payout</label><div><span>₱</span><input id="b_payout" type="number" min="0" step="1" value="${esc(buyingDraftValue('b_payout'))}" placeholder="${suggested}" onfocus="selectBuyingOverrideValue(this)" oninput="scheduleBuyingDraftSave()"></div></div>
         </div>
@@ -1903,16 +1902,10 @@ function selectedBuyingGrade(){
 }
 function markBuyingRateOverride(){ buyingDraftForm.b_rate_overridden='true'; }
 function selectBuyingOverrideValue(input){ if(input?.value) input.select(); }
-function setBuyingRateFromGradeBox(value){
-  const rateInput=document.getElementById('b_rate'); if(rateInput) rateInput.value=value;
-  markBuyingRateOverride(); recalcBuying(); scheduleBuyingDraftSave();
-}
 function resetBuyingRate(){
   const metal=val('b_metal'),karat=selectedBuyingGrade(),active=karat?activeRate(metal,karat):null,input=document.getElementById('b_rate');
   if(input) input.value=active?String(roundPeso(active.rate)):'';
   buyingDraftForm.b_rate_overridden='false';
-  buyingDraftForm.b_continue_rate_override='false';
-  const continueOverride=document.getElementById('b_continue_rate_override'); if(continueOverride) continueOverride.checked=false;
   recalcBuying();
 }
 function recalcBuying(){
@@ -1921,9 +1914,8 @@ function recalcBuying(){
   const rateInput=document.getElementById('b_rate'),enteredRate=Number(rateInput?.value),rate=rateInput?.value!==''&&Number.isFinite(enteredRate)?roundPeso(enteredRate):0;
   const rateOverridden=Boolean(rateObj&&Number.isFinite(rate)&&rate!==systemRate);
   buyingDraftForm.b_rate_overridden=rateOverridden?'true':'false';
-  const netEl=document.getElementById('b_net_display'),rateLabel=document.getElementById('b_rate_label'),gradeDailyRate=document.getElementById('b_grade_daily_rate'),ratePanel=document.getElementById('b_rate_panel'),dailyRateReference=document.getElementById('b_daily_rate_reference'),rateReset=document.getElementById('b_rate_reset'),suggestedEl=document.getElementById('b_suggested_display'),payoutEl=document.getElementById('b_payout');
+  const netEl=document.getElementById('b_net_display'),rateLabel=document.getElementById('b_rate_label'),ratePanel=document.getElementById('b_rate_panel'),dailyRateReference=document.getElementById('b_daily_rate_reference'),rateReset=document.getElementById('b_rate_reset'),suggestedEl=document.getElementById('b_suggested_display'),payoutEl=document.getElementById('b_payout');
   if(netEl) netEl.textContent=fmtWeight(net);
-  if(gradeDailyRate) gradeDailyRate.value=rateObj?String(rate):'';
   if(rateLabel) rateLabel.textContent=rateOverridden?'Buying rate override (this item only)':karat&&customPurityFromKey(karat)!==null?`Buying rate (${gradeLabel(metal,karat)} × ${metal} base)`:'Buying rate (uses Daily Rate Setup)';
   ratePanel?.classList.toggle('is-overridden',rateOverridden);
   if(dailyRateReference) dailyRateReference.textContent=`Daily rate: ${fmtMoney(systemRate)}/g`;
@@ -1957,15 +1949,10 @@ async function addPurchaseItem(){
   const item=purchaseItemFromForm();
   if(!item) return;
   captureBuyingDraftForm();
-  const keepOverriddenRate=item.rateOverridden&&buyingDraftForm.b_continue_rate_override==='true';
   purchaseBatch.push(item);
   ['b_gross','b_ded','b_payout','b_remarks'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
   buyingDraftForm.b_gross=''; buyingDraftForm.b_ded=''; buyingDraftForm.b_payout=''; buyingDraftForm.b_remarks='';
-  if(keepOverriddenRate){
-    const rateInput=document.getElementById('b_rate'); if(rateInput) rateInput.value=String(item.rate);
-    buyingDraftForm.b_rate=String(item.rate); buyingDraftForm.b_rate_overridden='true';
-    recalcBuying();
-  }else resetBuyingRate();
+  resetBuyingRate();
   renderPurchaseBatchPanel();
   await saveBuyingDraft();
   toast(`${item.metal} ${gradeLabel(item.metal,item.karat)} added to current payout`);
@@ -2778,6 +2765,8 @@ function changePoolLiquidationDestination(value){
   const creating=value==='new';
   const details=document.getElementById('pool_liquidation_new_batch_fields');
   if(details)details.classList.toggle('is-hidden',!creating);
+  const button=document.getElementById('confirm_pool_liquidation'),batch=!creating?db.liquidationBatches.find(item=>item.id===value):null;
+  if(button) button.textContent=batch?`Add to ${batch.id}`:'Move to Liquidation';
   updatePoolLiquidationPreview();
 }
 function openPoolLiquidationModal(id){
@@ -2919,6 +2908,8 @@ function updateInventoryMoveContinueState(){
   const itemValid=pending.mode!=='individual'||(pending.ids||[]).every(id=>prepareInventoryItemAllocation(db.stock.find(item=>item.id===id),val(`inventory_move_weight_${id}`),inventoryMoveCostBasis(id)));
   const poolsValid=(pending.poolIds||[]).every(id=>{const pool=db.inventoryPools.find(item=>item.id===id);return pool&&preparePoolMove(pool,val(`inventory_move_pool_weight_${id}`)||pending.poolWeights?.[id]);});
   button.disabled=!destination||!itemValid||!poolsValid;
+  const batch=destination&&destination!=='new'?db.liquidationBatches.find(item=>item.id===destination):null;
+  button.textContent=batch?`Add to ${batch.id}`:'Continue to batch details';
 }
 function changeInventoryMoveDestination(value){if(pendingInventoryMove)pendingInventoryMove.destination=value||'';updateInventoryMoveContinueState();}
 function openInventoryMoveReview(selected,context){
@@ -2956,7 +2947,7 @@ function openInventoryMoveReview(selected,context){
   updateInventoryMoveContinueState();
   modal.querySelector('.btn:last-child')?.focus();
 }
-function confirmInventoryMoveToLiquidation(){
+async function confirmInventoryMoveToLiquidation(){
   const pending=pendingInventoryMove;
   if(!pending){ closeInventoryMoveConfirmation(); return; }
   const destination=document.getElementById('inventory_move_destination')?.value||pending.destination||'';
@@ -2977,6 +2968,10 @@ function confirmInventoryMoveToLiquidation(){
   const groups=[group];
   pendingLiquidationBatchSetup={groups,destination};
   closeInventoryMoveConfirmation();
+  if(destination!=='new'){
+    await addPendingInventoryMoveToExistingBatch(pendingLiquidationBatchSetup);
+    return;
+  }
   openLiquidationBatchSetup();
 }
 function closeLiquidationBatchSetup(){ document.getElementById('liquidation_batch_setup')?.remove(); pendingLiquidationBatchSetup=null; }
@@ -3055,17 +3050,22 @@ function openLiquidationBatchSetup(){
   modal.addEventListener('click',event=>{if(event.target===modal)closeLiquidationBatchSetup();}); document.body.appendChild(modal);
   document.getElementById('new_liquidation_batch_buyer_0')?.focus();
 }
+async function addPendingInventoryMoveToExistingBatch(pending){
+  const destination=pending?.destination||'';
+  const batch=db.liquidationBatches.find(record=>record.id===destination);
+  if(!batch){toast('The selected liquidation batch is no longer available');return false;}
+  const beforeState=JSON.parse(JSON.stringify(db));
+  if(pending.groups.length!==1||!appendInventoryMoveGroupToBatch(batch,pending.groups[0])){db=beforeState;toast('The selected inventory could not be added to this batch');return false;}
+  if(!await saveDB()){db=beforeState;render();toast('Inventory was not added to the liquidation batch');return false;}
+  inventoryMoveSelection.clear();inventoryPoolRowSelection.clear();closeLiquidationBatchSetup();goTab('liquidation');toast(`Inventory added to ${batch.id}`);return true;
+}
 async function createLiquidationBatch(){
   const pending=pendingLiquidationBatchSetup;
   if(!pending) return;
   const destination=val('liquidation_batch_destination')||pending.destination||'new';
   if(destination!=='new'){
-    const batch=db.liquidationBatches.find(record=>record.id===destination);
-    if(!batch){toast('The selected liquidation batch is no longer available');return;}
-    const beforeState=JSON.parse(JSON.stringify(db));
-    if(pending.groups.length!==1||!appendInventoryMoveGroupToBatch(batch,pending.groups[0])){db=beforeState;toast('The selected inventory could not be added to this batch');return;}
-    if(!await saveDB()){db=beforeState;render();toast('Inventory was not added to the liquidation batch');return;}
-    inventoryMoveSelection.clear();inventoryPoolRowSelection.clear();closeLiquidationBatchSetup();goTab('liquidation');toast(`Inventory added to ${batch.id}`);return;
+    await addPendingInventoryMoveToExistingBatch(pending);
+    return;
   }
   const prepared=pending.groups.map((group,index)=>{
     return {metal:group.metal,name:val(`new_liquidation_batch_name_${index}`).trim(),buyer:val(`new_liquidation_batch_buyer_${index}`).trim(),notes:val(`new_liquidation_batch_notes_${index}`).trim()};
