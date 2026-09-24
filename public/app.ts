@@ -3417,9 +3417,11 @@ async function deleteInventoryRecord(){
 }
 
 /* ============================= LIQUIDATION ============================= */
-const minimizedLiquidationBatches=new Set();
+// Batch details are collapsed on first view.  This keeps the liquidation page
+// compact while still letting a user expand exactly the batch they need.
+const expandedLiquidationBatches=new Set();
 function toggleLiquidationBatchMinimized(id){
-  if(minimizedLiquidationBatches.has(id)) minimizedLiquidationBatches.delete(id); else minimizedLiquidationBatches.add(id);
+  if(expandedLiquidationBatches.has(id)) expandedLiquidationBatches.delete(id); else expandedLiquidationBatches.add(id);
   render();
 }
 function liquidationBatchGradeBadges(batch){
@@ -3453,7 +3455,7 @@ function renderLiquidation(){
   </section>
   ${batches.map(batch=>{
     const lines=batch.lines||[],cost=lines.reduce((sum,line)=>sum+Number(line.cost||0),0),weight=lines.reduce((sum,line)=>sum+Number(line.weight||0),0);
-    const minimized=minimizedLiquidationBatches.has(batch.id),batchGradeBadges=liquidationBatchGradeBadges(batch),karatTotals=liquidationBatchKaratTotals(batch);
+    const minimized=!expandedLiquidationBatches.has(batch.id),batchGradeBadges=liquidationBatchGradeBadges(batch),karatTotals=liquidationBatchKaratTotals(batch);
     return `<section class="block liquidation-batch-card ${minimized?'is-minimized':''}">
       <div class="batch-head liquidation-batch-head"><div><div class="liquidation-batch-identity"><p class="eyebrow">${esc(batch.id)} · ${esc(batch.metal)}</p>${batchGradeBadges}</div><h2 class="block-title">${esc(batch.name)}</h2><p class="form-note">Assigned buyer: <strong>${esc(batch.buyer)}</strong>${batch.createdAt?` · Created ${new Date(batch.createdAt).toLocaleString('en-PH',{dateStyle:'medium',timeStyle:'short'})}`:''}</p>${batch.notes?`<p class="liquidation-batch-comment"><strong>Comment:</strong> ${esc(batch.notes)}</p>`:''}</div><div class="form-actions"><button class="btn secondary small" onclick="toggleLiquidationBatchMinimized('${batch.id}')" aria-expanded="${minimized?'false':'true'}">${minimized?'Expand':'Minimize'}</button><button class="btn secondary small" onclick="openLiquidationBatchEdit('${batch.id}')">Edit batch</button><button class="btn secondary small" onclick="returnLiquidationBatch('${batch.id}')">Return to Inventory</button><button class="btn small" onclick="openCompleteLiquidationBatch('${batch.id}')">Record sale</button></div></div>
       <div class="liquidation-batch-compact-summary"><span><small>Items</small><strong>${lines.length}</strong></span><span><small>Total weight</small><strong>${fmtWeight(weight)}</strong></span><span><small>Total inventory cost</small><strong>${fmtMoney(cost)}</strong></span></div>

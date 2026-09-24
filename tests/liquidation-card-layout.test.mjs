@@ -12,6 +12,7 @@ test('open liquidation cards show the compact purity summary from the classic la
   ]);
 
   assert.match(app, /function toggleLiquidationBatchMinimized\(id\)/);
+  assert.match(app, /const minimized = !expandedLiquidationBatches\.has\(batch\.id\)/);
   assert.match(app, /liquidation-batch-grade/);
   assert.match(app, /liquidation-batch-compact-summary/);
   assert.match(app, /Totals per karat \/ purity/);
