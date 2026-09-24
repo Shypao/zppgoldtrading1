@@ -2343,6 +2343,18 @@ function syncInventoryMoveCheckboxes(){
   if(clearButton) clearButton.disabled=!selected.length&&!inventoryPoolRowSelection.size;
   if(count) count.textContent=String(selected.length);
 }
+function syncVisibleInventorySelections(){
+  // Mobile browsers can preserve a checked checkbox while a preceding row is
+  // re-rendered. Capture the visible checked state immediately before opening
+  // the review so the selected pool cannot be dropped from the move.
+  if(typeof document.querySelectorAll!=='function') return;
+  document.querySelectorAll('[data-inventory-move-id]:checked').forEach(input=>{
+    if(!input.disabled&&input.dataset.inventoryMoveId) inventoryMoveSelection.add(input.dataset.inventoryMoveId);
+  });
+  document.querySelectorAll('[data-inventory-pool-id]:checked').forEach(input=>{
+    if(input.dataset.inventoryPoolId) inventoryPoolRowSelection.add(input.dataset.inventoryPoolId);
+  });
+}
 function visibleInventoryRecords(){
   return db.stock.filter(item=>inventoryDateScope(item)&&activeInventoryRecord(item)&&
     (invFilter.metal==='All'||item.metal===invFilter.metal)&&
@@ -2397,11 +2409,12 @@ function moveInventorySelectionToLiquidation(percentage){
   requestAnimationFrame(()=>requestAnimationFrame(()=>openInventoryMoveReview(selected,{percentage:portion,total:pool.length,automatic:true})));
 }
 function moveCheckedInventoryToLiquidation(){
+  syncVisibleInventorySelections();
   const checked=selectedInventoryForCategory();
   const pools=selectedExistingPoolsForPooling();
   if(!checked.length&&!pools.length){ toast('Check at least one inventory record or pool first'); return; }
   if(checked.some(item=>!movableInventory(item))){ toast('On Hold records must be categorized as Available or For Refining before liquidation'); return; }
-  const poolRows=pools.map(pool=>inventoryDisplayRows(inventoryPoolItems(pool))[0]).filter(Boolean);
+  const poolRows=pools.map(pool=>inventoryPoolReviewRow(pool)).filter(Boolean);
   const selected=[...checked,...poolRows];
   openInventoryMoveReview(selected,{total:selected.length,automatic:false,itemIds:checked.map(item=>item.id),poolIds:pools.map(pool=>pool.id)});
 }
@@ -2499,6 +2512,27 @@ function inventoryPoolSnapshot(pool){
   const weight=roundWeight(items.reduce((sum,item)=>sum+Number(item.currentWeight||0),0));
   const cost=roundMoney(items.reduce((sum,item)=>sum+Number(item.cost||0),0));
   return {items,weight,cost,averageCost:weight?cost/weight:0};
+}
+function inventoryPoolReviewRow(pool){
+  const snapshot=inventoryPoolSnapshot(pool);
+  if(snapshot.weight<=0) return null;
+  const composition=inventoryPoolComposition(snapshot.items);
+  const types=Array.from(new Set(snapshot.items.map(item=>item.itemType).filter(Boolean)));
+  const dates=snapshot.items.map(item=>item.date).filter(Boolean).sort();
+  return {
+    id:pool.id,
+    date:dates.at(-1)||String(pool.createdAt||'').slice(0,10)||todayStr(),
+    customerName:pool.name||pool.id,
+    metal:composition.metal,
+    karat:composition.karat,
+    itemType:types.length===1?types[0]:'Mixed',
+    status:poolInventoryClassification(pool,snapshot),
+    currentWeight:snapshot.weight,
+    cost:snapshot.cost,
+    remarks:pool.notes||`${pool.itemIds.length} pooled inventory records`,
+    inventoryPoolId:pool.id,
+    isInventoryPool:true
+  };
 }
 function inventoryPoolStatus(pool,snapshot=inventoryPoolSnapshot(pool)){
   if(snapshot.weight<=0) return 'FULLY LIQUIDATED';
@@ -3219,7 +3253,7 @@ function renderInventory(){
     <div class="inventory-stock-head"><div><h2 class="block-title">Stock records</h2><p class="form-note">${inventorySearch?`${rows.length} matching record${rows.length===1?'':'s'}`:activeFilterLabels.length?`Showing: ${activeFilterLabels.map(esc).join(' · ')}`:'Showing all records'} across ${inventoryDateLabel()}.</p></div><div class="inventory-stock-tools"><div class="field inventory-stock-search"><label for="inventory_stock_search">Search stock records</label><input id="inventory_stock_search" type="search" autocomplete="off" value="${esc(inventorySearch)}" placeholder="Customer, date, metal, karat, or status" oninput="updateInventorySearch(this.value)"></div><div class="field inventory-stock-sort"><label for="inventory_stock_sort">Transaction date</label><select id="inventory_stock_sort" onchange="updateInventorySort(this.value)"><option value="newest" ${inventorySort==='newest'?'selected':''}>Newest to oldest</option><option value="oldest" ${inventorySort==='oldest'?'selected':''}>Oldest to newest</option></select></div><button class="btn secondary small" onclick="openInventoryFilterModal()">Change filters</button></div></div>
     ${isAdmin()?`<div class="inventory-action-panel"><div class="inventory-action-status"><strong>${percentagePool.length} eligible ${inventorySelectedDate==='All'?'across all dates':'on this date'}</strong><span><span id="inventory_liq_count">${selectedMoveCount}</span> inventory item${selectedMoveCount===1?'':'s'} selected${selectedPoolCount?` · ${selectedPoolCount} pool selected`:''}${percentagePool.length?'':' · change the filters'}</span>${selectedGradeCounts.size?`<div class="inventory-selection-chips">${Array.from(selectedGradeCounts.entries()).map(([grade,count])=>`<span>${esc(grade)} · ${count}</span>`).join('')}</div>`:''}</div><div class="inventory-action-buttons"><button class="btn secondary small" onclick="selectAllVisibleInventory()">Select all shown</button><button class="btn secondary small" onclick="selectAllLowKaratGold()">Select low-karat Gold</button><button class="btn secondary small" id="inventory_clear_selected" onclick="clearInventorySelection()" ${selectedMoveCount||selectedPoolCount?'':'disabled'}>Clear</button><div class="inventory-bulk-category"><select id="inventory_bulk_status" aria-label="Category for selected inventory" onchange="inventoryBulkStatus=this.value">${['Available','For Refining','On Hold'].map(status=>`<option ${inventoryBulkStatus===status?'selected':''}>${status}</option>`).join('')}</select><button class="btn secondary small" data-inventory-selection-required onclick="categorizeCheckedInventory()" ${selectedMoveCount?'':'disabled'}>Apply category</button></div><button class="btn" id="inventory_pool_selected" onclick="openManualInventoryPoolModal()" ${canPoolSelected?'':'disabled'}>Pool selected</button><button class="btn secondary small" id="inventory_move_selected" onclick="moveCheckedInventoryToLiquidation()" ${canMoveSelected?'':'disabled'}>Move selected to liquidation</button><button class="btn secondary small" onclick="openCombineLiquidationDateSelection()" ${hasMovableStock?'':'disabled'}>Combine dates</button><button class="btn secondary small" data-inventory-selection-required onclick="prepareInventoryForRefining()" ${selectedMoveCount?'':'disabled'}>Refine selected</button></div></div>`:''}
     ${isAdmin()?`<div class="form-actions" style="margin:0 0 12px"><button class="btn secondary small" id="inventory_merge_pools" onclick="openInventoryPoolMergeModal()" ${canMergeSelectedPools?'':'disabled'}>Merge selected pools</button></div>`:''}
-    ${tableOrEmpty(rows, s=>`<tr>${isAdmin()?`<td>${s.isInventoryPool?`<input type="checkbox" aria-label="Select ${esc(s.customerName)} to merge or add inventory" onchange="toggleInventoryPoolSelection('${s.inventoryPoolId}',this.checked)" ${inventoryPoolRowSelection.has(s.inventoryPoolId)?'checked':''}>`:`<input type="checkbox" data-inventory-move-id="${s.id}" aria-label="Select ${esc(s.metal)} ${esc(s.karat)} from ${esc(s.customerName)}" onchange="toggleInventoryForLiquidation('${s.id}',this.checked)" ${inventoryMoveSelection.has(s.id)?'checked':''} ${categorizableInventory(s)?'':'disabled'}>`}</td>`:''}<td>${fmtDate(s.date)}</td><td>${esc(s.customerName)}</td><td><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)}</td>
+    ${tableOrEmpty(rows, s=>`<tr>${isAdmin()?`<td>${s.isInventoryPool?`<input type="checkbox" data-inventory-pool-id="${s.inventoryPoolId}" aria-label="Select ${esc(s.customerName)} to merge or add inventory" onchange="toggleInventoryPoolSelection('${s.inventoryPoolId}',this.checked)" ${inventoryPoolRowSelection.has(s.inventoryPoolId)?'checked':''}>`:`<input type="checkbox" data-inventory-move-id="${s.id}" aria-label="Select ${esc(s.metal)} ${esc(s.karat)} from ${esc(s.customerName)}" onchange="toggleInventoryForLiquidation('${s.id}',this.checked)" ${inventoryMoveSelection.has(s.id)?'checked':''} ${categorizableInventory(s)?'':'disabled'}>`}</td>`:''}<td>${fmtDate(s.date)}</td><td>${esc(s.customerName)}</td><td><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)}</td>
       <td>${esc(s.itemType)}</td><td class="num">${fmtWeight(s.currentWeight)}</td><td class="num">${fmtMoney(s.cost)}</td><td>${statusPill(s.status)}${s.isInventoryPool?`<br><span class="form-note">${esc(s.inventoryPoolId)}</span>`:''}</td><td>${esc(s.remarks||'—')}</td>${isAdmin()?`<td><div class="form-actions">${s.isInventoryPool?`<button class="btn small" onclick="openPoolLiquidationModal('${s.inventoryPoolId}')">Liquidate Pool</button><button class="btn secondary small" onclick="openInventoryPoolEdit('${s.inventoryPoolId}')">Edit</button>`:`${movableInventory(s)?`<button class="btn secondary small" onclick="liquidateInventoryItem('${s.id}')">Liquidate item</button>`:''}${adminEditButton('Inventory',s.id)}`}</div></td>`:''}</tr>`,
       [...(isAdmin()?['Select']:[]),'Date','Customer','Metal / karat','Type','Current weight','Cost','Status','Remarks',...(isAdmin()?['Actions']:[])],
       `No stock matches this filter ${inventorySelectedDate==='All'?'across all purchase dates':`on ${fmtDate(selectedDay.date)}`}.`)}
