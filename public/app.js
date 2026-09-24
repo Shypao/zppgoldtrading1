@@ -107,6 +107,7 @@ function ensureShape() {
     db.pricing.platinum = db.pricing.platinum || { base: 0, overrides: {} };
     db.pricing.platinum.overrides = db.pricing.platinum.overrides || {};
     db.pricing.auto = Object.assign({ enabled: false, lastFetchDate: '', lastAppliedDate: '', lastFetchedAt: '', marketPhp: {}, goldSource: '', draft: null }, db.pricing.auto || {});
+    db.pricing.auto.enabled = false;
     db.pricing.gradeMultipliers = db.pricing.gradeMultipliers || {};
     db.pricing.dailyFormula = db.pricing.dailyFormula || { effectiveDate: '', baseRates: {} };
     db.pricing.dailyFormula.baseRates = db.pricing.dailyFormula.baseRates || {};
@@ -577,8 +578,8 @@ async function clearFeatured() { db.pricing.featured = null; featuredRemarksDraf
 let pricingFetchBusy = false;
 const overrideEditors = new Set();
 const TROY_OUNCE_GRAMS = 31.1034768;
-async function fetchJson(url) {
-    const response = await fetch(url, { cache: 'no-store' });
+async function fetchJson(url, options = {}) {
+    const response = await fetch(url, { cache: 'no-store', ...options });
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
         if (response.status === 401 && String(url).startsWith('/api/'))
@@ -587,7 +588,7 @@ async function fetchJson(url) {
     }
     return payload;
 }
-async function refreshPhilippineRates(silent) {
+async function refreshPhilippineRates(silent = false) {
     if (pricingFetchBusy)
         return;
     pricingFetchBusy = true;
@@ -596,7 +597,9 @@ async function refreshPhilippineRates(silent) {
     try {
         let proposal;
         if (location.protocol === 'http:' || location.protocol === 'https:') {
-            proposal = await fetchJson('/api/market?apply=1');
+            // This endpoint only applies a rate after this explicit button action.
+            // There is no timer or background market update in the application.
+            proposal = await fetchJson('/api/market', { method: 'POST' });
         }
         else {
             const [gold, silver, platinum, fx] = await Promise.all([
@@ -638,6 +641,8 @@ function activateMarketRates(d, enteredBy, recordHistory = true) {
     db.pricing.silver.base = d.silver;
     db.pricing.platinum.base = d.platinum;
     db.pricing.effectiveDate = d.effectiveDate;
+    db.pricing.dailyFormula = { effectiveDate: d.effectiveDate, baseRates: { Gold: d.gold, Silver: d.silver, Platinum: d.platinum } };
+    db.pricing.auto.enabled = false;
     db.pricing.auto.lastAppliedDate = d.effectiveDate;
     db.pricing.auto.draft = null;
     const duplicate = db.pricingHistory.some(h => h.effectiveDate === d.effectiveDate && h.enteredBy === enteredBy &&
@@ -1081,7 +1086,7 @@ function renderRates() {
     <p class="source-note">The internet price supplies the PHP base rate. Gold grades use the saved karat multipliers. Gold uses <a href="https://www.livepriceofgold.com/philippines-gold-price-per-gram.html" target="_blank" rel="noopener">LivePriceOfGold Philippines</a> when available, with an automatic fallback. Verify high-value payouts independently.</p>
   </section>
   <section class="block">
-    <div class="batch-head"><div><h2 class="block-title">How automated pricing works</h2><p class="metal-section-desc">Use <strong>Edit today's PHP base</strong> to set a metal's base rate for this Philippine date. Gold grades recalculate using the saved karat multipliers. Use <strong>Override PHP rate</strong> only when one specific grade needs a different exact rate.</p></div></div>
+    <div class="batch-head"><div><h2 class="block-title">How manual rate refresh works</h2><p class="metal-section-desc">Rates only change when an administrator presses <strong>Refresh &amp; apply now</strong> or edits today’s PHP base. Gold grades recalculate using the saved karat multipliers. Use <strong>Override PHP rate</strong> only when one specific grade needs a different exact rate.</p></div></div>
   </section>
 
   <section class="metal-section">

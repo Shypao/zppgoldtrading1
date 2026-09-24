@@ -191,7 +191,7 @@ function defaultPricingSettings(): PricingSettings {
     gold:{base:8500,overrides:{}},
     silver:{base:105,overrides:{}},
     platinum:{base:2450,overrides:{}},
-    auto:{enabled:true,lastFetchDate:'',lastAppliedDate:'',lastFetchedAt:'',usdPhp:0,spotUsd:{},draft:null},
+    auto:{enabled:false,lastFetchDate:'',lastAppliedDate:'',lastFetchedAt:'',usdPhp:0,spotUsd:{},draft:null},
     dailyFormula:{effectiveDate,baseRates:{Gold:8500,Silver:105,Platinum:2450}},
     staffRateEditingUnlocked:false,
     featured:{metal:'Gold',key:'18K-BUO',low:6360,high:6560}
@@ -849,7 +849,10 @@ async function applyMarketProposal(proposal: Awaited<ReturnType<typeof createMar
   pricing.silver.base = proposal.draft.silver;
   pricing.platinum.base = proposal.draft.platinum;
   pricing.effectiveDate = proposal.effectiveDate;
-  pricing.auto = { ...(pricing.auto ?? {}), lastFetchDate: proposal.effectiveDate, lastAppliedDate: proposal.effectiveDate,
+  pricing.dailyFormula = { effectiveDate: proposal.effectiveDate, baseRates: {
+    Gold: proposal.draft.gold, Silver: proposal.draft.silver, Platinum: proposal.draft.platinum
+  } };
+  pricing.auto = { ...(pricing.auto ?? {}), enabled: false, lastFetchDate: proposal.effectiveDate, lastAppliedDate: proposal.effectiveDate,
     lastFetchedAt: proposal.fetchedAt, marketPhp: proposal.marketPhp, goldSource: proposal.goldSource, draft: null };
   await dbRun("UPDATE settings SET value = ? WHERE key = 'pricing'", [JSON.stringify(pricing)]);
 }
@@ -1095,9 +1098,14 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
       }
       return sendJson(response, 200, { ok: true, revision: await currentLedgerRevision() });
     }
+    if (request.method === 'POST' && url.pathname === '/api/market') {
+      if (user!.role !== 'admin') return sendJson(response, 403, { error: 'Administrator access required' });
+      const proposal = await createMarketProposal();
+      await applyMarketProposal(proposal);
+      return sendJson(response, 200, proposal);
+    }
     if (request.method === 'GET' && url.pathname === '/api/market') {
       const proposal = await createMarketProposal();
-      if (url.searchParams.get('apply') === '1') await applyMarketProposal(proposal);
       return sendJson(response, 200, await marketProposalForClient(proposal));
     }
     if (request.method === 'GET' && url.pathname === '/api/users') {
