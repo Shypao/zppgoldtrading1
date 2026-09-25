@@ -689,7 +689,7 @@ function commitOverride(metal, key, value) {
 }
 async function savePricingSnapshot() {
     const by = val('px_by').trim() || 'Admin';
-    const date = val('px_date') || todayStr();
+    const date = todayStr();
     db.pricing.effectiveDate = date;
     db.pricingHistory.push({ id: uid('rate'), ts: Date.now(), effectiveDate: date, enteredBy: by, snapshot: JSON.parse(JSON.stringify(db.pricing)) });
     if (await savePricingDB(true)) {
@@ -1130,7 +1130,7 @@ function renderRates() {
   ${admin ? `<section class="block">
     <h2 class="block-title">Save today's rate sheet</h2>
     <div class="form-grid">
-      <div class="field"><label>Effective date</label><input id="px_date" type="date" value="${db.pricing.effectiveDate || todayStr()}"></div>
+      <div class="field"><label>Effective date <span class="hint">(automatic · Manila)</span></label><input id="px_date" type="date" value="${todayStr()}" readonly aria-readonly="true"></div>
       <div class="field"><label>Entered by</label><input id="px_by" placeholder="Staff name"></div>
     </div>
     <div class="form-actions">
