@@ -13,12 +13,12 @@ test('pricing updates only through the manual refresh action', async () => {
   assert.doesNotMatch(source, /Automatic 5-second internet update/);
 });
 
-test('saving a daily rate sheet uses today’s Manila date automatically', async () => {
+test('daily rate setup has no separate rate-sheet save action', async () => {
   const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 
-  assert.match(source, /Effective date <span class="hint">\(automatic · Manila\)<\/span>/);
-  assert.match(source, /id="px_date" type="date" value="\$\{todayStr\(\)\}" readonly/);
-  assert.match(source, /async function savePricingSnapshot\(\) \{[\s\S]*?const date = todayStr\(\);/);
+  assert.doesNotMatch(source, /Save today's rate sheet/);
+  assert.doesNotMatch(source, /Save rate sheet/);
+  assert.doesNotMatch(source, /savePricingSnapshot/);
 });
 
 test('buying draft loads only after the Buying page is opened', async () => {
