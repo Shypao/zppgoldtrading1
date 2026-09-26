@@ -890,6 +890,14 @@ function renderRates(){
     </div>
     <div class="grade-grid">${PLATINUM_GRADES.map(g=>renderGradeCard('Platinum', g.key, g.label)).join('')}</div>
   </section>
+
+  ${admin?`<section class="block">
+    <h2 class="block-title">Today’s rate sheet</h2>
+    <div class="form-grid">
+      <div class="field"><label>Effective date <span class="hint">(automatic · Manila)</span></label><input id="px_date" type="date" value="${todayStr()}" readonly aria-readonly="true"></div>
+    </div>
+    <p class="form-note">Rates above apply to new purchases immediately when they are refreshed or edited.</p>
+  </section>`:''}
   `;
 }
 function renderStaffRates(){

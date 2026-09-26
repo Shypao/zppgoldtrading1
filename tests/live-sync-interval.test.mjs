@@ -19,6 +19,8 @@ test('daily rate setup has no separate rate-sheet save action', async () => {
   assert.doesNotMatch(source, /Save today's rate sheet/);
   assert.doesNotMatch(source, /Save rate sheet/);
   assert.doesNotMatch(source, /savePricingSnapshot/);
+  assert.match(source, /Effective date <span class="hint">\(automatic · Manila\)<\/span>/);
+  assert.match(source, /id="px_date" type="date" value="\$\{todayStr\(\)\}" readonly/);
 });
 
 test('buying draft loads only after the Buying page is opened', async () => {
