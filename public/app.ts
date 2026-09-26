@@ -326,12 +326,14 @@ function configuredGradeMultiplier(metal,key){
 function configuredBaseRate(metal){
   const liveBase=Number(bucketFor(metal).base)||0;
   const daily=db.pricing?.dailyFormula;
-  const configured=Number(daily?.effectiveDate===todayStr()?daily?.baseRates?.[metal]:NaN);
+  // A saved daily base remains active until somebody explicitly changes it.
+  // Do not fall back to another rate merely because the calendar date changed.
+  const configured=Number(daily?.baseRates?.[metal]);
   return Number.isFinite(configured)&&configured>0 ? configured : liveBase;
 }
 function configuredSilver925Rate(silver999Base=configuredBaseRate('Silver')){
   const daily=db.pricing?.dailyFormula;
-  const configured=Number(daily?.effectiveDate===todayStr()?daily?.baseRates?.Silver925:NaN);
+  const configured=Number(daily?.baseRates?.Silver925);
   if(Number.isFinite(configured)&&configured>0) return roundPeso(configured);
   const legacyOverride=Number(db.pricing?.silver?.overrides?.['925']);
   if(Number.isFinite(legacyOverride)&&legacyOverride>0) return roundPeso(legacyOverride);
@@ -395,14 +397,14 @@ function activeRate(metal, karat){
 async function setBase(metal, value){
   const v = roundPeso(parseFloat(value));
   if(!Number.isFinite(v)||v<=0){ toast('Enter a valid PHP base rate'); render(); return; }
-  if(db.pricing.dailyFormula.effectiveDate!==todayStr()) db.pricing.dailyFormula={effectiveDate:todayStr(),baseRates:{}};
+  db.pricing.dailyFormula.effectiveDate=todayStr();
   db.pricing.dailyFormula.baseRates[metal]=v;
   if(await savePricingDB()){ render(); toast(`${metal} PHP base rate updated for today`); }
 }
 async function setSilver925Base(value){
   const rate=roundPeso(parseFloat(value));
   if(!Number.isFinite(rate)||rate<=0){ toast('Enter a valid 925 Silver rate'); render(); return; }
-  if(db.pricing.dailyFormula.effectiveDate!==todayStr()) db.pricing.dailyFormula={effectiveDate:todayStr(),baseRates:{}};
+  db.pricing.dailyFormula.effectiveDate=todayStr();
   db.pricing.dailyFormula.baseRates.Silver925=rate;
   delete db.pricing.silver.overrides['925'];
   if(await savePricingDB()){ render(); toast('Silver 925 basis rate updated for today'); }
@@ -451,10 +453,10 @@ async function fetchJson(url,options={}){
   }
   return payload;
 }
-async function refreshPhilippineRates(silent=false){
+async function refreshPhilippineRates(){
   if(pricingFetchBusy) return;
   pricingFetchBusy=true;
-  if(!silent) render();
+  render();
   try{
     let proposal;
     if(location.protocol==='http:'||location.protocol==='https:'){
@@ -475,18 +477,15 @@ async function refreshPhilippineRates(silent=false){
     db.pricing.auto.lastFetchedAt=proposal.fetchedAt;
     db.pricing.auto.marketPhp=proposal.marketPhp||{};
     db.pricing.auto.goldSource=proposal.goldSource||'';
-    activateMarketRates(proposal.draft, silent?'Automatic 5-minute internet update':'Manual internet refresh', !silent);
-    if(isAdmin()&&!silent) await saveDB();
-    if(!silent) toast('Live internet prices refreshed and activated');
+    activateMarketRates(proposal.draft, 'Manual internet refresh');
+    if(isAdmin()) await saveDB();
+    toast('Live internet prices refreshed and activated');
   }catch(e){
-    console.error('Automatic pricing failed',e);
-    if(!silent) toast(`Live pricing unavailable — ${e.message||'current rates are unchanged'}`);
+    console.error('Manual pricing refresh failed',e);
+    toast(`Live pricing unavailable — ${e.message||'current rates are unchanged'}`);
   }finally{
     pricingFetchBusy=false;
-    // Background market polling must never replace an in-progress form or
-    // clear selections on another page. Only the rate screen needs a redraw.
-    const editingRateField=currentTab==='rates'&&document.activeElement?.matches('input,select,textarea');
-    if(!silent||(currentTab==='rates'&&!editingRateField)) render();
+    render();
   }
 }
 function activateMarketRates(d, enteredBy, recordHistory=true){
@@ -837,7 +836,7 @@ function renderRates(){
       <div class="auto-controls">
         ${admin?`<button class="btn secondary small" onclick="toggleStaffRateEditing()" ${staffRateEditingToggleBusy?'disabled aria-busy="true"':''}>${staffRateEditingToggleBusy?`<span class="spinner"></span>${staffUnlocked?'Unlocking…':'Locking…'}`:staffUnlocked?'Lock staff rate editing':'Unlock staff rate editing'}</button>`:''}
         ${admin?`
-        <button class="btn small" onclick="refreshPhilippineRates(false)" ${pricingFetchBusy?'disabled':''}>Refresh &amp; apply now</button>
+        <button class="btn small" onclick="refreshPhilippineRates()" ${pricingFetchBusy?'disabled':''}>Refresh &amp; apply now</button>
         <button class="btn secondary small" onclick="openDailyBaseEditor('Gold')">Edit today's PHP base</button>
         <button class="btn secondary small" onclick="openGoldMultiplierEditor()">Edit Gold karat multipliers</button>`:''}
       </div>
@@ -1191,7 +1190,7 @@ async function saveGradeFormula(event){
   const {metal}=formulaEditTarget;
   const silver925=metal==='Silver'?roundPeso(Number(val('formula_silver_925_rate'))):0;
   if(metal==='Silver'&&(!Number.isFinite(silver925)||silver925<=0)){ toast('Enter a valid Silver 925 basis rate'); return; }
-  if(db.pricing.dailyFormula.effectiveDate!==todayStr()) db.pricing.dailyFormula={effectiveDate:todayStr(),baseRates:{}};
+  db.pricing.dailyFormula.effectiveDate=todayStr();
   db.pricing.dailyFormula.baseRates[metal]=baseRate;
   if(metal==='Silver'){
     db.pricing.dailyFormula.baseRates.Silver925=silver925;

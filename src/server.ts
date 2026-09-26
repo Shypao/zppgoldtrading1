@@ -861,7 +861,9 @@ async function marketProposalForClient(proposal: Awaited<ReturnType<typeof creat
   const state = await loadState();
   const pricing = state.pricing as Record<string, any> | null;
   const dailyFormula = pricing?.dailyFormula;
-  if (!dailyFormula || dailyFormula.effectiveDate !== proposal.effectiveDate) return proposal;
+  // A manually configured base stays active until an administrator changes it.
+  // A new calendar day must never substitute a fresh market quote.
+  if (!dailyFormula) return proposal;
   const baseRates = dailyFormula.baseRates ?? {};
   const activeBase = (metal: 'Gold' | 'Silver' | 'Platinum', marketValue: number) => {
     const configured = Number(baseRates[metal]);

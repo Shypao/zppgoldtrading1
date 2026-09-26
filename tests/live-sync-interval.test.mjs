@@ -9,7 +9,10 @@ test('pricing updates only through the manual refresh action', async () => {
   assert.doesNotMatch(source, /startAutomaticPricing/);
   assert.doesNotMatch(source, /Update automatically every hour/);
   assert.doesNotMatch(source, /refreshPhilippineRates\(true\)/);
+  assert.doesNotMatch(source, /Automatic 5-minute internet update/);
   assert.match(source, /Refresh &amp; apply now/);
+  assert.match(source, /async function refreshPhilippineRates\(\)/);
+  assert.match(source, /const configured = Number\(daily\?\.baseRates\?\.\[metal\]\);/);
   assert.doesNotMatch(source, /Automatic 5-second internet update/);
 });
 
