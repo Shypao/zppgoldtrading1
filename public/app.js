@@ -1175,6 +1175,9 @@ function rateSheetSectionMargin(isPhone) {
 async function downloadRateSheetImage(format = 'auto', imageType = 'jpg') {
     const resolvedFormat = format === 'auto' ? (window.matchMedia('(max-width: 700px)').matches ? 'phone' : 'desktop') : format;
     const isPhone = resolvedFormat === 'phone';
+    // The active rates can intentionally remain fixed across calendar days, but
+    // every newly generated sheet must carry its actual Manila generation date.
+    const rateSheetDate = todayStr();
     const imageLabel = imageType.toUpperCase(), mimeType = imageType === 'png' ? 'image/png' : 'image/jpeg';
     const button = document.getElementById(`rate_download_${resolvedFormat}`);
     const label = button?.querySelector('.rate-download-label');
@@ -1241,7 +1244,7 @@ async function downloadRateSheetImage(format = 'auto', imageType = 'jpg') {
         text('ZPP GOLD TRADING', isPhone ? 220 : 154, isPhone ? 82 : 57, isPhone ? '700 46px Georgia, serif' : '700 31px Georgia, serif', colors.cream);
         text('DAILY BUYING PRICE GUIDE', isPhone ? 222 : 155, isPhone ? 126 : 87, isPhone ? '700 22px Arial, sans-serif' : '700 12px Arial, sans-serif', colors.gold);
         text('All prices shown in Philippine pesos per gram', isPhone ? 222 : 155, isPhone ? 158 : 108, isPhone ? '20px Arial, sans-serif' : '12px Arial, sans-serif', isPhone ? '#E1D6BE' : '#C9BE9F');
-        text(fmtDate(db.pricing.effectiveDate || todayStr()).toUpperCase(), width - pad, isPhone ? 72 : 59, isPhone ? '700 22px Arial, sans-serif' : '700 13px Arial, sans-serif', colors.cream, 'right');
+        text(fmtDate(rateSheetDate).toUpperCase(), width - pad, isPhone ? 72 : 59, isPhone ? '700 22px Arial, sans-serif' : '700 13px Arial, sans-serif', colors.cream, 'right');
         text('CURRENT RATE SHEET', width - pad, isPhone ? 108 : 84, isPhone ? '18px Arial, sans-serif' : '11px Arial, sans-serif', isPhone ? '#E1D6BE' : '#C9BE9F', 'right');
         const drawHeading = (metal, count, color, y) => {
             const dotRadius = isPhone ? 9 : 6;
@@ -1385,7 +1388,7 @@ async function downloadRateSheetImage(format = 'auto', imageType = 'jpg') {
         const blob = await new Promise(resolve => canvas.toBlob(resolve, mimeType, imageType === 'jpg' ? .94 : undefined));
         if (!blob)
             throw new Error(`${imageLabel} generation failed`);
-        const filename = `zpp-price-rates-${db.pricing.effectiveDate || todayStr()}-${resolvedFormat}.${imageType}`;
+        const filename = `zpp-price-rates-${rateSheetDate}-${resolvedFormat}.${imageType}`;
         const file = new File([blob], filename, { type: mimeType });
         if (isPhone && navigator.share && navigator.canShare?.({ files: [file] })) {
             try {

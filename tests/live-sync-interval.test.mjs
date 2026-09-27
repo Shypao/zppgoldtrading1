@@ -26,6 +26,16 @@ test('daily rate setup has no separate rate-sheet save action', async () => {
   assert.match(source, /id="px_date" type="date" value="\$\{todayStr\(\)\}" readonly/);
 });
 
+test('downloaded rate sheets use today’s Manila date instead of the locked rate date', async () => {
+  const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  const downloadRateSheet = source.match(/async function downloadRateSheetImage\([\s\S]*?\n\}/)?.[0] || '';
+
+  assert.match(downloadRateSheet, /const rateSheetDate = todayStr\(\);/);
+  assert.match(downloadRateSheet, /fmtDate\(rateSheetDate\)\.toUpperCase\(\)/);
+  assert.match(downloadRateSheet, /zpp-price-rates-\$\{rateSheetDate\}-\$\{resolvedFormat\}/);
+  assert.doesNotMatch(downloadRateSheet, /fmtDate\(db\.pricing\.effectiveDate/);
+});
+
 test('buying draft loads only after the Buying page is opened', async () => {
   const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
   const loadDatabase = source.match(/async function loadDB\(\) \{([\s\S]*?)\n\}\nfunction isAdmin/)?.[1] || '';
