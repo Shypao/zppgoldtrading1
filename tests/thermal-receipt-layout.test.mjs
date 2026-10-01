@@ -48,7 +48,7 @@ test('thermal receipt includes the complete POS structure', async () => {
   assert.match(source, /Transaction No\.:/);
   assert.match(source, /class="receipt-items"/);
   assert.match(source, /<th>ITEM<\/th><th>QTY<\/th><th>WT<\/th><th>AMT<\/th>/);
-  assert.match(source, /\.receipt-items th\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*9\s*:\s*8\.4\}px[^}]*white-space:nowrap/);
+  assert.match(source, /\.receipt-items th\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*10\s*:\s*9\.5\}px[^}]*white-space:nowrap/);
   assert.match(source, /class="receipt-item-detail">\$\{esc\(item\.itemType\)\}/);
   assert.match(source, /Rate: PHP \$\{receiptMoneyNumber\(item\.rate\)\}\/g/);
   assert.match(source, /<span>PAID:<\/span>/);
