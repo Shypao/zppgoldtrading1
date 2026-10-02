@@ -5087,8 +5087,22 @@ function toggleRefiningSelection(id, checked) {
     else
         refiningSelection.delete(id);
     updateRefiningCombinedSummary();
+    const eligible = db.stock.filter(item => item.metal === refMetal && item.status === 'For Refining' && Number(item.currentWeight) > 0);
+    const selectAll = document.getElementById('rf_select_all');
+    if (selectAll)
+        selectAll.textContent = eligible.length && eligible.every(item => refiningSelection.has(item.id)) ? 'Clear all' : 'Select all';
 }
 function changeRefiningMetal(metal) { refMetal = metal; refiningSelection.clear(); render(); }
+function toggleAllRefiningSelection() {
+    const eligible = db.stock.filter(item => item.metal === refMetal && item.status === 'For Refining' && Number(item.currentWeight) > 0);
+    const shouldSelect = eligible.length > 0 && !eligible.every(item => refiningSelection.has(item.id));
+    eligible.forEach(item => shouldSelect ? refiningSelection.add(item.id) : refiningSelection.delete(item.id));
+    document.querySelectorAll('.ref-chk').forEach(input => { input.checked = shouldSelect; });
+    const selectAll = document.getElementById('rf_select_all');
+    if (selectAll)
+        selectAll.textContent = shouldSelect ? 'Clear all' : 'Select all';
+    updateRefiningCombinedSummary();
+}
 function selectedRefiningItems() {
     return db.stock.filter(item => refiningSelection.has(item.id) && item.metal === refMetal && item.status === 'For Refining' && Number(item.currentWeight) > 0);
 }
@@ -5190,6 +5204,7 @@ function renderRefining() {
     <div class="filter-row">
       <div class="field"><label>Metal</label><select onchange="changeRefiningMetal(this.value)">
         ${['Gold', 'Silver', 'Platinum'].map(m => `<option ${refMetal === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
+      <button type="button" class="btn secondary small" id="rf_select_all" onclick="toggleAllRefiningSelection()" ${eligible.length ? '' : 'disabled'}>${eligible.length && eligible.every(item => refiningSelection.has(item.id)) ? 'Clear all' : 'Select all'}</button>
     </div>
     ${eligible.length ? `
     <div class="item-check-row head"><span></span><span>Item</span><span>Weight</span><span>Cost</span><span></span><span></span></div>
