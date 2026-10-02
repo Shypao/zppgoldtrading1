@@ -1857,7 +1857,7 @@ function renderBuying(){
         <details class="buying-more">
           <summary>More details <span>optional</span></summary>
           <div class="form-grid buying-more-grid">
-            <div class="field"><label>Staff member</label><input id="b_staff" value="${esc(buyingDraftValue('b_staff'))}" placeholder="Name" oninput="scheduleBuyingDraftSave()"></div>
+            <div class="field"><label>Recorded by</label><input id="b_staff" value="${esc(currentUser?.displayName||'Signed-in staff')}" readonly aria-readonly="true"><span class="hint">Assigned automatically from the signed-in account.</span></div>
             <div class="field"><label>Initial status</label><select id="b_status" onchange="scheduleBuyingDraftSave()">${['Available','For Refining','On Hold'].map(status=>`<option ${buyingDraftValue('b_status','Available')===status?'selected':''}>${status}</option>`).join('')}</select></div>
             <div class="field"><label>Remarks</label><textarea id="b_remarks" placeholder="Optional notes" oninput="scheduleBuyingDraftSave()">${esc(buyingDraftValue('b_remarks'))}</textarea></div>
           </div>
@@ -2044,7 +2044,7 @@ function openPurchaseSummary(){
     <div class="summary-modal-head"><div><div class="eyebrow">Combined payout</div><h2 id="purchase_summary_title">${customer.name?esc(customer.name):'Walk-in seller'}</h2></div><button class="modal-close" onclick="closePurchaseSummary()" aria-label="Close">×</button></div>
     <div class="summary-lines">${purchaseBatch.map((item,index)=>`<div class="summary-line"><div><strong>${index+1}. ${esc(item.metal)} ${esc(gradeLabel(item.metal,item.karat))}</strong><span>${esc(item.itemType)} · ${fmtWeight(item.netWeight)} × ${fmtMoney(item.rate)}/g</span></div><strong>${fmtMoney(item.payout)}</strong></div>`).join('')}</div>
     <div class="summary-grand"><div><span>${purchaseBatch.length} item${purchaseBatch.length===1?'':'s'} · ${fmtWeight(totalWeight)}</span><strong>Grand total</strong></div><div>${fmtMoney(total)}</div></div>
-    <div class="summary-meta">Seller: ${customer.name?esc(customer.name):'<strong>Not provided</strong>'} · ${fmtDate(val('b_date')||todayStr())} · ${esc(val('b_pay'))}${val('b_staff').trim()?` · Staff: ${esc(val('b_staff').trim())}`:''}</div>
+    <div class="summary-meta">Seller: ${customer.name?esc(customer.name):'<strong>Not provided</strong>'} · ${fmtDate(val('b_date')||todayStr())} · ${esc(val('b_pay'))} · Staff: ${esc(currentUser?.displayName||'Signed-in staff')}</div>
     <div class="form-actions"><button class="btn secondary" onclick="closePurchaseSummary()">Back to items</button><button class="btn secondary" onclick="commitPurchaseBatch(false)">Record only</button><button class="btn" onclick="commitPurchaseBatch(true)">Confirm &amp; view receipt</button></div>
   </div>`;
   modal.addEventListener('click',event=>{if(event.target===modal)closePurchaseSummary();});
@@ -2059,7 +2059,7 @@ async function commitPurchaseBatch(printAfter=false){
   let customerId=customer.id;
   if(customer.isNew){ customerId=uid('cust'); db.customers.push({id:customerId,name:customer.name,contact:'',notes:''}); }
   const batchId=uid('buy');
-  const shared={date:val('b_date')||todayStr(),recordedAt:new Date().toISOString(),customerId,customerName:customer.name,paymentMethod:val('b_pay'),staff:val('b_staff').trim(),
+  const shared={date:val('b_date')||todayStr(),recordedAt:new Date().toISOString(),customerId,customerName:customer.name,paymentMethod:val('b_pay'),staff:currentUser?.displayName||'Signed-in staff',
     status:val('b_status'),batchId};
   purchaseBatch.forEach(item=>db.stock.push({...item,...shared,id:uid('stk'),cost:item.payout,remarks:String(item.remarks??val('b_remarks')).trim()}));
   const count=purchaseBatch.length,total=roundMoney(purchaseBatch.reduce((sum,item)=>sum+Number(item.payout),0));

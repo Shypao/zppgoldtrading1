@@ -298,7 +298,7 @@ function unchangedRecord(candidate: LedgerRecord, original: LedgerRecord): boole
   return JSON.stringify(candidate) === JSON.stringify(original);
 }
 
-async function saveStaffAdditions(candidate: LedgerState): Promise<void> {
+async function saveStaffAdditions(candidate: LedgerState, user: AuthUser): Promise<void> {
   const current = await loadState();
   removeInventoryLocationFields(candidate.stock);
   if (!candidate.pricing || !current.pricing) throw new Error('Pricing settings are unavailable');
@@ -339,7 +339,10 @@ async function saveStaffAdditions(candidate: LedgerState): Promise<void> {
     throw new Error('Staff cannot edit or remove existing records');
   }
   const newCustomers = candidate.customers.filter(record => !currentCustomers.has(record.id));
+  // Staff names are audit data, not user-editable purchase fields. Always
+  // stamp newly created inventory with the authenticated account name.
   const newStock = candidate.stock.filter(record => !currentStock.has(record.id));
+  newStock.forEach(record => { record.staff = user.displayName; });
   const staffRateOverridesUnlocked = currentPricing.staffRateEditingUnlocked === true;
   const knownCustomerIds = new Set([...current.customers, ...newCustomers].map(record => record.id));
   for (const customer of newCustomers) {
@@ -1095,7 +1098,7 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
         }
       }
       else {
-        try { await saveStaffAdditions(body); }
+        try { await saveStaffAdditions(body, user!); }
         catch (error) { return sendJson(response, 403, { error: error instanceof Error ? error.message : 'Staff action is not permitted' }); }
       }
       return sendJson(response, 200, { ok: true, revision: await currentLedgerRevision() });
