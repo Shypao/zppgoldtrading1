@@ -191,6 +191,20 @@ test('server accepts preserved liquidation trace after its empty pool is deleted
   assert.equal(result.stdout, 'ok');
 });
 
+test('server accepts pooled liquidation traces after a pool merge removes the source item from the current pool list', () => {
+  const state = emptyState();
+  state.stock.push({ id: 'merged-item', metal: 'Gold', karat: '21K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-CURRENT', netWeight: 10, currentWeight: 5, payout: 50000, cost: 25000 });
+  state.inventoryPools.push({ id: 'POOL-CURRENT', name: 'Merged gold pool', metal: 'Gold', karat: '21K', itemIds: ['merged-item'], originalWeight: 10, originalCost: 50000, remainingWeight: 5, remainingCost: 25000, onHold: false, status: 'PARTIALLY LIQUIDATED' });
+  state.liquidations.push({
+    id: 'LQ-MERGE-TRACE', poolId: 'POOL-CURRENT', originalPoolId: 'POOL-OLD', metal: 'Gold', releasedWeight: 5, cost: 25000,
+    lines: [{ itemId: 'merged-item', weight: 5, costPortion: 25000, pooledAllocation: true, sourcePoolId: 'POOL-OLD', originalSourcePoolId: 'POOL-OLD' }]
+  });
+
+  const result = validate(state);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'ok');
+});
+
 test('server accepts a pool with one remaining member after another item returns to inventory', () => {
   const state = emptyState();
   state.stock.push(

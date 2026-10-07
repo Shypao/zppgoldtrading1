@@ -660,7 +660,11 @@ export function validateLedgerIntegrity(state: LedgerState): void {
         if (!stockIds.has(String(line.itemId ?? ''))) throw new Error(`liquidation ${liquidation.id} references a missing inventory item`);
         if (liquidation.poolId) {
           const pool=state.inventoryPools.find(item=>item.id===liquidation.poolId);
-          if(!pool||(pool.itemIds as unknown[]||[]).map(String).includes(String(line.itemId??''))===false) throw new Error(`liquidation ${liquidation.id} has an invalid pool item reference`);
+          // A completed pooled allocation is a historical trace. Pool merges and
+          // later returns can legitimately remove its source item from the
+          // pool's current itemIds list, so validate the pool identity but do
+          // not require the old line item to remain a current pool member.
+          if(!pool) throw new Error(`liquidation ${liquidation.id} references a missing inventory pool`);
         }
       } else claimInventory(String(line.itemId ?? ''), `liquidation ${liquidation.id}`);
     }
