@@ -94,24 +94,39 @@ const schemaStatements = [
 type SqlArgs = Array<string | number | null>;
 type SqlStatement = { sql: string; args?: SqlArgs };
 
+export async function withTransientDatabaseRetry<T>(operation: () => Promise<T>, attempts = 3, delayMs = 100): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < Math.max(1, attempts); attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt + 1 >= Math.max(1, attempts)) throw error;
+      const waitMs = Math.max(0, delayMs) * (attempt + 1);
+      if (waitMs) await new Promise(resolve => setTimeout(resolve, waitMs));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Database operation failed');
+}
+
 async function dbRun(sql: string, args: SqlArgs = []): Promise<void> {
-  if (tursoClient) { await tursoClient.execute({ sql, args }); return; }
+  if (tursoClient) { await withTransientDatabaseRetry(() => tursoClient!.execute({ sql, args })); return; }
   localDatabase!.prepare(sql).run(...args);
 }
 
 async function dbAll<T>(sql: string, args: SqlArgs = []): Promise<T[]> {
-  if (tursoClient) return (await tursoClient.execute({ sql, args })).rows as unknown as T[];
+  if (tursoClient) return (await withTransientDatabaseRetry(() => tursoClient!.execute({ sql, args }))).rows as unknown as T[];
   return localDatabase!.prepare(sql).all(...args) as unknown as T[];
 }
 
 async function dbGet<T>(sql: string, args: SqlArgs = []): Promise<T | undefined> {
-  if (tursoClient) return (await tursoClient.execute({ sql, args })).rows[0] as unknown as T | undefined;
+  if (tursoClient) return (await withTransientDatabaseRetry(() => tursoClient!.execute({ sql, args }))).rows[0] as unknown as T | undefined;
   return localDatabase!.prepare(sql).get(...args) as unknown as T | undefined;
 }
 
 async function dbBatch(statements: SqlStatement[]): Promise<void> {
   if (tursoClient) {
-    await tursoClient.batch(statements.map(statement => ({ sql: statement.sql, args: statement.args ?? [] }) as InStatement), 'write');
+    await withTransientDatabaseRetry(() => tursoClient!.batch(statements.map(statement => ({ sql: statement.sql, args: statement.args ?? [] }) as InStatement), 'write'));
     return;
   }
   localDatabase!.exec('BEGIN IMMEDIATE');
