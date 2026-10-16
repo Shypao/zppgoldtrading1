@@ -214,6 +214,12 @@ async function loadInventoryApi() {
       if (split) db.stock.push(split);
       return JSON.parse(JSON.stringify({ split, stock: db.stock }));
     },
+    splitInventoryWithCosts(itemId, grams, splitCost, remainingCost) {
+      const item = db.stock.find(record => record.id === itemId);
+      const split = typeof splitInventoryRecord === 'function' ? splitInventoryRecord(item, grams, splitCost, remainingCost) : null;
+      if (split) db.stock.push(split);
+      return JSON.parse(JSON.stringify({ split, stock: db.stock }));
+    },
     splitPool(poolId, grams) {
       const pool = db.inventoryPools.find(item => item.id === poolId);
       const result = typeof splitInventoryPool === 'function' ? splitInventoryPool(pool, grams) : null;
@@ -1252,6 +1258,23 @@ test('splitting inventory creates a proportional-cost record without changing th
   assert.equal(split.netWeight, 10);
   assert.equal(original.cost + split.cost, 412673);
   assert.equal(split.payout, split.cost);
+});
+
+test('splitting inventory allows manual costs for both resulting records', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [{ id: 'manual-cost-source', date: '2026-09-17', customerName: 'Seller', metal: 'Gold', karat: '10K', itemType: 'Scrap', status: 'Available', netWeight: 10, currentWeight: 10, payout: 10000, cost: 10000 }];
+  state.inventoryPools = [];
+  api.setState(state);
+  const result = api.splitInventoryWithCosts('manual-cost-source', 6, 5000, 5000);
+  const original = result.stock.find(item => item.id === 'manual-cost-source');
+  const split = result.stock.find(item => item.inventorySplitFromId === 'manual-cost-source');
+  assert.equal(original.currentWeight, 4);
+  assert.equal(original.cost, 5000);
+  assert.equal(split.currentWeight, 6);
+  assert.equal(split.cost, 5000);
+  assert.equal(split.payout, 5000);
+  assert.equal(api.splitInventoryWithCosts('manual-cost-source', 1, 6000, 6000).split, null);
 });
 
 test('a same-metal pool with several purities keeps Mixed selected when edited', async () => {

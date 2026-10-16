@@ -3441,19 +3441,21 @@ function openInventorySplitModal(id){
   const modal=document.createElement('div');modal.id='inventory_split_modal';modal.className='modal-backdrop';
   modal.innerHTML=`<form class="summary-modal" onsubmit="confirmInventorySplit(event)" role="dialog" aria-modal="true" aria-labelledby="inventory_split_title">
     <div class="summary-modal-head"><div><div class="eyebrow">Administrator inventory action</div><h2 id="inventory_split_title">Split inventory</h2></div><button type="button" class="modal-close" onclick="closeInventorySplitModal()" aria-label="Close">×</button></div>
-    <p class="form-note" style="margin:16px 0;">Separate part of the current balance into a new record. The original purchase history stays unchanged, and the remaining cost is divided proportionally.</p>
+    <p class="form-note" style="margin:16px 0;">Separate part of the current balance into a new record. Set both costs manually; together they must equal the current remaining cost.</p>
     <div class="move-confirmation-summary"><div><span>Current weight</span><strong>${fmtWeight(item.currentWeight)}</strong></div><div><span>Remaining cost</span><strong>${fmtMoneyExact(item.cost)}</strong></div></div>
-    <div class="field"><label for="inventory_split_weight">Weight to split (g)</label><input id="inventory_split_weight" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" required placeholder="Example: 10.00"><span class="hint">The original record keeps the remaining grams.</span></div>
+    <div class="form-grid"><div class="field"><label for="inventory_split_weight">Weight to split (g)</label><input id="inventory_split_weight" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" required placeholder="Example: 6.00"><span class="hint">The original record keeps the remaining grams.</span></div><div class="field"><label for="inventory_split_cost">Cost of split record (PHP)</label><input id="inventory_split_cost" type="number" min="0" step="0.01" required value="${roundMoney(Number(item.cost||0)*(0.5))}"></div><div class="field"><label for="inventory_split_remaining_cost">Cost kept on original (PHP)</label><input id="inventory_split_remaining_cost" type="number" min="0" step="0.01" required value="${roundMoney(Number(item.cost||0)-roundMoney(Number(item.cost||0)*(0.5)))}"></div></div><span class="hint">The two cost fields must add up to ${fmtMoneyExact(item.cost)}.</span>
     <div class="form-actions"><button type="button" class="btn secondary" onclick="closeInventorySplitModal()">Cancel</button><button type="submit" class="btn">Split inventory</button></div>
   </form>`;
   modal.addEventListener('click',event=>{if(event.target===modal)closeInventorySplitModal();});document.body.appendChild(modal);document.getElementById('inventory_split_weight')?.focus();
 }
 function closeInventorySplitModal(){document.getElementById('inventory_split_modal')?.remove();}
-function splitInventoryRecord(item,splitWeight){
+function splitInventoryRecord(item,splitWeight,customSplitCost,customRemainderCost){
   const current=roundWeight(item?.currentWeight),amount=roundWeight(splitWeight);
   if(!item||item.inventoryPoolId||!Number.isFinite(amount)||amount<=0||amount>=current)return null;
-  const splitCost=roundMoney(Number(item.cost||0)*(amount/current));
-  const remainderCost=roundMoney(Number(item.cost||0)-splitCost);
+  const originalCost=roundMoney(Number(item.cost||0)),automaticSplitCost=roundMoney(originalCost*(amount/current));
+  const splitCost=customSplitCost===undefined?automaticSplitCost:roundMoney(Number(customSplitCost));
+  const remainderCost=customRemainderCost===undefined?roundMoney(originalCost-splitCost):roundMoney(Number(customRemainderCost));
+  if(!Number.isFinite(splitCost)||!Number.isFinite(remainderCost)||splitCost<0||remainderCost<0||Math.abs(splitCost+remainderCost-originalCost)>0.01)return null;
   item.currentWeight=roundWeight(current-amount);item.cost=remainderCost;
   return {...item,id:uid('stk'),netWeight:amount,currentWeight:amount,cost:splitCost,payout:splitCost,inventorySplitFromId:item.id,inventorySplitAt:new Date().toISOString(),remarks:item.remarks?`${item.remarks} · Split inventory`:'Split inventory'};
 }
@@ -3462,8 +3464,9 @@ async function confirmInventorySplit(event){
   const modal=document.getElementById('inventory_split_modal');const input=document.getElementById('inventory_split_weight');
   const item=db.stock.find(record=>record.id===editingInventoryId);
   if(!item){closeInventorySplitModal();return;}
-  const beforeState=JSON.parse(JSON.stringify(db)),split=splitInventoryRecord(item,Number(input?.value));
-  if(!split){toast('Enter a weight smaller than the current inventory balance');return;}
+  const splitCost=Number(document.getElementById('inventory_split_cost')?.value),remainingCost=Number(document.getElementById('inventory_split_remaining_cost')?.value);
+  const beforeState=JSON.parse(JSON.stringify(db)),split=splitInventoryRecord(item,Number(input?.value),splitCost,remainingCost);
+  if(!split){toast('Enter a valid weight and make sure both costs add up to the original remaining cost');return;}
   db.stock.push(split);
   if(!await saveDB()){db=beforeState;render();toast('The inventory was not split');return;}
   closeInventorySplitModal();closeAdminEditModal();render();toast(`${fmtWeight(split.currentWeight)} split into a new inventory record`);
