@@ -3437,18 +3437,35 @@ function openInventorySplitModal(id){
   const item=db.stock.find(record=>record.id===id);
   if(!item||item.inventoryPoolId){toast('Pooled inventory must be split from the pool editor');return;}
   if(Number(item.currentWeight)<=0){toast('Only inventory with a remaining weight can be split');return;}
+  inventorySplitCostOverridden=false;
   document.getElementById('inventory_split_modal')?.remove();
   const modal=document.createElement('div');modal.id='inventory_split_modal';modal.className='modal-backdrop';
   modal.innerHTML=`<form class="summary-modal" onsubmit="confirmInventorySplit(event)" role="dialog" aria-modal="true" aria-labelledby="inventory_split_title">
     <div class="summary-modal-head"><div><div class="eyebrow">Administrator inventory action</div><h2 id="inventory_split_title">Split inventory</h2></div><button type="button" class="modal-close" onclick="closeInventorySplitModal()" aria-label="Close">×</button></div>
     <p class="form-note" style="margin:16px 0;">Separate part of the current balance into a new record. Set both costs manually; together they must equal the current remaining cost.</p>
     <div class="move-confirmation-summary"><div><span>Current weight</span><strong>${fmtWeight(item.currentWeight)}</strong></div><div><span>Remaining cost</span><strong>${fmtMoneyExact(item.cost)}</strong></div></div>
-    <div class="form-grid"><div class="field"><label for="inventory_split_weight">Weight to split (g)</label><input id="inventory_split_weight" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" required placeholder="Example: 6.00"><span class="hint">The original record keeps the remaining grams.</span></div><div class="field"><label for="inventory_split_cost">Cost of split record (PHP)</label><input id="inventory_split_cost" type="number" min="0" step="0.01" required value="${roundMoney(Number(item.cost||0)*(0.5))}"></div><div class="field"><label for="inventory_split_remaining_cost">Cost kept on original (PHP)</label><input id="inventory_split_remaining_cost" type="number" min="0" step="0.01" required value="${roundMoney(Number(item.cost||0)-roundMoney(Number(item.cost||0)*(0.5)))}"></div></div><span class="hint">The two cost fields must add up to ${fmtMoneyExact(item.cost)}.</span>
+    <div class="form-grid"><div class="field"><label for="inventory_split_weight">Weight to split (g)</label><input id="inventory_split_weight" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" required value="${roundWeight(Number(item.currentWeight)/2)}" oninput="updateInventorySplitCostPreview()"><span class="hint">The original record keeps the remaining grams.</span></div><div class="field"><label for="inventory_split_cost">Cost of split record (PHP)</label><input id="inventory_split_cost" type="text" inputmode="decimal" required value="${formatSplitMoneyInput(Number(item.cost||0)*0.5)}" oninput="markInventorySplitCostOverride()" onblur="formatSplitMoneyInputElement(this)"></div><div class="field"><label for="inventory_split_remaining_cost">Cost kept on original (PHP)</label><input id="inventory_split_remaining_cost" type="text" inputmode="decimal" required value="${formatSplitMoneyInput(Number(item.cost||0)*0.5)}" oninput="markInventorySplitCostOverride()" onblur="formatSplitMoneyInputElement(this)"></div></div><span class="hint">Costs update automatically with the grams until you edit a cost. Both costs must add up to ${fmtMoneyExact(item.cost)}.</span>
     <div class="form-actions"><button type="button" class="btn secondary" onclick="closeInventorySplitModal()">Cancel</button><button type="submit" class="btn">Split inventory</button></div>
   </form>`;
   modal.addEventListener('click',event=>{if(event.target===modal)closeInventorySplitModal();});document.body.appendChild(modal);document.getElementById('inventory_split_weight')?.focus();
 }
 function closeInventorySplitModal(){document.getElementById('inventory_split_modal')?.remove();}
+let inventorySplitCostOverridden=false;
+function markInventorySplitCostOverride(){ inventorySplitCostOverridden=true; }
+function formatSplitMoneyInput(value){
+  const numeric=Number(String(value??'').replace(/,/g,''));
+  return Number.isFinite(numeric)?numeric.toLocaleString('en-PH',{minimumFractionDigits:0,maximumFractionDigits:2}):'';
+}
+function formatSplitMoneyInputElement(input){ if(input)input.value=formatSplitMoneyInput(input.value); }
+function updateInventorySplitCostPreview(){
+  if(inventorySplitCostOverridden)return;
+  const item=db.stock.find(record=>record.id===editingInventoryId),weight=Number(item?.currentWeight||0),amount=Number(document.getElementById('inventory_split_weight')?.value||0);
+  if(!item||!weight||!Number.isFinite(amount)||amount<=0||amount>=weight)return;
+  const splitCost=roundMoney(Number(item.cost||0)*(amount/weight));
+  const splitInput=document.getElementById('inventory_split_cost'),remainingInput=document.getElementById('inventory_split_remaining_cost');
+  if(splitInput)splitInput.value=formatSplitMoneyInput(splitCost);
+  if(remainingInput)remainingInput.value=formatSplitMoneyInput(roundMoney(Number(item.cost||0)-splitCost));
+}
 function splitInventoryRecord(item,splitWeight,customSplitCost,customRemainderCost){
   const current=roundWeight(item?.currentWeight),amount=roundWeight(splitWeight);
   if(!item||item.inventoryPoolId||!Number.isFinite(amount)||amount<=0||amount>=current)return null;
@@ -3464,7 +3481,7 @@ async function confirmInventorySplit(event){
   const modal=document.getElementById('inventory_split_modal');const input=document.getElementById('inventory_split_weight');
   const item=db.stock.find(record=>record.id===editingInventoryId);
   if(!item){closeInventorySplitModal();return;}
-  const splitCost=Number(document.getElementById('inventory_split_cost')?.value),remainingCost=Number(document.getElementById('inventory_split_remaining_cost')?.value);
+  const splitCost=Number(String(document.getElementById('inventory_split_cost')?.value||'').replace(/,/g,'')),remainingCost=Number(String(document.getElementById('inventory_split_remaining_cost')?.value||'').replace(/,/g,''));
   const beforeState=JSON.parse(JSON.stringify(db)),split=splitInventoryRecord(item,Number(input?.value),splitCost,remainingCost);
   if(!split){toast('Enter a valid weight and make sure both costs add up to the original remaining cost');return;}
   db.stock.push(split);
