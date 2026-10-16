@@ -24,6 +24,7 @@ let ledgerDB = null;
 let storageLocationCleanupNeeded=false;
 
 function uid(p){ return (p||'id')+'_'+Math.random().toString(36).slice(2,9); }
+function isPurchaseRecord(item){ return !item?.sourceRefiningBatchId&&!item?.inventorySplitFromId; }
 function todayStr(){
   const parts=new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
   const value=Object.fromEntries(parts.map(part=>[part.type,part.value]));
@@ -659,7 +660,7 @@ function purchaseHistoryDateMatch(item){
   return (!purchaseHistoryFrom||item.date>=purchaseHistoryFrom)&&(!purchaseHistoryTo||item.date<=purchaseHistoryTo);
 }
 function purchaseHistoryRecords(){
-  return db.stock.filter(item=>!item.sourceRefiningBatchId&&purchaseHistoryDateMatch(item)).slice().sort((a,b)=>b.date.localeCompare(a.date));
+  return db.stock.filter(item=>isPurchaseRecord(item)&&purchaseHistoryDateMatch(item)).slice().sort((a,b)=>b.date.localeCompare(a.date));
 }
 function applyPurchaseHistoryDates(){
   const from=val('purchase_history_from'),to=val('purchase_history_to');
@@ -745,7 +746,7 @@ function dailyMetalPurityBreakdownMarkup(items,metal){
 }
 function closeTodayMetalPurchases(){ document.getElementById('today_metal_purchases_modal')?.remove(); }
 function openTodayMetalPurchases(metal){
-  const items=db.stock.filter(item=>!item.sourceRefiningBatchId&&item.date===todayStr()&&item.metal===metal).slice().sort((a,b)=>String(b.recordedAt||'').localeCompare(String(a.recordedAt||'')));
+  const items=db.stock.filter(item=>isPurchaseRecord(item)&&item.date===todayStr()&&item.metal===metal).slice().sort((a,b)=>String(b.recordedAt||'').localeCompare(String(a.recordedAt||'')));
   const summary=todayPurchaseMetalSummary(items,metal);
   closeTodayMetalPurchases();
   const modal=document.createElement('div'); modal.id='today_metal_purchases_modal'; modal.className='modal-backdrop';
@@ -761,7 +762,7 @@ function openTodayMetalPurchases(metal){
 }
 function renderDashboard(){
   const today = todayStr(), mon = monthStr();
-  const purchases=db.stock.filter(s=>!s.sourceRefiningBatchId);
+  const purchases=db.stock.filter(isPurchaseRecord);
   const pToday = purchases.filter(s=>s.date===today);
   const pMonth = purchases.filter(s=>s.date.startsWith(mon));
   const payoutToday = pToday.reduce((a,s)=>a+Number(s.payout),0);
@@ -3159,7 +3160,7 @@ function renderInventory(){
   if(inventorySelectedDate!=='All'&&(inventorySelectedDate<week.start||inventorySelectedDate>week.end)) inventorySelectedDate=week.start;
   const dates=Array.from({length:7},(_,index)=>dateKeyPlusDays(week.start,index));
   const dailyRows=dates.map(date=>{
-    const purchases=db.stock.filter(item=>item.date===date&&!item.sourceRefiningBatchId);
+    const purchases=db.stock.filter(item=>item.date===date&&isPurchaseRecord(item));
     const stock=purchases.filter(activeInventoryRecord),available=stock.filter(selectableInventory);
     return {date,purchases,stock,available,weight:available.reduce((sum,item)=>sum+Number(item.currentWeight),0),cost:available.reduce((sum,item)=>sum+Number(item.cost),0)};
   });
@@ -3380,7 +3381,44 @@ function openInventoryEdit(id){
     <div class="field"><label>Staff member</label><input id="edit_inventory_staff" value="${esc(item.staff||'')}"></div>
     <div class="field"><label>Item type</label><select id="edit_inventory_type"><option ${item.itemType==='Jewelry'?'selected':''}>Jewelry</option><option ${item.itemType==='Scrap'?'selected':''}>Scrap</option></select></div>
     <div class="field span-2"><label>Remarks</label><textarea id="edit_inventory_remarks">${esc(item.remarks||'')}</textarea></div>
+    <div class="form-actions" style="justify-content:flex-start;margin-top:10px;"><button type="button" class="btn secondary small" onclick="openInventorySplitModal('${esc(item.id)}')">Split inventory</button><span class="form-note">Separate part of the current weight into a new inventory record.</span></div>
   </div><p class="form-note">An Administrator can correct the current inventory weight in either direction. Original metal, purchase weight, rate, and payout remain locked; the existing remaining cost is not recalculated from the weight.</p>`,'saveInventoryEdit','deleteInventoryRecord');
+}
+function openInventorySplitModal(id){
+  if(!adminEditGuard())return;
+  const item=db.stock.find(record=>record.id===id);
+  if(!item||item.inventoryPoolId){toast('Pooled inventory must be split from the pool editor');return;}
+  if(Number(item.currentWeight)<=0){toast('Only inventory with a remaining weight can be split');return;}
+  document.getElementById('inventory_split_modal')?.remove();
+  const modal=document.createElement('div');modal.id='inventory_split_modal';modal.className='modal-backdrop';
+  modal.innerHTML=`<form class="summary-modal" onsubmit="confirmInventorySplit(event)" role="dialog" aria-modal="true" aria-labelledby="inventory_split_title">
+    <div class="summary-modal-head"><div><div class="eyebrow">Administrator inventory action</div><h2 id="inventory_split_title">Split inventory</h2></div><button type="button" class="modal-close" onclick="closeInventorySplitModal()" aria-label="Close">×</button></div>
+    <p class="form-note" style="margin:16px 0;">Separate part of the current balance into a new record. The original purchase history stays unchanged, and the remaining cost is divided proportionally.</p>
+    <div class="move-confirmation-summary"><div><span>Current weight</span><strong>${fmtWeight(item.currentWeight)}</strong></div><div><span>Remaining cost</span><strong>${fmtMoneyExact(item.cost)}</strong></div></div>
+    <div class="field"><label for="inventory_split_weight">Weight to split (g)</label><input id="inventory_split_weight" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" required placeholder="Example: 10.00"><span class="hint">The original record keeps the remaining grams.</span></div>
+    <div class="form-actions"><button type="button" class="btn secondary" onclick="closeInventorySplitModal()">Cancel</button><button type="submit" class="btn">Split inventory</button></div>
+  </form>`;
+  modal.addEventListener('click',event=>{if(event.target===modal)closeInventorySplitModal();});document.body.appendChild(modal);document.getElementById('inventory_split_weight')?.focus();
+}
+function closeInventorySplitModal(){document.getElementById('inventory_split_modal')?.remove();}
+function splitInventoryRecord(item,splitWeight){
+  const current=roundWeight(item?.currentWeight),amount=roundWeight(splitWeight);
+  if(!item||item.inventoryPoolId||!Number.isFinite(amount)||amount<=0||amount>=current)return null;
+  const splitCost=roundMoney(Number(item.cost||0)*(amount/current));
+  const remainderCost=roundMoney(Number(item.cost||0)-splitCost);
+  item.currentWeight=roundWeight(current-amount);item.cost=remainderCost;
+  return {...item,id:uid('stk'),netWeight:amount,currentWeight:amount,cost:splitCost,payout:splitCost,inventorySplitFromId:item.id,inventorySplitAt:new Date().toISOString(),remarks:item.remarks?`${item.remarks} · Split inventory`:'Split inventory'};
+}
+async function confirmInventorySplit(event){
+  event?.preventDefault();if(!adminEditGuard())return;
+  const modal=document.getElementById('inventory_split_modal');const input=document.getElementById('inventory_split_weight');
+  const item=db.stock.find(record=>record.id===editingInventoryId);
+  if(!item){closeInventorySplitModal();return;}
+  const beforeState=JSON.parse(JSON.stringify(db)),split=splitInventoryRecord(item,Number(input?.value));
+  if(!split){toast('Enter a weight smaller than the current inventory balance');return;}
+  db.stock.push(split);
+  if(!await saveDB()){db=beforeState;render();toast('The inventory was not split');return;}
+  closeInventorySplitModal();closeAdminEditModal();render();toast(`${fmtWeight(split.currentWeight)} split into a new inventory record`);
 }
 async function saveInventoryEdit(){
   if(!adminEditGuard()) return;
@@ -4383,7 +4421,7 @@ function renderLiquidationHistory(){
 }
 
 function renderReports(){
-  const allPurchases=db.stock.filter(s=>!s.sourceRefiningBatchId);
+  const allPurchases=db.stock.filter(isPurchaseRecord);
   const allReadyStock=db.stock.filter(s=>!s.inventoryPoolId&&(s.status==='Available'||s.status==='For Refining')&&s.currentWeight>0);
   const readyStock=allReadyStock.filter(readinessDateMatch).slice().sort((a,b)=>b.date.localeCompare(a.date));
   const renderPurchaseReport=()=>{

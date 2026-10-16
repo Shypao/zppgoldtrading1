@@ -441,7 +441,7 @@ function cashflowRecordDateKey(record: LedgerRecord): string {
 }
 
 function cashflowPurchases(state: LedgerState, date: string) {
-  const purchases = state.stock.filter(record => !record.sourceRefiningBatchId && cashflowRecordDateKey(record) === date);
+  const purchases = state.stock.filter(record => !record.sourceRefiningBatchId && !record.inventorySplitFromId && cashflowRecordDateKey(record) === date);
   const totalPurchases = purchases.reduce((sum, record) => sum + Number(record.payout ?? 0), 0);
   const cashPurchases = purchases
     .filter(record => String(record.paymentMethod ?? '').toLowerCase() === 'cash')
@@ -480,7 +480,7 @@ function cashflowPurchases(state: LedgerState, date: string) {
 }
 
 export function cashPurchasesSinceSetting(records: LedgerRecord[], date: string, setting: CashflowDaySetting): number {
-  const cashRecords=records.filter(record=>!record.sourceRefiningBatchId&&cashflowRecordDateKey(record)===date&&String(record.paymentMethod??'').toLowerCase()==='cash');
+  const cashRecords=records.filter(record=>!record.sourceRefiningBatchId&&!record.inventorySplitFromId&&cashflowRecordDateKey(record)===date&&String(record.paymentMethod??'').toLowerCase()==='cash');
   const setAt=Date.parse(setting.setAt||'');
   const allPurchasesAreTimed=Number.isFinite(setAt)&&cashRecords.every(record=>Number.isFinite(Date.parse(String(record.recordedAt??''))));
   if(allPurchasesAreTimed){
@@ -502,7 +502,7 @@ function cashflowBalanceForSetting(state: LedgerState, date: string, setting: Ca
 export function cashflowCarriedBalance(records: LedgerRecord[], previousDate: string, date: string, previousSetting: CashflowDaySetting): number {
   const previousBalance=cashflowBalanceForSettingRecords(records,previousDate,previousSetting);
   const skippedCashPurchases=records
-    .filter(record=>!record.sourceRefiningBatchId&&cashflowRecordDateKey(record)>previousDate&&cashflowRecordDateKey(record)<date&&String(record.paymentMethod??'').toLowerCase()==='cash')
+    .filter(record=>!record.sourceRefiningBatchId&&!record.inventorySplitFromId&&cashflowRecordDateKey(record)>previousDate&&cashflowRecordDateKey(record)<date&&String(record.paymentMethod??'').toLowerCase()==='cash')
     .reduce((sum,record)=>sum+Number(record.payout??0),0);
   return Math.round((previousBalance-skippedCashPurchases)*100)/100;
 }
@@ -559,7 +559,7 @@ export function cashflowMovementTotalsForRecords(
   const latestReset=resets.sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)))[0];
   if(latestReset){
     const resetAt=Date.parse(latestReset.createdAt);
-    const cashRecords=records.filter(record=>!record.sourceRefiningBatchId&&cashflowRecordDateKey(record)===date&&String(record.paymentMethod??'').toLowerCase()==='cash');
+    const cashRecords=records.filter(record=>!record.sourceRefiningBatchId&&!record.inventorySplitFromId&&cashflowRecordDateKey(record)===date&&String(record.paymentMethod??'').toLowerCase()==='cash');
     const movementAdjustments=adjustments.filter(item=>item.operation==='add'||item.operation==='deduct');
     const allMovementsAreTimed=cashRecords.every(record=>Number.isFinite(Date.parse(String(record.recordedAt??''))))&&movementAdjustments.every(item=>Number.isFinite(Date.parse(String(item.createdAt??''))));
     if(allMovementsAreTimed){
@@ -570,7 +570,7 @@ export function cashflowMovementTotalsForRecords(
       return {cashIn:round(cashIn),manualCashOut:round(manualCashOut),cashOut:round(cashPurchases+manualCashOut)};
     }
   }
-  const cashPurchases=records.filter(record=>!record.sourceRefiningBatchId&&cashflowRecordDateKey(record)===date&&String(record.paymentMethod??'').toLowerCase()==='cash').reduce((sum,record)=>sum+Number(record.payout??0),0);
+  const cashPurchases=records.filter(record=>!record.sourceRefiningBatchId&&!record.inventorySplitFromId&&cashflowRecordDateKey(record)===date&&String(record.paymentMethod??'').toLowerCase()==='cash').reduce((sum,record)=>sum+Number(record.payout??0),0);
   return cashflowMovementTotals({cashPurchases},adjustments,baseline);
 }
 

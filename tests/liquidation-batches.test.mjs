@@ -208,6 +208,12 @@ async function loadInventoryApi() {
       openInventoryEdit(id);
       return appended.at(-1)?.innerHTML || '';
     },
+    splitInventory(itemId, grams) {
+      const item = db.stock.find(record => record.id === itemId);
+      const split = typeof splitInventoryRecord === 'function' ? splitInventoryRecord(item, grams) : null;
+      if (split) db.stock.push(split);
+      return JSON.parse(JSON.stringify({ split, stock: db.stock }));
+    },
     openInventoryRefiningConfirmation(itemIds) {
       appended.length = 0;
       inventoryMoveSelection.clear();
@@ -1203,6 +1209,25 @@ test('inventory edit offers a metal-specific karat or purity selector', async ()
   assert.match(modal, /<option value="600"[^>]*>60%<\/option>/);
   assert.doesNotMatch(modal, /id="edit_inventory_weight"[^>]*max=/);
   assert.match(modal, /corrected upward or downward/i);
+  assert.match(modal, /Split inventory/);
+});
+
+test('splitting inventory creates a proportional-cost record without changing the purchase basis', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [{ id: 'split-source', date: '2026-09-17', customerName: 'Seller', metal: 'Gold', karat: '18K', itemType: 'Scrap', status: 'Available', netWeight: 49.9, currentWeight: 49.9, payout: 412673, cost: 412673, paymentMethod: 'Cash' }];
+  state.inventoryPools = [];
+  api.setState(state);
+
+  const result = api.splitInventory('split-source', 10);
+  const original = result.stock.find(item => item.id === 'split-source');
+  const split = result.stock.find(item => item.inventorySplitFromId === 'split-source');
+  assert.equal(original.currentWeight, 39.9);
+  assert.equal(split.currentWeight, 10);
+  assert.equal(original.netWeight, 49.9);
+  assert.equal(split.netWeight, 10);
+  assert.equal(original.cost + split.cost, 412673);
+  assert.equal(split.payout, split.cost);
 });
 
 test('a same-metal pool with several purities keeps Mixed selected when edited', async () => {
