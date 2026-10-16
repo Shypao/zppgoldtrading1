@@ -1005,7 +1005,7 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
       const totals = cashflowPurchases(state, date);
       const settings = await loadCashflowSettings();
       const previous = await carryForwardCashflowSetting(state,date,settings);
-      if (!previous && operation !== 'set') return sendJson(response, 400, { error: 'Set the cash on hand before adding or deducting cash' });
+      if (!previous && operation !== 'set' && operation !== 'add') return sendJson(response, 400, { error: 'Set the cash on hand before deducting cash' });
       const currentBalance = previous ? cashflowBalanceForSetting(state,date,previous) : 0;
       if (operation === 'reset') {
         if (!previous) return sendJson(response, 400, { error: 'Set the cash on hand before resetting IN and OUT' });

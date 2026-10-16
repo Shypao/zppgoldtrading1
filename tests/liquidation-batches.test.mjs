@@ -330,6 +330,11 @@ async function loadInventoryApi() {
       if (typeof openCashflowResetConfirmation === 'function') openCashflowResetConfirmation();
       return appended.at(-1)?.innerHTML || '';
     },
+    openCashflowEditorModal() {
+      appended.length = 0;
+      if (typeof openCashflowEditor === 'function') openCashflowEditor();
+      return appended.at(-1)?.innerHTML || '';
+    },
     profitPreview(cost, total) {
       const elements = {
         complete_batch_total: { value: total },
@@ -1269,6 +1274,14 @@ test('cash-on-hand card never converts a missing synced balance into zero', asyn
   api.setCashflow({ date: api.cashflowDate(new Date().toISOString()), configured: true, cashOnHand: null, cashIn: 0, cashOut: 0 });
 
   assert.match(api.cashflowCardMarkup(), /<strong>Not set<\/strong>/);
+});
+
+test('cashflow editor allows adding the initial cash balance', async () => {
+  const api = await loadInventoryApi();
+  api.setCashflow({ date: api.today(), configured: false, cashOnHand: null, cashIn: 0, cashOut: 0 });
+
+  const modal = api.openCashflowEditorModal();
+  assert.match(modal, /value="add">Add cash/);
 });
 
 test('admin can open a confirmation before resetting IN and OUT counters', async () => {
