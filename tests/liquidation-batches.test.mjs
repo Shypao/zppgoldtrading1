@@ -769,7 +769,7 @@ test('a manually created On Hold pool stays On Hold after partial liquidation', 
   assert.equal(result.pool.status, 'ON HOLD');
   assert.equal(result.pool.remainingWeight, 2000);
   assert.equal(result.pool.remainingCost, 200000);
-  assert.match(api.renderPools(), /Silver reserve/);
+  assert.doesNotMatch(api.renderPools(), /Silver reserve/);
   assert.match(api.renderPools(), /On Hold/);
   assert.match(api.renderPools(), /Liquidate Pool/);
 });
@@ -914,7 +914,7 @@ test('a manual pool may combine mixed metals and purities', async () => {
   assert.equal(allocation.prepared.cost, 295000);
   assert.equal(result.pool.remainingWeight, 500);
   assert.equal(result.pool.remainingCost, 295000);
-  assert.match(api.renderPools(), /Mixed reserve/);
+  assert.doesNotMatch(api.renderPools(), /Mixed reserve/);
   assert.match(api.renderPools(), /metal-tag mixed/);
 });
 
@@ -943,7 +943,7 @@ test('inventory displays a pool as one available row with combined weight and co
 
   const html = api.renderInventory();
 
-  assert.equal((html.match(/>Silver pool</g) || []).length, 1, 'the pool should be rendered as one visible inventory row');
+  assert.doesNotMatch(html, />Silver pool</, 'the pool customer cell should remain blank');
   assert.match(html, /POOL-0003/);
   assert.match(html, /3000\.00 g/);
   assert.match(html, /PHP 300,000/);
