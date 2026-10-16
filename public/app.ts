@@ -3374,20 +3374,20 @@ function openInventoryEdit(id){
     <div class="field"><label>Date</label><input id="edit_inventory_date" type="date" value="${esc(item.date||todayStr())}"></div>
     <div class="field"><label>Classification</label><select id="edit_inventory_status">${statuses.map(status=>`<option ${item.status===status?'selected':''}>${status}</option>`).join('')}</select></div>
     <div class="field"><label>Karat / purity</label><select id="edit_inventory_karat">${gradeKeys.map(key=>`<option value="${esc(key)}" ${item.karat===key?'selected':''}>${esc(gradeLabel(item.metal,key))}</option>`).join('')}</select></div>
-    <div class="field"><label>Current weight (g)</label><input id="edit_inventory_weight" type="number" min="0" max="${Number(item.netWeight)}" step="0.01" value="${Number(item.currentWeight)}"></div>
+    <div class="field"><label>Current weight (g)</label><input id="edit_inventory_weight" type="number" min="0" step="0.01" value="${Number(item.currentWeight)}"><span class="hint">May be corrected upward or downward. The original purchase weight and price stay unchanged.</span></div>
     <div class="field"><label>Remaining cost (PHP)</label><input id="edit_inventory_cost" type="number" min="0" step="0.01" value="${Number(item.cost)}"></div>
     <div class="field"><label>Payment method</label><input id="edit_inventory_payment" value="${esc(item.paymentMethod||'')}"></div>
     <div class="field"><label>Staff member</label><input id="edit_inventory_staff" value="${esc(item.staff||'')}"></div>
     <div class="field"><label>Item type</label><select id="edit_inventory_type"><option ${item.itemType==='Jewelry'?'selected':''}>Jewelry</option><option ${item.itemType==='Scrap'?'selected':''}>Scrap</option></select></div>
     <div class="field span-2"><label>Remarks</label><textarea id="edit_inventory_remarks">${esc(item.remarks||'')}</textarea></div>
-  </div><p class="form-note">An Administrator can correct the recorded karat or purity. Original metal, purchase weight, rate, and payout remain locked.</p>`,'saveInventoryEdit','deleteInventoryRecord');
+  </div><p class="form-note">An Administrator can correct the current inventory weight in either direction. Original metal, purchase weight, rate, and payout remain locked; the existing remaining cost is not recalculated from the weight.</p>`,'saveInventoryEdit','deleteInventoryRecord');
 }
 async function saveInventoryEdit(){
   if(!adminEditGuard()) return;
   const item=db.stock.find(s=>s.id===editingInventoryId); if(!item) return;
   const weight=Number(val('edit_inventory_weight')),cost=Number(val('edit_inventory_cost')),status=val('edit_inventory_status');
   if(!val('edit_inventory_date')){ toast('Date is required'); return; }
-  if(!Number.isFinite(weight)||weight<0||weight>Number(item.netWeight)){ toast('Current weight must be between 0 and the original net weight'); return; }
+  if(!Number.isFinite(weight)||weight<0){ toast('Enter a valid non-negative current weight'); return; }
   if(!Number.isFinite(cost)||cost<0){ toast('Enter a valid remaining cost'); return; }
   if(weight===0&&!['Liquidated','Refined','Sold'].includes(status)){ toast('Choose Liquidated, Refined, or Sold when the remaining weight is zero'); return; }
   if(weight>0&&['Liquidated','Refined','Sold'].includes(status)){ toast('Liquidated, Refined, or Sold inventory must have zero remaining weight'); return; }
