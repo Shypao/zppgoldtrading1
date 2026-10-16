@@ -1828,6 +1828,7 @@ async function deleteCustomerRecord() {
 }
 /* ============================= BUYING ============================= */
 let purchaseBatch = [];
+let purchaseCommitBusy = false;
 let buyingDraftForm = {};
 let buyingDraftSaveTimer = null;
 let buyingDraftSavedDate = '';
@@ -2620,36 +2621,42 @@ function openPurchaseSummary() {
 }
 function closePurchaseSummary() { document.getElementById('purchase_summary_modal')?.remove(); }
 async function commitPurchaseBatch(printAfter = false) {
-    if (!purchaseBatch.length)
+    if (!purchaseBatch.length || purchaseCommitBusy)
         return;
-    captureBuyingDraftForm();
-    const customer = purchaseCustomer();
-    const previousCustomerCount = db.customers.length, previousStockCount = db.stock.length;
-    let customerId = customer.id;
-    if (customer.isNew) {
-        customerId = uid('cust');
-        db.customers.push({ id: customerId, name: customer.name, contact: '', notes: '' });
+    purchaseCommitBusy = true;
+    try {
+        captureBuyingDraftForm();
+        const customer = purchaseCustomer();
+        const previousCustomerCount = db.customers.length, previousStockCount = db.stock.length;
+        let customerId = customer.id;
+        if (customer.isNew) {
+            customerId = uid('cust');
+            db.customers.push({ id: customerId, name: customer.name, contact: '', notes: '' });
+        }
+        const batchId = uid('buy');
+        const shared = { date: val('b_date') || todayStr(), recordedAt: new Date().toISOString(), customerId, customerName: customer.name, paymentMethod: val('b_pay'), staff: currentUser?.displayName || 'Signed-in staff',
+            status: val('b_status'), batchId };
+        purchaseBatch.forEach(item => db.stock.push({ ...item, ...shared, id: uid('stk'), cost: item.payout, remarks: String(item.remarks ?? val('b_remarks')).trim() }));
+        const count = purchaseBatch.length, total = roundMoney(purchaseBatch.reduce((sum, item) => sum + Number(item.payout), 0));
+        const saved = await saveDB();
+        if (!saved) {
+            db.customers.splice(previousCustomerCount);
+            db.stock.splice(previousStockCount);
+            toast('The purchase was not recorded. Your payout draft is still saved.');
+            return;
+        }
+        purchaseBatch = [];
+        closePurchaseSummary();
+        await clearBuyingDraft();
+        render();
+        await syncCashflow();
+        if (printAfter)
+            openPurchaseReceipt(batchId);
+        toast(`${count} items recorded · ${fmtMoney(total)}`);
     }
-    const batchId = uid('buy');
-    const shared = { date: val('b_date') || todayStr(), recordedAt: new Date().toISOString(), customerId, customerName: customer.name, paymentMethod: val('b_pay'), staff: currentUser?.displayName || 'Signed-in staff',
-        status: val('b_status'), batchId };
-    purchaseBatch.forEach(item => db.stock.push({ ...item, ...shared, id: uid('stk'), cost: item.payout, remarks: String(item.remarks ?? val('b_remarks')).trim() }));
-    const count = purchaseBatch.length, total = roundMoney(purchaseBatch.reduce((sum, item) => sum + Number(item.payout), 0));
-    const saved = await saveDB();
-    if (!saved) {
-        db.customers.splice(previousCustomerCount);
-        db.stock.splice(previousStockCount);
-        toast('The purchase was not recorded. Your payout draft is still saved.');
-        return;
+    finally {
+        purchaseCommitBusy = false;
     }
-    purchaseBatch = [];
-    closePurchaseSummary();
-    await clearBuyingDraft();
-    render();
-    await syncCashflow();
-    if (printAfter)
-        openPurchaseReceipt(batchId);
-    toast(`${count} items recorded · ${fmtMoney(total)}`);
 }
 function receiptWeightNumber(value) { return Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 2 }); }
 function receiptMoneyNumber(value) { return Math.round(Number(value) || 0).toLocaleString('en-PH', { maximumFractionDigits: 0 }); }
@@ -4994,6 +5001,7 @@ async function saveLiquidationEdit() {
     const record = db.liquidations.find(l => l.id === editingLiquidationId);
     if (!record)
         return;
+    const beforeState = JSON.parse(JSON.stringify(db));
     const buyer = val('edit_liquidation_buyer').trim(), date = val('edit_liquidation_date');
     if (!date || !buyer) {
         toast('Date and buyer are required');
@@ -5031,8 +5039,14 @@ async function saveLiquidationEdit() {
     record.remarks = val('edit_liquidation_remarks').trim();
     record.margin = roundMoney(record.proceeds - Number(record.cost));
     record.profitMargin = Number(record.cost) > 0 ? roundMoney(record.margin / Number(record.cost) * 100) : 0;
+    const saved = await saveDB();
+    if (!saved) {
+        db = beforeState;
+        render();
+        toast('Liquidation was not updated. Refresh and try again.');
+        return;
+    }
     closeAdminEditModal();
-    await saveDB();
     render();
     toast('Liquidation updated');
 }
