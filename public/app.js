@@ -4300,7 +4300,7 @@ function openInventoryPoolEdit(id) {
     <div class="field"><label>Staff member</label><input id="edit_pool_staff" value="${esc(sharedPoolItemValue(snapshot.items, 'staff') || currentUser?.displayName || '')}"></div>
     <div class="field"><label>Item type</label><select id="edit_pool_type"><option ${itemType === 'Jewelry' ? 'selected' : ''}>Jewelry</option><option ${itemType === 'Scrap' ? 'selected' : ''}>Scrap</option>${itemType === 'Mixed' ? '<option selected>Mixed</option>' : ''}</select></div>
     <div class="field span-2"><label>Remarks</label><textarea id="edit_pool_remarks">${esc(pool.notes || '')}</textarea></div>
-  </div><p class="form-note">Changes apply to the pooled balance while every original inventory record remains traceable.</p>
+  </div><div class="form-actions" style="justify-content:flex-start;margin-top:10px;"><button type="button" class="btn secondary small" onclick="openInventoryPoolSplitModal('${esc(pool.id)}')">Split pool</button><span class="form-note">Separate part of the pooled balance into a new pool.</span></div><p class="form-note">Changes apply to the pooled balance while every original inventory record remains traceable.</p>
   <section style="margin-top:20px;padding-top:16px;border-top:2px solid var(--line);"><h3>Pool items</h3><p class="form-note">Select records to remove from this pool and return as individual Available inventory. If every record is selected, the empty pool will be deleted.</p><div class="table-wrap"><table><thead><tr><th>Select</th><th>Item</th><th>Customer</th><th class="num-head">Remaining weight</th><th class="num-head">Remaining cost</th></tr></thead><tbody>${snapshot.items.map(item => `<tr><td><input type="checkbox" data-pool-return-item-id="${esc(item.id)}" aria-label="Return ${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))} from pool"></td><td><strong>${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))}</strong><br><span class="form-note">${esc(item.itemType)}</span></td><td>${esc(item.customerName || '—')}</td><td class="num">${fmtWeight(item.currentWeight)}</td><td class="num">${fmtMoney(item.cost)}</td></tr>`).join('')}</tbody></table></div><div class="form-actions"><button class="btn secondary" type="button" onclick="returnSelectedPoolItemsToInventory()">Return selected to Inventory</button></div></section>`, 'saveInventoryPoolEdit');
 }
 function preserveDissolvedPoolReferences(pool) {
@@ -4451,6 +4451,92 @@ async function saveInventoryPoolEdit() {
     closeAdminEditModal();
     render();
     toast('Pooled inventory updated');
+}
+function openInventoryPoolSplitModal(id) {
+    if (!adminEditGuard())
+        return;
+    const pool = db.inventoryPools.find(record => record.id === id), snapshot = pool && inventoryPoolSnapshot(pool);
+    if (!pool || !snapshot?.weight) {
+        toast('Only a pool with a remaining balance can be split');
+        return;
+    }
+    if (snapshot.weight <= 0.01) {
+        toast('The pool is too small to split');
+        return;
+    }
+    document.getElementById('inventory_pool_split_modal')?.remove();
+    const modal = document.createElement('div');
+    modal.id = 'inventory_pool_split_modal';
+    modal.className = 'modal-backdrop';
+    modal.innerHTML = `<form class="summary-modal" onsubmit="confirmInventoryPoolSplit(event)" role="dialog" aria-modal="true" aria-labelledby="inventory_pool_split_title">
+    <div class="summary-modal-head"><div><div class="eyebrow">Administrator pool action</div><h2 id="inventory_pool_split_title">Split pool</h2></div><button type="button" class="modal-close" onclick="closeInventoryPoolSplitModal()" aria-label="Close">×</button></div>
+    <p class="form-note" style="margin:16px 0;">Separate part of the current pool into a new pool. The original purchase history stays unchanged, and the cost is divided proportionally.</p>
+    <div class="move-confirmation-summary"><div><span>Current pool weight</span><strong>${fmtWeight(snapshot.weight)}</strong></div><div><span>Remaining cost</span><strong>${fmtMoneyExact(snapshot.cost)}</strong></div></div>
+    <div class="field"><label for="inventory_pool_split_weight">Weight to split (g)</label><input id="inventory_pool_split_weight" type="number" min="0.01" max="${Number(snapshot.weight)}" step="0.01" required placeholder="Example: 10.00"><span class="hint">The original pool keeps the remaining grams.</span></div>
+    <div class="form-actions"><button type="button" class="btn secondary" onclick="closeInventoryPoolSplitModal()">Cancel</button><button type="submit" class="btn">Split pool</button></div>
+  </form>`;
+    modal.addEventListener('click', event => { if (event.target === modal)
+        closeInventoryPoolSplitModal(); });
+    document.body.appendChild(modal);
+    document.getElementById('inventory_pool_split_weight')?.focus();
+}
+function closeInventoryPoolSplitModal() { document.getElementById('inventory_pool_split_modal')?.remove(); }
+function splitInventoryPool(pool, splitWeight) {
+    const snapshot = inventoryPoolSnapshot(pool), current = roundWeight(snapshot.weight), amount = roundWeight(splitWeight);
+    if (!pool || !Number.isFinite(amount) || amount <= 0 || amount >= current)
+        return null;
+    const newPoolId = nextSequenceId('POOL', db.inventoryPools), splitCost = roundMoney(snapshot.cost * (amount / current));
+    let assignedWeight = 0, assignedCost = 0;
+    const splitItems = [];
+    const positive = snapshot.items.filter(item => Number(item.currentWeight || 0) > 0);
+    positive.forEach((item, index) => {
+        const itemWeight = Number(item.currentWeight || 0), portion = index === positive.length - 1 ? roundWeight(amount - assignedWeight) : roundWeight(amount * (itemWeight / current));
+        if (portion <= 0)
+            return;
+        const itemCost = index === positive.length - 1 ? roundMoney(splitCost - assignedCost) : roundMoney(Number(item.cost || 0) * (portion / itemWeight));
+        assignedWeight = roundWeight(assignedWeight + portion);
+        assignedCost = roundMoney(assignedCost + itemCost);
+        item.currentWeight = roundWeight(itemWeight - portion);
+        item.cost = roundMoney(Number(item.cost || 0) - itemCost);
+        splitItems.push({ ...item, id: uid('stk'), netWeight: portion, currentWeight: portion, cost: itemCost, payout: itemCost, inventorySplitFromId: item.id, inventorySplitAt: new Date().toISOString(), inventoryPoolId: newPoolId, remarks: item.remarks ? `${item.remarks} · Split pool` : 'Split pool' });
+    });
+    if (!splitItems.length || assignedWeight !== amount)
+        return null;
+    const composition = inventoryPoolComposition(splitItems), poolStatus = poolInventoryClassification(pool, snapshot), createdAt = new Date().toISOString();
+    const newPool = { id: newPoolId, name: `${pool.name || composition.label + ' pool'} split`, metal: composition.metal, karat: composition.karat, itemIds: splitItems.map(item => item.id), originalItems: splitItems.map(item => ({ itemId: item.id, originalWeight: item.netWeight, originalCost: item.cost, statusAtPooling: item.status })), originalWeight: amount, originalCost: splitCost, remainingWeight: amount, remainingCost: splitCost, onHold: poolStatus === 'On Hold', inventoryStatus: poolStatus === 'For Refining' ? 'For Refining' : 'Available', notes: pool.notes || '', createdAt, createdBy: currentUser?.displayName || '' };
+    splitItems.forEach(item => { item.status = poolStatus === 'On Hold' ? 'On Hold' : poolStatus === 'For Refining' ? 'For Refining' : 'Available'; });
+    db.stock.push(...splitItems);
+    db.inventoryPools.push(newPool);
+    syncInventoryPool(pool);
+    syncInventoryPool(newPool);
+    return { pool: newPool, items: splitItems };
+}
+async function confirmInventoryPoolSplit(event) {
+    event?.preventDefault();
+    if (!adminEditGuard())
+        return;
+    const poolId = editingInventoryPoolId || document.querySelector('#inventory_pool_split_modal')?.dataset?.poolId;
+    const pool = db.inventoryPools.find(record => record.id === poolId), input = document.getElementById('inventory_pool_split_weight');
+    if (!pool) {
+        closeInventoryPoolSplitModal();
+        return;
+    }
+    const beforeState = JSON.parse(JSON.stringify(db)), result = splitInventoryPool(pool, Number(input?.value));
+    if (!result) {
+        toast('Enter a weight smaller than the current pool balance');
+        return;
+    }
+    if (!await saveDB()) {
+        db = beforeState;
+        render();
+        toast('The pool was not split');
+        return;
+    }
+    closeInventoryPoolSplitModal();
+    closeAdminEditModal();
+    editingInventoryPoolId = null;
+    render();
+    toast(`${fmtWeight(result.pool.remainingWeight)} kept in the new split pool`);
 }
 let editingInventoryId = null;
 function openInventoryEdit(id) {
