@@ -3426,10 +3426,12 @@ function openInventoryEdit(id){
   editingInventoryId=id;
   const statuses=['Available','For Refining','On Hold','Liquidated','Refined','Sold'];
   const gradeKeys=Array.from(new Set([...(GRADES[item.metal]||[]),item.karat].filter(Boolean)));
+  const customSelected=customPurityFromKey(item.karat)!==null;
   openAdminEditModal('Edit purchase / inventory record',`<div class="form-grid">
     <div class="field"><label>Date</label><input id="edit_inventory_date" type="date" value="${esc(item.date||todayStr())}"></div>
     <div class="field"><label>Classification</label><select id="edit_inventory_status">${statuses.map(status=>`<option ${item.status===status?'selected':''}>${status}</option>`).join('')}</select></div>
-    <div class="field"><label>Karat / purity</label><select id="edit_inventory_karat">${gradeKeys.map(key=>`<option value="${esc(key)}" ${item.karat===key?'selected':''}>${esc(gradeLabel(item.metal,key))}</option>`).join('')}</select></div>
+    <div class="field"><label>Karat / purity</label><select id="edit_inventory_karat" onchange="toggleInventoryEditCustomPurity()">${gradeKeys.filter(key=>customPurityFromKey(key)===null).map(key=>`<option value="${esc(key)}" ${!customSelected&&item.karat===key?'selected':''}>${esc(gradeLabel(item.metal,key))}</option>`).join('')}<option value="__custom__" ${customSelected?'selected':''}>Custom purity (%)</option></select></div>
+    <div class="field ${customSelected?'':'is-hidden'}" id="edit_inventory_custom_purity_field"><label for="edit_inventory_custom_purity">Custom ${esc(item.metal)} purity (%)</label><div class="custom-purity-input"><input id="edit_inventory_custom_purity" type="number" min="0.01" max="100" step="0.01" value="${customSelected?esc(customPurityFromKey(item.karat)):''}" placeholder="Example: 90"><span>%</span></div></div>
     <div class="field"><label>Current weight (g)</label><input id="edit_inventory_weight" type="number" min="0" step="0.01" value="${Number(item.currentWeight)}"><span class="hint">May be corrected upward or downward. The original purchase weight and price stay unchanged.</span></div>
     <div class="field"><label>Remaining cost (PHP)</label><input id="edit_inventory_cost" type="number" min="0" step="0.01" value="${Number(item.cost)}"></div>
     <div class="field"><label>Payment method</label><input id="edit_inventory_payment" value="${esc(item.paymentMethod||'')}"></div>
@@ -3438,6 +3440,11 @@ function openInventoryEdit(id){
     <div class="field span-2"><label>Remarks</label><textarea id="edit_inventory_remarks">${esc(item.remarks||'')}</textarea></div>
     <div class="form-actions" style="justify-content:flex-start;margin-top:10px;"><button type="button" class="btn secondary small" onclick="openInventorySplitModal('${esc(item.id)}')">Split inventory</button><span class="form-note">Separate part of the current weight into a new inventory record.</span></div>
   </div><p class="form-note">An Administrator can correct the current inventory weight in either direction. Original metal, purchase weight, rate, and payout remain locked; the existing remaining cost is not recalculated from the weight.</p>`,'saveInventoryEdit','deleteInventoryRecord');
+}
+function toggleInventoryEditCustomPurity(){
+  const custom=val('edit_inventory_karat')==='__custom__';
+  document.getElementById('edit_inventory_custom_purity_field')?.classList.toggle('is-hidden',!custom);
+  if(custom)document.getElementById('edit_inventory_custom_purity')?.focus();
 }
 function openInventorySplitModal(id){
   if(!adminEditGuard())return;
@@ -3506,13 +3513,14 @@ async function confirmInventorySplit(event){
 async function saveInventoryEdit(){
   if(!adminEditGuard()) return;
   const item=db.stock.find(s=>s.id===editingInventoryId); if(!item) return;
-  const weight=Number(val('edit_inventory_weight')),cost=Number(val('edit_inventory_cost')),status=val('edit_inventory_status');
+  const weight=Number(val('edit_inventory_weight')),cost=Number(val('edit_inventory_cost')),status=val('edit_inventory_status'),selectedKarat=val('edit_inventory_karat'),customKarat=customPurityGradeKey(val('edit_inventory_custom_purity')),karat=selectedKarat==='__custom__'?customKarat:selectedKarat;
   if(!val('edit_inventory_date')){ toast('Date is required'); return; }
   if(!Number.isFinite(weight)||weight<0){ toast('Enter a valid non-negative current weight'); return; }
   if(!Number.isFinite(cost)||cost<0){ toast('Enter a valid remaining cost'); return; }
+  if(!karat){toast('Enter a custom purity between 0.01% and 100%');return;}
   if(weight===0&&!['Liquidated','Refined','Sold'].includes(status)){ toast('Choose Liquidated, Refined, or Sold when the remaining weight is zero'); return; }
   if(weight>0&&['Liquidated','Refined','Sold'].includes(status)){ toast('Liquidated, Refined, or Sold inventory must have zero remaining weight'); return; }
-  Object.assign(item,{date:val('edit_inventory_date'),status,karat:val('edit_inventory_karat')||item.karat,currentWeight:roundWeight(weight),cost:roundMoney(cost),paymentMethod:val('edit_inventory_payment').trim(),staff:val('edit_inventory_staff').trim(),itemType:val('edit_inventory_type'),remarks:val('edit_inventory_remarks').trim()});
+  Object.assign(item,{date:val('edit_inventory_date'),status,karat,currentWeight:roundWeight(weight),cost:roundMoney(cost),paymentMethod:val('edit_inventory_payment').trim(),staff:val('edit_inventory_staff').trim(),itemType:val('edit_inventory_type'),remarks:val('edit_inventory_remarks').trim()});
   closeAdminEditModal(); await saveDB(); render(); toast('Inventory record updated');
 }
 async function deleteInventoryRecord(){

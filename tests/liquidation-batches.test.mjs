@@ -1253,6 +1253,8 @@ test('inventory edit offers a metal-specific karat or purity selector', async ()
   assert.match(modal, /<option value="800"/);
   assert.match(modal, /<option value="750"[^>]*>75%<\/option>/);
   assert.match(modal, /<option value="600"[^>]*>60%<\/option>/);
+  assert.match(modal, /<option value="__custom__"[^>]*>Custom purity \(%\)<\/option>/);
+  assert.match(modal, /id="edit_inventory_custom_purity"/);
   assert.doesNotMatch(modal, /id="edit_inventory_weight"[^>]*max=/);
   assert.match(modal, /corrected upward or downward/i);
   assert.match(modal, /Split inventory/);
