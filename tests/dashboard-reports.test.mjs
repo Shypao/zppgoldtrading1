@@ -266,3 +266,11 @@ test('stock records table keeps its column headers visible while scrolling', asy
   assert.match(source, /#inventory_stock_list \.table-wrap thead th\{[^}]*top:0/);
   assert.match(source, /#inventory_stock_list \.table-wrap\{[^}]*overflow:visible/);
 });
+
+test('stock records sticky headers are not blocked by the main overflow container', async () => {
+  const indexPath = new URL('../public/index.html', import.meta.url);
+  const source = await readFile(indexPath, 'utf8');
+
+  assert.match(source, /main\{\s*flex:1;\s*min-width:0;\s*overflow-x:clip;/);
+  assert.doesNotMatch(source, /main\{\s*flex:1;\s*min-width:0;\s*overflow-x:hidden;/);
+});
