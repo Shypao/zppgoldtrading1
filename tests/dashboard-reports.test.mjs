@@ -264,4 +264,5 @@ test('stock records table keeps its column headers visible while scrolling', asy
 
   assert.match(source, /#inventory_stock_list \.table-wrap thead th\{[^}]*position:sticky/);
   assert.match(source, /#inventory_stock_list \.table-wrap thead th\{[^}]*top:0/);
+  assert.match(source, /#inventory_stock_list \.table-wrap\{[^}]*overflow:visible/);
 });
