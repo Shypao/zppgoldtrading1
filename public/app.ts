@@ -2227,28 +2227,34 @@ function updateInventorySort(value){
 }
 function closeInventoryFilterModal(){ document.getElementById('inventory_filter_modal')?.remove(); }
 function activeInventoryRecord(item){ return Number(item.currentWeight)>0&&!['For Liquidation','Liquidated','Refined','Sold'].includes(item.status); }
+function inventoryFilterGradesForDate(metal){
+  const order=['Gold','Silver','Platinum'];
+  const rows=db.stock.filter(item=>inventoryDateScope(item)&&activeInventoryRecord(item)&&(metal==='All'||item.metal===metal)).map(item=>({metal:item.metal,karat:item.karat}));
+  const unique=new Map(rows.map(row=>[`${row.metal}|${row.karat}`,row]));
+  return Array.from(unique.values()).sort((a,b)=>(order.indexOf(a.metal)-order.indexOf(b.metal))||((GRADE_META[a.metal]?.findIndex(grade=>grade.key===a.karat)??99)-(GRADE_META[b.metal]?.findIndex(grade=>grade.key===b.karat)??99))||String(a.karat).localeCompare(String(b.karat)));
+}
 function inventoryFilterKaratsForDate(metal){
-  return Array.from(new Set(db.stock.filter(item=>inventoryDateScope(item)&&activeInventoryRecord(item)&&(metal==='All'||item.metal===metal)).map(item=>item.karat)));
+  return Array.from(new Set(inventoryFilterGradesForDate(metal).map(row=>row.karat)));
 }
 function updateInventoryFilterModalKarats(){
   const metal=val('modal_inv_metal'),select=document.getElementById('modal_inv_karat');
   if(!select) return;
-  const current=select.value||invFilter.karat,karats=inventoryFilterKaratsForDate(metal);
-  select.innerHTML=`<option value="All">All purities</option>${karats.map(karat=>`<option value="${esc(karat)}">${esc(karat)}</option>`).join('')}`;
-  select.value=karats.includes(current)?current:'All';
+  const current=select.value||invFilter.karat,grades=inventoryFilterGradesForDate(metal),groups=Array.from(new Set(grades.map(row=>row.metal)));
+  select.innerHTML=`<option value="All">All purities</option>${groups.map(group=>`<optgroup label="${esc(group)}">${grades.filter(row=>row.metal===group).map(row=>`<option value="${esc(row.karat)}">${esc(gradeLabel(row.metal,row.karat))}</option>`).join('')}</optgroup>`).join('')}`;
+  select.value=grades.some(row=>row.karat===current)?current:'All';
 }
 function openInventoryFilterModal(){
   closeInventoryFilterModal();
   const dayStock=db.stock.filter(item=>inventoryDateScope(item)&&activeInventoryRecord(item));
   const available=dayStock.filter(selectableInventory);
-  const karats=inventoryFilterKaratsForDate(invFilter.metal);
+  const grades=inventoryFilterGradesForDate(invFilter.metal),groups=Array.from(new Set(grades.map(row=>row.metal)));
   const modal=document.createElement('div'); modal.id='inventory_filter_modal'; modal.className='modal-backdrop';
   modal.innerHTML=`<div class="summary-modal inventory-filter-modal" role="dialog" aria-modal="true" aria-labelledby="inventory_filter_title">
     <div class="summary-modal-head"><div><div class="eyebrow">${inventorySelectedDate==='All'?'Complete current inventory':`${new Date(inventorySelectedDate+'T00:00:00').toLocaleDateString('en-PH',{weekday:'long'})} · ${fmtDate(inventorySelectedDate)}`}</div><h2 id="inventory_filter_title">Filter ${inventorySelectedDate==='All'?'all stock':"this day's stock"}</h2></div><button class="modal-close" onclick="closeInventoryFilterModal()" aria-label="Close">×</button></div>
     <p class="move-confirmation-intro">This view has <strong>${dayStock.length} stock record${dayStock.length===1?'':'s'}</strong>, with <strong>${available.length} currently available</strong>. Choose what you want to see.</p>
     <div class="form-grid inventory-filter-modal-grid">
       <div class="field"><label for="modal_inv_metal">Metal</label><select id="modal_inv_metal" onchange="updateInventoryFilterModalKarats()">${['All','Gold','Silver','Platinum'].map(metal=>`<option value="${metal}" ${invFilter.metal===metal?'selected':''}>${metal==='All'?'All metals':metal}</option>`).join('')}</select></div>
-      <div class="field"><label for="modal_inv_karat">Karat / purity</label><select id="modal_inv_karat"><option value="All">All purities</option>${karats.map(karat=>`<option value="${esc(karat)}" ${invFilter.karat===karat?'selected':''}>${esc(karat)}</option>`).join('')}</select></div>
+      <div class="field"><label for="modal_inv_karat">Karat / purity</label><select id="modal_inv_karat"><option value="All">All purities</option>${groups.map(group=>`<optgroup label="${esc(group)}">${grades.filter(row=>row.metal===group).map(row=>`<option value="${esc(row.karat)}" ${invFilter.karat===row.karat?'selected':''}>${esc(gradeLabel(row.metal,row.karat))}</option>`).join('')}</optgroup>`).join('')}</select></div>
       <div class="field"><label for="modal_inv_type">Item type</label><select id="modal_inv_type">${['All','Jewelry','Scrap'].map(type=>`<option value="${type}" ${invFilter.type===type?'selected':''}>${type==='All'?'All item types':type}</option>`).join('')}</select></div>
       <div class="field"><label for="modal_inv_status">Status</label><select id="modal_inv_status">${['All','Available','For Refining','On Hold'].map(status=>`<option value="${status}" ${invFilter.status===status?'selected':''}>${status==='All'?'All statuses':status}</option>`).join('')}</select></div>
     </div>

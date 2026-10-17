@@ -208,6 +208,11 @@ async function loadInventoryApi() {
       openInventoryEdit(id);
       return appended.at(-1)?.innerHTML || '';
     },
+    openInventoryFilter() {
+      appended.length = 0;
+      openInventoryFilterModal();
+      return appended.at(-1)?.innerHTML || '';
+    },
     splitInventory(itemId, grams) {
       const item = db.stock.find(record => record.id === itemId);
       const split = typeof splitInventoryRecord === 'function' ? splitInventoryRecord(item, grams) : null;
@@ -1011,6 +1016,22 @@ test('all-stock inventory breakdown groups Gold Silver and Platinum under header
   assert.ok(html.indexOf('inventory-breakdown-metal-header"><th colspan="5">Gold') < html.indexOf('inventory-breakdown-metal-header"><th colspan="5">Silver'));
   assert.ok(html.indexOf('inventory-breakdown-metal-header"><th colspan="5">Silver') < html.indexOf('inventory-breakdown-metal-header"><th colspan="5">Platinum'));
   assert.match(html, /90% purity/);
+});
+
+test('all-stock purity filter groups options by Gold Silver and Platinum headers', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'filter-gold', date: '2026-09-17', customerName: 'Gold seller', metal: 'Gold', karat: '90%', itemType: 'Scrap', status: 'Available', netWeight: 2, currentWeight: 2, payout: 10000, cost: 10000 },
+    { id: 'filter-silver', date: '2026-09-17', customerName: 'Silver seller', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', netWeight: 3, currentWeight: 3, payout: 300, cost: 300 },
+    { id: 'filter-platinum', date: '2026-09-17', customerName: 'Platinum seller', metal: 'Platinum', karat: '999', itemType: 'Scrap', status: 'Available', netWeight: 1, currentWeight: 1, payout: 2000, cost: 2000 }
+  ];
+  state.inventoryPools = [];
+  api.setState(state);
+  const modal = api.openInventoryFilter();
+  assert.match(modal, /<optgroup label="Gold">[\s\S]*90% purity[\s\S]*<\/optgroup>/);
+  assert.match(modal, /<optgroup label="Silver">[\s\S]*925[\s\S]*<\/optgroup>/);
+  assert.match(modal, /<optgroup label="Platinum">[\s\S]*999[\s\S]*<\/optgroup>/);
 });
 
 test('splitting a pool creates a proportional-cost pool without changing purchase history', async () => {
