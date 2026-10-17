@@ -40,6 +40,38 @@ test('server accepts a partial pooled liquidation while the source keeps its rem
   assert.equal(result.stdout, 'ok');
 });
 
+test('server accepts an open refining batch whose inputs are linked and still on hand', () => {
+  const state = emptyState();
+  state.stock.push({
+    id: 'gold-refining-input', metal: 'Gold', karat: '18K', itemType: 'Scrap', status: 'For Refining',
+    refiningBatchId: 'R-0001', netWeight: 5, currentWeight: 5, payout: 5000, cost: 5000
+  });
+  state.refiningBatches.push({
+    id: 'R-0001', name: 'Gold refining run', metal: 'Gold', status: 'Open',
+    itemIds: ['gold-refining-input'], inputWeight: 5, inputCost: 5000
+  });
+
+  const result = validate(state);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'ok');
+});
+
+test('server rejects an open refining batch with an unlinked input', () => {
+  const state = emptyState();
+  state.stock.push({
+    id: 'gold-refining-input', metal: 'Gold', karat: '18K', itemType: 'Scrap', status: 'For Refining',
+    netWeight: 5, currentWeight: 5, payout: 5000, cost: 5000
+  });
+  state.refiningBatches.push({
+    id: 'R-0001', name: 'Gold refining run', metal: 'Gold', status: 'Open',
+    itemIds: ['gold-refining-input'], inputWeight: 5, inputCost: 5000
+  });
+
+  const result = validate(state);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /not linked to refining batch/);
+});
+
 test('server accepts one open liquidation batch containing multiple inventory pools', () => {
   const state = emptyState();
   state.stock.push(

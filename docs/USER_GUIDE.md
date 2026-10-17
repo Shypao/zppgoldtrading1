@@ -271,7 +271,7 @@ Inventory contains purchased stock and any output created by refining.
 |---|---|
 | Available | On hand and available for liquidation or retail sale when otherwise eligible |
 | For Liquidation | Assigned to an open buyer batch and excluded from Current Inventory |
-| For Refining | Available for liquidation or refining |
+| For Refining | Classified for refining; remains in Current Inventory until assigned to an open refining batch |
 | On Hold | Kept out of liquidation/refining selection |
 | Liquidated | Fully released through a completed liquidation |
 | Refined | Consumed as an input to a refining batch |
@@ -290,6 +290,8 @@ An administrator can select records and:
 Liquidation and refining batches contain only one metal. A liquidation selection may include Gold, Silver, and Platinum together; the system automatically separates the selection into one batch per metal.
 
 Creating a Liquidation batch changes each included item to **For Liquidation**. Its weight and carrying cost are preserved, but it is excluded from every Current Inventory list and total until sold or returned.
+
+Creating an open Refining batch links each selected **For Refining** item to the batch. Its weight and carrying cost are preserved, but it is excluded from every Current Inventory list and total until the output is recorded or the batch is returned.
 
 ## 8. Liquidation
 
@@ -324,15 +326,17 @@ The system allocates the batch proceeds across the selected items, removes their
 
 ## 9. Refining tracking
 
-Only inventory classified as **For Refining** is available here.
+Only inventory classified as **For Refining** and not already assigned to an open refining batch is available for a new batch here.
 
 1. Choose the metal.
 2. Check all input items that will become one refined item.
 3. Review total input weight and combined inventory cost.
-4. Choose the output purity/karat.
-5. Enter the final refined weight returned to inventory.
-6. Select **Combine into one item**.
-7. Review the confirmation and select **Confirm & create one item**.
+4. Enter a batch name and optional notes.
+5. Select **Open refining batch** and confirm.
+6. When the refiner returns the output, select **Record output** on the open batch.
+7. Enter the output purity/karat and final refined weight, then record the output.
+
+Use **Return to Inventory** on an open batch to release its inputs without creating an output.
 
 The input records become **Refined** with zero available weight. The system creates one new **Available** scrap inventory item. Its cost equals the combined cost of the input items, and its per-gram rate is derived from that carried cost and the output weight.
 

@@ -2846,7 +2846,7 @@ function updateInventorySort(value) {
     render();
 }
 function closeInventoryFilterModal() { document.getElementById('inventory_filter_modal')?.remove(); }
-function activeInventoryRecord(item) { return Number(item.currentWeight) > 0 && !['For Liquidation', 'Liquidated', 'Refined', 'Sold'].includes(item.status); }
+function activeInventoryRecord(item) { return Number(item.currentWeight) > 0 && !['For Liquidation', 'Liquidated', 'Refined', 'Sold'].includes(item.status) && !item.refiningBatchId; }
 function inventoryFilterGradesForDate(metal) {
     const order = ['Gold', 'Silver', 'Platinum'];
     const rows = db.stock.filter(item => inventoryDateScope(item) && activeInventoryRecord(item) && (metal === 'All' || item.metal === metal)).map(item => ({ metal: item.metal, karat: item.karat }));
@@ -2931,7 +2931,7 @@ function purchaseTotalsByPurity(records) {
     });
     return Array.from(groups.values()).sort((a, b) => a.metal.localeCompare(b.metal) || gradeSortIndex(a.metal, a.karat) - gradeSortIndex(b.metal, b.karat));
 }
-function selectableInventory(item) { return Number(item.currentWeight) > 0 && !item.inventoryPoolId && (item.status === 'Available' || item.status === 'For Refining'); }
+function selectableInventory(item) { return Number(item.currentWeight) > 0 && !item.inventoryPoolId && !item.refiningBatchId && (item.status === 'Available' || item.status === 'For Refining'); }
 function movableInventory(item) { return selectableInventory(item); }
 function categorizableInventory(item) { return activeInventoryRecord(item) && !item.inventoryPoolId; }
 function lowKaratGoldInventory(item) { return item.metal === 'Gold' && LOW_KARAT_GOLD_KEYS.has(item.karat) && activeInventoryRecord(item); }
@@ -4765,6 +4765,78 @@ async function deleteInventoryRecord() {
 // Batch details are collapsed on first view.  This keeps the liquidation page
 // compact while still letting a user expand exactly the batch they need.
 const expandedLiquidationBatches = new Set();
+const liquidationBatchMergeSelection = new Set();
+let liquidationBatchMergeBusy = false;
+function toggleLiquidationBatchMergeSelection(id, checked) { if (checked)
+    liquidationBatchMergeSelection.add(id);
+else
+    liquidationBatchMergeSelection.delete(id); render(); }
+function mergeOpenLiquidationBatches(batchIds, details) {
+    const ids = Array.from(new Set(batchIds || [])), batches = ids.map(id => db.liquidationBatches.find(batch => batch.id === id)).filter(Boolean);
+    if (batches.length < 2 || batches.length !== ids.length)
+        throw new Error('Select at least two open liquidation batches');
+    const lines = [], lineIds = new Set();
+    for (const batch of batches)
+        for (const line of batch.lines || []) {
+            if (!line.itemId || lineIds.has(line.itemId))
+                throw new Error('The selected batches contain a duplicate inventory item');
+            const item = db.stock.find(stock => stock.id === line.itemId);
+            if (!item || item.status !== 'For Liquidation' || item.liquidationBatchId !== batch.id)
+                throw new Error('One or more selected batch items changed');
+            lineIds.add(line.itemId);
+            lines.push(line);
+        }
+    const name = String(details?.name || '').trim(), buyer = String(details?.buyer || '').trim();
+    if (!name || !buyer)
+        throw new Error('Batch name and buyer are required');
+    const metals = new Set(lines.map(line => String((db.stock.find(item => item.id === line.itemId) || {}).metal || ''))), mergedId = nextSequenceId('LB', db.liquidationBatches);
+    const merged = { id: mergedId, name, buyer, notes: String(details?.notes || '').trim(), metal: metals.size === 1 ? [...metals][0] : 'Mixed', lines: JSON.parse(JSON.stringify(lines)), createdAt: new Date().toISOString(), createdBy: currentUser?.displayName || '' };
+    merged.lines.forEach(line => { const item = db.stock.find(stock => stock.id === line.itemId); item.liquidationBatchId = mergedId; });
+    db.liquidationBatches = db.liquidationBatches.filter(batch => !ids.includes(batch.id));
+    db.liquidationBatches.push(merged);
+    return merged;
+}
+function closeLiquidationBatchMerge() { document.getElementById('liquidation_batch_merge_modal')?.remove(); }
+function openLiquidationBatchMerge() {
+    const batches = Array.from(liquidationBatchMergeSelection).map(id => db.liquidationBatches.find(batch => batch.id === id)).filter(Boolean);
+    if (batches.length < 2) {
+        toast('Select at least two liquidation batches');
+        return;
+    }
+    const lines = batches.flatMap(batch => batch.lines || []), weight = lines.reduce((sum, line) => sum + Number(line.weight || 0), 0), cost = lines.reduce((sum, line) => sum + Number(line.cost || 0), 0);
+    const modal = document.createElement('div');
+    modal.id = 'liquidation_batch_merge_modal';
+    modal.className = 'modal-backdrop';
+    modal.innerHTML = `<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="liquidation_batch_merge_title"><div class="summary-modal-head"><div><div class="eyebrow">Merge ${batches.length} open batches</div><h2 id="liquidation_batch_merge_title">Create one combined batch</h2></div><button class="modal-close" onclick="closeLiquidationBatchMerge()" aria-label="Close">×</button></div><p class="move-confirmation-intro">All selected items will stay in liquidation and move to the new buyer assignment. Original batch records will be replaced.</p><div class="move-confirmation-summary"><div><span>Source batches</span><strong>${batches.length}</strong></div><div><span>Items</span><strong>${lines.length}</strong></div><div><span>Total weight</span><strong>${fmtWeight(weight)}</strong></div><div><span>Total cost</span><strong>${fmtMoney(cost)}</strong></div></div><div class="form-grid"><div class="field"><label>New batch name</label><input id="merge_liquidation_name" value="Combined liquidation batch"></div><div class="field"><label>New buyer</label><input id="merge_liquidation_buyer"></div><div class="field span-2"><label>Notes</label><input id="merge_liquidation_notes" placeholder="Optional"></div></div><div class="form-actions"><button class="btn secondary" onclick="closeLiquidationBatchMerge()">Cancel</button><button class="btn" onclick="confirmLiquidationBatchMerge()">Merge batches</button></div></div>`;
+    modal.addEventListener('click', event => { if (event.target === modal)
+        closeLiquidationBatchMerge(); });
+    document.body.appendChild(modal);
+}
+async function confirmLiquidationBatchMerge() {
+    if (liquidationBatchMergeBusy)
+        return;
+    liquidationBatchMergeBusy = true;
+    const beforeState = JSON.parse(JSON.stringify(db));
+    try {
+        const merged = mergeOpenLiquidationBatches(Array.from(liquidationBatchMergeSelection), { name: val('merge_liquidation_name'), buyer: val('merge_liquidation_buyer'), notes: val('merge_liquidation_notes') });
+        if (!await saveDB()) {
+            db = beforeState;
+            toast('The batches were not merged');
+            return;
+        }
+        liquidationBatchMergeSelection.clear();
+        closeLiquidationBatchMerge();
+        render();
+        toast(`${merged.id}: liquidation batches merged`);
+    }
+    catch (error) {
+        db = beforeState;
+        toast(error.message || 'The batches could not be merged');
+    }
+    finally {
+        liquidationBatchMergeBusy = false;
+    }
+}
 function toggleLiquidationBatchMinimized(id) {
     if (expandedLiquidationBatches.has(id))
         expandedLiquidationBatches.delete(id);
@@ -4802,14 +4874,14 @@ function renderLiquidation() {
     const allLines = batches.flatMap(batch => batch.lines || []);
     const totalWeight = allLines.reduce((sum, line) => sum + Number(line.weight || 0), 0), totalCost = allLines.reduce((sum, line) => sum + Number(line.cost || 0), 0);
     return `<section class="block liquidation-overview">
-    <div class="batch-head"><div><p class="eyebrow">Off-hand stock committed to buyers</p><h2 class="block-title">Open liquidation batches</h2><p class="form-note">These items are excluded from Current Inventory until the batch is sold or returned.</p></div><button class="btn" onclick="goTab('inventory')">Create batch from Inventory</button></div>
+    <div class="batch-head"><div><p class="eyebrow">Off-hand stock committed to buyers</p><h2 class="block-title">Open liquidation batches</h2><p class="form-note">These items are excluded from Current Inventory until the batch is sold or returned.</p></div><div class="form-actions"><button class="btn secondary" onclick="openLiquidationBatchMerge()" ${liquidationBatchMergeSelection.size >= 2 ? '' : 'disabled'}>Merge selected</button><button class="btn" onclick="goTab('inventory')">Create batch from Inventory</button></div></div>
     <div class="liquidation-compact-overview"><span><small>Open batches</small><strong>${batches.length}</strong></span><span><small>Items in transit</small><strong>${allLines.length}</strong></span><span><small>Total weight</small><strong>${fmtWeight(totalWeight)}</strong></span><span><small>Total carrying cost</small><strong>${fmtMoney(totalCost)}</strong></span></div>
   </section>
   ${batches.map(batch => {
         const lines = batch.lines || [], cost = lines.reduce((sum, line) => sum + Number(line.cost || 0), 0), weight = lines.reduce((sum, line) => sum + Number(line.weight || 0), 0);
         const minimized = !expandedLiquidationBatches.has(batch.id), batchGradeBadges = liquidationBatchGradeBadges(batch), karatTotals = liquidationBatchKaratTotals(batch);
         return `<section class="block liquidation-batch-card ${minimized ? 'is-minimized' : ''}">
-      <div class="batch-head liquidation-batch-head"><div><div class="liquidation-batch-identity"><p class="eyebrow">${esc(batch.id)} · ${esc(batch.metal)}</p>${batchGradeBadges}</div><h2 class="block-title">${esc(batch.name)}</h2><p class="form-note">Assigned buyer: <strong>${esc(batch.buyer)}</strong>${batch.createdAt ? ` · Created ${new Date(batch.createdAt).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}` : ''}</p>${batch.notes ? `<p class="liquidation-batch-comment"><strong>Comment:</strong> ${esc(batch.notes)}</p>` : ''}</div><div class="form-actions"><button class="btn secondary small" onclick="toggleLiquidationBatchMinimized('${batch.id}')" aria-expanded="${minimized ? 'false' : 'true'}">${minimized ? 'Expand' : 'Minimize'}</button><button class="btn secondary small" onclick="openLiquidationBatchEdit('${batch.id}')">Edit batch</button><button class="btn secondary small" onclick="returnLiquidationBatch('${batch.id}')">Return to Inventory</button><button class="btn small" onclick="openCompleteLiquidationBatch('${batch.id}')">Record sale</button></div></div>
+      <div class="batch-head liquidation-batch-head"><div><div class="liquidation-batch-identity"><label class="liquidation-batch-select"><input type="checkbox" onchange="toggleLiquidationBatchMergeSelection('${esc(batch.id)}',this.checked)" ${liquidationBatchMergeSelection.has(batch.id) ? 'checked' : ''}> <span>Select batch</span></label><p class="eyebrow">${esc(batch.id)} · ${esc(batch.metal)}</p>${batchGradeBadges}</div><h2 class="block-title">${esc(batch.name)}</h2><p class="form-note">Assigned buyer: <strong>${esc(batch.buyer)}</strong>${batch.createdAt ? ` · Created ${new Date(batch.createdAt).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}` : ''}</p>${batch.notes ? `<p class="liquidation-batch-comment"><strong>Comment:</strong> ${esc(batch.notes)}</p>` : ''}</div><div class="form-actions"><button class="btn secondary small" onclick="toggleLiquidationBatchMinimized('${batch.id}')" aria-expanded="${minimized ? 'false' : 'true'}">${minimized ? 'Expand' : 'Minimize'}</button><button class="btn secondary small" onclick="openLiquidationBatchEdit('${batch.id}')">Edit batch</button><button class="btn secondary small" onclick="returnLiquidationBatch('${batch.id}')">Return to Inventory</button><button class="btn small" onclick="openCompleteLiquidationBatch('${batch.id}')">Record sale</button></div></div>
       <div class="liquidation-batch-compact-summary"><span><small>Items</small><strong>${lines.length}</strong></span><span><small>Total weight</small><strong>${fmtWeight(weight)}</strong></span><span><small>Total inventory cost</small><strong>${fmtMoney(cost)}</strong></span></div>
       <div class="liquidation-batch-karat-totals"><h3>Totals per karat / purity</h3><div class="table-wrap"><table><thead><tr><th>Metal</th><th>Karat / purity</th><th class="num-head">Items</th><th class="num-head">Total weight</th><th class="num-head">Total cost</th></tr></thead><tbody>${karatTotals.map(entry => `<tr><td><span class="metal-tag ${String(entry.metal).toLowerCase()}">${esc(entry.metal)}</span></td><td><strong>${esc(entry.grade)}</strong></td><td class="num">${entry.items}</td><td class="num"><strong>${fmtWeight(entry.weight)}</strong></td><td class="num"><strong>${fmtMoney(entry.cost)}</strong></td></tr>`).join('')}</tbody></table></div></div>
       ${minimized ? '' : `
@@ -5325,20 +5397,24 @@ async function deleteLiquidationRecord() {
 let refMetal = 'Gold';
 const refiningSelection = new Set();
 let pendingInventoryRefiningIds = [];
+let refiningActionBusy = false;
+function beginRefiningAction() { if (refiningActionBusy)
+    return false; refiningActionBusy = true; return true; }
+function finishRefiningAction() { refiningActionBusy = false; }
 function toggleRefiningSelection(id, checked) {
     if (checked)
         refiningSelection.add(id);
     else
         refiningSelection.delete(id);
     updateRefiningCombinedSummary();
-    const eligible = db.stock.filter(item => item.metal === refMetal && item.status === 'For Refining' && Number(item.currentWeight) > 0);
+    const eligible = db.stock.filter(item => item.metal === refMetal && item.status === 'For Refining' && !item.refiningBatchId && Number(item.currentWeight) > 0);
     const selectAll = document.getElementById('rf_select_all');
     if (selectAll)
         selectAll.textContent = eligible.length && eligible.every(item => refiningSelection.has(item.id)) ? 'Clear all' : 'Select all';
 }
 function changeRefiningMetal(metal) { refMetal = metal; refiningSelection.clear(); render(); }
 function toggleAllRefiningSelection() {
-    const eligible = db.stock.filter(item => item.metal === refMetal && item.status === 'For Refining' && Number(item.currentWeight) > 0);
+    const eligible = db.stock.filter(item => item.metal === refMetal && item.status === 'For Refining' && !item.refiningBatchId && Number(item.currentWeight) > 0);
     const shouldSelect = eligible.length > 0 && !eligible.every(item => refiningSelection.has(item.id));
     eligible.forEach(item => shouldSelect ? refiningSelection.add(item.id) : refiningSelection.delete(item.id));
     document.querySelectorAll('.ref-chk').forEach(input => { input.checked = shouldSelect; });
@@ -5348,7 +5424,7 @@ function toggleAllRefiningSelection() {
     updateRefiningCombinedSummary();
 }
 function selectedRefiningItems() {
-    return db.stock.filter(item => refiningSelection.has(item.id) && item.metal === refMetal && item.status === 'For Refining' && Number(item.currentWeight) > 0);
+    return db.stock.filter(item => refiningSelection.has(item.id) && item.metal === refMetal && item.status === 'For Refining' && !item.refiningBatchId && Number(item.currentWeight) > 0);
 }
 function updateRefiningCombinedSummary() {
     const items = selectedRefiningItems();
@@ -5399,7 +5475,8 @@ function prepareInventoryForRefining() {
     modal.className = 'modal-backdrop';
     modal.innerHTML = `<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="inventory_refining_confirmation_title">
     <div class="summary-modal-head"><div><div class="eyebrow">Confirm refining selection</div><h2 id="inventory_refining_confirmation_title">Move ${selected.length} ${selected.length === 1 ? 'item' : 'items'} to Refining?</h2></div><button class="modal-close" onclick="closeInventoryRefiningConfirmation()" aria-label="Close">×</button></div>
-    <p class="move-confirmation-intro">These records will automatically be classified as <strong>For Refining</strong> and opened in the Refining page. This does not complete the refining process.</p>
+    <p class="move-confirmation-intro">These records will be assigned to an open refining batch and removed from Current Inventory until output is recorded or the batch is returned.</p>
+    <div class="form-grid"><div class="field"><label for="inventory_refining_batch_name">Batch name</label><input id="inventory_refining_batch_name" value="${esc(`${metals[0]} refining run`)}" maxlength="120"></div><div class="field"><label for="inventory_refining_batch_notes">Notes</label><input id="inventory_refining_batch_notes" placeholder="Optional" maxlength="240"></div></div>
     <div class="move-confirmation-summary"><div><span>Metal</span><strong>${esc(metals[0])}</strong></div><div><span>Selected items</span><strong>${selected.length}</strong></div><div><span>Total weight</span><strong>${fmtWeight(totalWeight)}</strong></div><div><span>Inventory cost</span><strong>${fmtMoney(totalCost)}</strong></div></div>
     <div class="table-wrap move-confirmation-items"><table><thead><tr><th>Inventory item</th><th>Status</th><th class="num-head">Weight</th><th class="num-head">Cost</th></tr></thead><tbody>${selected.map(item => `<tr><td><strong>${esc(item.metal)} ${esc(item.karat)}</strong><br><span class="form-note">${esc(item.itemType)} · ${esc(item.customerName || '—')}</span></td><td>${esc(item.status)}</td><td class="num">${fmtWeight(item.currentWeight)}</td><td class="num">${fmtMoney(item.cost)}</td></tr>`).join('')}</tbody></table></div>
     <div class="form-actions"><button class="btn secondary" onclick="closeInventoryRefiningConfirmation()">Cancel</button><button class="btn" onclick="confirmInventoryForRefining()">Confirm &amp; open Refining</button></div>
@@ -5409,17 +5486,26 @@ function prepareInventoryForRefining() {
     document.body.appendChild(modal);
 }
 async function confirmInventoryForRefining() {
+    if (!beginRefiningAction())
+        return;
     const ids = [...pendingInventoryRefiningIds];
     const items = ids.map(id => db.stock.find(item => item.id === id)).filter(Boolean);
     const beforeState = JSON.parse(JSON.stringify(db));
     if (!ids.length || items.length !== ids.length || !stageInventoryForRefining(items)) {
+        finishRefiningAction();
         closeInventoryRefiningConfirmation();
         render();
         toast('One or more selected items changed. Select the inventory again.');
         return;
     }
+    const batchId = nextSequenceId('R', db.refiningBatches);
+    const inputWeight = items.reduce((sum, item) => sum + Number(item.currentWeight || 0), 0);
+    const inputCost = items.reduce((sum, item) => sum + Number(item.cost || 0), 0);
+    items.forEach(item => { item.refiningBatchId = batchId; });
+    db.refiningBatches.push({ id: batchId, name: val('inventory_refining_batch_name').trim() || `${refMetal} refining run`, notes: val('inventory_refining_batch_notes').trim(), date: todayStr(), metal: refMetal, refiner: 'In-house refining', staff: currentUser?.displayName || '', status: 'Open', itemIds: ids, itemSnapshots: items.map(item => ({ itemId: item.id, currentWeight: Number(item.currentWeight), status: item.status, cost: Number(item.cost) || 0 })), inputWeight: roundWeight(inputWeight), inputCost: roundMoney(inputCost), createdAt: new Date().toISOString(), createdBy: currentUser?.displayName || '' });
     const saved = await saveDB();
     if (!saved) {
+        finishRefiningAction();
         db = beforeState;
         inventoryMoveSelection.clear();
         refiningSelection.clear();
@@ -5428,13 +5514,15 @@ async function confirmInventoryForRefining() {
         toast('Inventory was not moved to Refining; changes were rolled back');
         return;
     }
+    finishRefiningAction();
     const itemCount = items.length;
     closeInventoryRefiningConfirmation();
     goTab('refining');
-    toast(`${itemCount} ${itemCount === 1 ? 'item' : 'items'} moved to Refining`);
+    toast(`${batchId}: ${itemCount} ${itemCount === 1 ? 'item' : 'items'} moved to Refining`);
 }
 function renderRefining() {
-    const eligible = db.stock.filter(s => s.metal === refMetal && s.status === 'For Refining' && s.currentWeight > 0);
+    const openBatches = db.refiningBatches.filter(batch => String(batch.status || 'Completed') === 'Open').sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    const eligible = db.stock.filter(s => s.metal === refMetal && s.status === 'For Refining' && !s.refiningBatchId && s.currentWeight > 0);
     Array.from(refiningSelection).forEach(id => { if (!eligible.some(item => item.id === id))
         refiningSelection.delete(id); });
     const selected = selectedRefiningItems();
@@ -5442,6 +5530,11 @@ function renderRefining() {
     const selectedCost = selected.reduce((sum, item) => sum + Number(item.cost || 0), 0);
     const outputPurities = distinctKarats(refMetal);
     return `
+  <section class="block">
+    <div class="batch-head"><div><p class="eyebrow">Inputs removed from Current Inventory</p><h2 class="block-title">Open refining batches</h2><p class="form-note">Record output when the refiner returns the finished metal, or return the batch to inventory.</p></div></div>
+    ${openBatches.length ? openBatches.map(batch => { const items = (batch.itemIds || []).map(id => db.stock.find(item => item.id === id)).filter(Boolean), weight = items.reduce((sum, item) => sum + Number(item.currentWeight || 0), 0), cost = items.reduce((sum, item) => sum + Number(item.cost || 0), 0); return `<article class="liquidation-batch-card"><div class="batch-head"><div><p class="eyebrow">${esc(batch.id)} · ${esc(batch.metal)}</p><h3 class="block-title">${esc(batch.name || batch.id)}</h3><p class="form-note">${items.length} item${items.length === 1 ? '' : 's'} · Created ${fmtDate(batch.date)}</p>${batch.notes ? `<p class="form-note"><strong>Notes:</strong> ${esc(batch.notes)}</p>` : ''}</div><div class="form-actions"><button class="btn secondary small" onclick="returnRefiningBatch('${esc(batch.id)}')">Return to Inventory</button><button class="btn small" onclick="openRefiningOutput('${esc(batch.id)}')">Record output</button></div></div><div class="liquidation-batch-compact-summary"><span><small>Items</small><strong>${items.length}</strong></span><span><small>Input weight</small><strong>${fmtWeight(weight)}</strong></span><span><small>Input cost</small><strong>${fmtMoney(cost)}</strong></span></div></article>`; }).join('') : `<div class="empty-note">No open refining batches.</div>`}
+  </section>
+
   <section class="block">
     <h2 class="block-title">1. Select items to combine</h2>
     <p class="form-note">Check every processed item that will become one refined inventory record.</p>
@@ -5461,8 +5554,8 @@ function renderRefining() {
   </section>
 
   <section class="block">
-    <h2 class="block-title">2. Create one refined item</h2>
-    <p class="form-note">The selected records will be closed as Refined. Their costs are added together and carried into one finished item.</p>
+    <h2 class="block-title">2. Create a refining batch</h2>
+    <p class="form-note">The selected records leave Current Inventory immediately. Record the finished output later from the open batch.</p>
     <div class="refining-combine-summary">
       <div><span>Selected items</span><strong id="rf_selected_count">${selected.length}</strong></div>
       <div><span>Total input weight</span><strong id="rf_selected_weight">${fmtWeight(selectedWeight)}</strong></div>
@@ -5471,15 +5564,12 @@ function renderRefining() {
       <div class="combined-output-label"><span>Result</span><strong>1 refined item</strong></div>
     </div>
     <div class="form-grid refining-simple-output">
-      <div class="field"><label>Output purity / karat</label><select id="rf_purity" required onchange="changeRefiningOutputPurity()">
-        <option value="">— select purity —</option>${outputPurities.map(purity => `<option value="${esc(purity)}">${esc(purity)}</option>`).join('')}<option value="__custom__">Custom karat / purity</option>
-      </select></div>
-      <div class="field is-hidden" id="rf_custom_purity_field"><label>Custom output karat / purity</label><input id="rf_custom_purity" type="text" maxlength="40" placeholder="e.g. 23K or 99.9%"></div>
-      <div class="field"><label>Final refined weight (g)</label><input id="rf_returned" type="number" min="0.01" step="0.01" placeholder="e.g. 10.00"></div>
+      <div class="field"><label>Batch name</label><input id="rf_batch_name" value="${esc(`${refMetal} refining run`)}" maxlength="120"></div>
+      <div class="field"><label>Notes</label><input id="rf_batch_notes" maxlength="240" placeholder="Optional"></div>
     </div>
     <div class="form-actions">
-      <button class="btn" onclick="submitRefining()">Combine into one item</button>
-      <span class="form-note">Example: 10K + 12K + 14K → one 24K item. The total cost is carried automatically.</span>
+      <button class="btn" onclick="submitRefining()">Open refining batch</button>
+      <span class="form-note">The combined input cost will be carried into the output later.</span>
     </div>
   </section>
 
@@ -5508,16 +5598,7 @@ function submitRefining() {
         toast('Select at least one item for refining');
         return;
     }
-    const date = todayStr(), refiner = 'In-house refining', outputPurity = selectedRefiningOutputPurity();
-    if (!outputPurity) {
-        toast(val('rf_purity') === '__custom__' ? 'Enter the custom output purity or karat' : 'Select the output purity or karat');
-        return;
-    }
-    const returned = Number(val('rf_returned'));
-    if (!Number.isFinite(returned) || returned <= 0) {
-        toast('Enter the output weight returned to inventory');
-        return;
-    }
+    const date = todayStr(), refiner = 'In-house refining', batchName = val('rf_batch_name').trim() || `${refMetal} refining run`;
     const items = chosen.map(id => db.stock.find(s => s.id === id)).filter(Boolean);
     if (items.length !== chosen.length || items.some(item => item.status !== 'For Refining' || Number(item.currentWeight) <= 0)) {
         toast('One or more selected items are no longer available for refining');
@@ -5525,29 +5606,32 @@ function submitRefining() {
     }
     const inputWeight = items.reduce((sum, item) => sum + Number(item.currentWeight), 0);
     const inputCost = items.reduce((sum, item) => sum + Number(item.cost || 0), 0);
-    const outputCost = roundMoney(inputCost), outputWeight = roundWeight(returned), outputStatus = 'Available';
-    const remarks = `Combined from ${chosen.length} refined item${chosen.length === 1 ? '' : 's'}`;
-    pendingRefiningBatch = { chosen, date, refiner, outputPurity, expected: outputWeight, actual: outputWeight, charges: 0, outputWeight, outputCost, outputStatus, remarks, metal: refMetal, inputWeight: roundWeight(inputWeight), inputCost: roundMoney(inputCost) };
+    pendingRefiningBatch = { chosen, date, refiner, batchName, notes: val('rf_batch_notes').trim(), metal: refMetal, inputWeight: roundWeight(inputWeight), inputCost: roundMoney(inputCost) };
     const modal = document.createElement('div');
     modal.id = 'refining_confirmation_modal';
     modal.className = 'modal-backdrop';
     modal.innerHTML = `<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="refining_confirmation_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">Confirm combined refined item</div><h2 id="refining_confirmation_title">${items.length} ${items.length === 1 ? 'item' : 'items'} will become 1 item</h2></div><button class="modal-close" onclick="closeRefiningConfirmation()" aria-label="Close">×</button></div>
-    <p class="move-confirmation-intro">The original records will be marked Refined and replaced by one available ${esc(refMetal)} ${esc(outputPurity)} inventory item.</p>
-    <div class="move-confirmation-summary"><div><span>Input items</span><strong>${items.length}</strong></div><div><span>Total input weight</span><strong>${fmtWeight(inputWeight)}</strong></div><div><span>Combined cost</span><strong>${fmtMoney(inputCost)}</strong></div><div><span>New inventory item</span><strong>${esc(outputPurity)} · ${fmtWeight(outputWeight)}</strong></div></div>
+    <div class="summary-modal-head"><div><div class="eyebrow">Confirm refining batch</div><h2 id="refining_confirmation_title">${items.length} ${items.length === 1 ? 'item' : 'items'} will enter processing</h2></div><button class="modal-close" onclick="closeRefiningConfirmation()" aria-label="Close">×</button></div>
+    <p class="move-confirmation-intro">The selected records will leave Current Inventory until the finished output is recorded.</p>
+    <div class="move-confirmation-summary"><div><span>Input items</span><strong>${items.length}</strong></div><div><span>Total input weight</span><strong>${fmtWeight(inputWeight)}</strong></div><div><span>Combined cost</span><strong>${fmtMoney(inputCost)}</strong></div><div><span>Batch</span><strong>${esc(batchName)}</strong></div></div>
     <div class="table-wrap move-confirmation-items"><table><thead><tr><th>Input item</th><th>Customer</th><th class="num-head">Weight</th><th class="num-head">Cost</th></tr></thead><tbody>${items.map(item => `<tr><td><strong>${esc(item.metal)} ${esc(item.karat)}</strong><br><span class="form-note">${esc(item.itemType)} · ${fmtDate(item.date)}</span></td><td>${esc(item.customerName || '—')}</td><td class="num">${fmtWeight(item.currentWeight)}</td><td class="num">${fmtMoney(item.cost)}</td></tr>`).join('')}</tbody></table></div>
-    <div class="form-actions"><button class="btn secondary" onclick="closeRefiningConfirmation()">Cancel</button><button class="btn" onclick="confirmRefiningBatch()">Confirm &amp; create one item</button></div>
+    <div class="form-actions"><button class="btn secondary" onclick="closeRefiningConfirmation()">Cancel</button><button class="btn" onclick="confirmRefiningBatch()">Confirm &amp; open batch</button></div>
   </div>`;
     modal.addEventListener('click', event => { if (event.target === modal)
         closeRefiningConfirmation(); });
     document.body.appendChild(modal);
 }
 async function confirmRefiningBatch() {
-    const pending = pendingRefiningBatch;
-    if (!pending)
+    if (!beginRefiningAction())
         return;
+    const pending = pendingRefiningBatch;
+    if (!pending) {
+        finishRefiningAction();
+        return;
+    }
     const items = pending.chosen.map(id => db.stock.find(s => s.id === id)).filter(Boolean);
     if (items.length !== pending.chosen.length || items.some(item => item.status !== 'For Refining' || Number(item.currentWeight) <= 0)) {
+        finishRefiningAction();
         closeRefiningConfirmation();
         toast('One or more input items changed. Review the batch again.');
         render();
@@ -5555,29 +5639,112 @@ async function confirmRefiningBatch() {
     }
     const itemSnapshots = items.map(item => ({ itemId: item.id, currentWeight: Number(item.currentWeight), status: item.status, cost: Number(item.cost) || 0 }));
     const beforeState = JSON.parse(JSON.stringify(db));
-    items.forEach(item => { item.currentWeight = 0; item.cost = 0; item.status = 'Refined'; });
-    const batchId = nextSequenceId('R', db.refiningBatches), outputItemId = uid('stk');
-    const { date, refiner, outputPurity, outputWeight, outputCost, outputStatus, remarks, metal, inputWeight, inputCost, expected, actual, charges } = pending;
-    db.stock.push({ id: outputItemId, date, customerId: '', customerName: `Refining output · ${refiner}`, metal, itemType: 'Scrap', karat: outputPurity,
-        grossWeight: outputWeight, deductions: 0, netWeight: outputWeight, currentWeight: outputWeight, rate: roundMoney(outputCost / outputWeight),
-        suggestedAmount: 0, payout: 0, overrideReason: '', paymentMethod: 'Refining transfer', staff: currentUser?.displayName || refiner,
-        status: outputStatus, remarks: remarks || `Consolidated from ${pending.chosen.length} refining items`, cost: outputCost, sourceRefiningBatchId: batchId });
-    db.refiningBatches.push({ id: batchId, date, metal, refiner, staff: currentUser?.displayName || '', status: 'Completed', itemIds: pending.chosen, itemSnapshots, outputItemId, outputMetal: metal, outputPurity, outputWeight,
-        outputStatus, inputCost: roundMoney(inputCost), outputCost, inputWeight: roundWeight(inputWeight), expectedYield: roundWeight(expected), actualYield: roundWeight(actual),
-        variance: roundWeight(actual - expected), refiningCharges: roundMoney(charges), returnedMetal: outputWeight, remarks });
+    const { date, refiner, batchName, notes, metal, inputWeight, inputCost } = pending;
+    const batchId = nextSequenceId('R', db.refiningBatches);
+    items.forEach(item => { item.refiningBatchId = batchId; });
+    db.refiningBatches.push({ id: batchId, name: batchName, notes, date, metal, refiner, staff: currentUser?.displayName || '', status: 'Open', itemIds: pending.chosen, itemSnapshots, inputCost: roundMoney(inputCost), inputWeight: roundWeight(inputWeight), createdAt: new Date().toISOString(), createdBy: currentUser?.displayName || '' });
     const itemCount = pending.chosen.length;
     const saved = await saveDB();
     if (!saved) {
+        finishRefiningAction();
         db = beforeState;
         closeRefiningConfirmation();
         render();
         toast('Refining batch was not recorded; all inventory changes were rolled back');
         return;
     }
+    finishRefiningAction();
     refiningSelection.clear();
     closeRefiningConfirmation();
     render();
-    toast(`${batchId}: ${itemCount} ${itemCount === 1 ? 'item' : 'items'} consolidated into 1 inventory item`);
+    toast(`${batchId}: ${itemCount} ${itemCount === 1 ? 'item' : 'items'} opened for refining`);
+}
+function closeRefiningOutput() { document.getElementById('refining_output_modal')?.remove(); }
+function openRefiningOutput(id) {
+    const batch = db.refiningBatches.find(record => record.id === id);
+    if (!batch || batch.status !== 'Open' || !adminEditGuard())
+        return;
+    const purities = distinctKarats(batch.metal), items = (batch.itemIds || []).map(itemId => db.stock.find(item => item.id === itemId)).filter(Boolean);
+    const inputWeight = items.reduce((sum, item) => sum + Number(item.currentWeight || 0), 0), inputCost = items.reduce((sum, item) => sum + Number(item.cost || 0), 0);
+    const modal = document.createElement('div');
+    modal.id = 'refining_output_modal';
+    modal.className = 'modal-backdrop';
+    modal.innerHTML = `<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="refining_output_title"><div class="summary-modal-head"><div><div class="eyebrow">${esc(batch.id)} · ${esc(batch.name || 'Refining batch')}</div><h2 id="refining_output_title">Record refining output</h2></div><button class="modal-close" onclick="closeRefiningOutput()" aria-label="Close">×</button></div><p class="move-confirmation-intro">The inputs will be marked Refined and one finished item will return to Available inventory.</p><div class="move-confirmation-summary"><div><span>Input items</span><strong>${items.length}</strong></div><div><span>Input weight</span><strong>${fmtWeight(inputWeight)}</strong></div><div><span>Input cost</span><strong>${fmtMoney(inputCost)}</strong></div></div><div class="form-grid refining-simple-output"><div class="field"><label>Output purity / karat</label><select id="rf_output_purity"><option value="">— select purity —</option>${purities.map(purity => `<option value="${esc(purity)}">${esc(purity)}</option>`).join('')}<option value="__custom__">Custom karat / purity</option></select></div><div class="field"><label>Output weight (g)</label><input id="rf_output_weight" type="number" min="0.01" step="0.01"></div><div class="field is-hidden" id="rf_output_custom_field"><label>Custom output purity</label><input id="rf_output_custom" maxlength="40" placeholder="e.g. 23K or 99.9%"></div></div><div class="form-actions"><button class="btn secondary" onclick="closeRefiningOutput()">Cancel</button><button class="btn" onclick="completeRefiningOutput('${esc(batch.id)}')">Record output</button></div></div>`;
+    modal.addEventListener('click', event => { if (event.target === modal)
+        closeRefiningOutput(); });
+    document.body.appendChild(modal);
+    document.getElementById('rf_output_purity')?.addEventListener('change', event => document.getElementById('rf_output_custom_field')?.classList.toggle('is-hidden', event.target.value !== '__custom__'));
+}
+async function completeRefiningOutput(id) {
+    if (!beginRefiningAction())
+        return;
+    const batch = db.refiningBatches.find(record => record.id === id);
+    if (!batch || batch.status !== 'Open') {
+        finishRefiningAction();
+        return;
+    }
+    const selected = val('rf_output_purity'), purity = selected === '__custom__' ? val('rf_output_custom').trim() : selected, weight = Number(val('rf_output_weight'));
+    if (!purity) {
+        finishRefiningAction();
+        toast('Select the output purity or karat');
+        return;
+    }
+    if (!Number.isFinite(weight) || weight <= 0) {
+        finishRefiningAction();
+        toast('Enter a valid output weight');
+        return;
+    }
+    const items = (batch.itemIds || []).map(itemId => db.stock.find(item => item.id === itemId)).filter(Boolean);
+    if (items.length !== (batch.itemIds || []).length || items.some(item => item.status !== 'For Refining' || item.refiningBatchId !== batch.id || Number(item.currentWeight) <= 0)) {
+        finishRefiningAction();
+        toast('One or more refining inputs changed. Refresh and try again.');
+        return;
+    }
+    const beforeState = JSON.parse(JSON.stringify(db)), inputCost = items.reduce((sum, item) => sum + Number(item.cost || 0), 0), outputWeight = roundWeight(weight), outputCost = roundMoney(inputCost), outputItemId = uid('stk');
+    items.forEach(item => { item.currentWeight = 0; item.cost = 0; item.status = 'Refined'; delete item.refiningBatchId; });
+    db.stock.push({ id: outputItemId, date: todayStr(), customerId: '', customerName: `Refining output · ${batch.refiner || 'In-house refining'}`, metal: batch.metal, itemType: 'Scrap', karat: purity, grossWeight: outputWeight, deductions: 0, netWeight: outputWeight, currentWeight: outputWeight, rate: roundMoney(outputCost / outputWeight), suggestedAmount: 0, payout: 0, overrideReason: '', paymentMethod: 'Refining transfer', staff: currentUser?.displayName || batch.refiner, status: 'Available', remarks: batch.notes || `Output from ${batch.id}`, cost: outputCost, sourceRefiningBatchId: batch.id });
+    Object.assign(batch, { status: 'Completed', outputItemId, outputMetal: batch.metal, outputPurity: purity, outputWeight, outputCost, outputStatus: 'Available', expectedYield: outputWeight, actualYield: outputWeight, variance: 0, refiningCharges: 0, returnedMetal: outputWeight });
+    if (!await saveDB()) {
+        finishRefiningAction();
+        db = beforeState;
+        toast('Refining output was not recorded; all changes were rolled back');
+        return;
+    }
+    finishRefiningAction();
+    closeRefiningOutput();
+    render();
+    toast(`${batch.id}: output returned to inventory`);
+}
+async function returnRefiningBatch(id) {
+    if (!beginRefiningAction())
+        return;
+    const batch = db.refiningBatches.find(record => record.id === id);
+    if (!batch || batch.status !== 'Open' || !adminEditGuard()) {
+        finishRefiningAction();
+        return;
+    }
+    if (!confirm(`Return “${batch.name || batch.id}” to Current Inventory?`)) {
+        finishRefiningAction();
+        return;
+    }
+    const items = (batch.itemIds || []).map(itemId => db.stock.find(item => item.id === itemId)).filter(Boolean);
+    if (items.length !== (batch.itemIds || []).length || items.some(item => item.status !== 'For Refining' || item.refiningBatchId !== batch.id)) {
+        finishRefiningAction();
+        toast('One or more refining inputs changed. Refresh and try again.');
+        return;
+    }
+    const beforeState = JSON.parse(JSON.stringify(db));
+    items.forEach((item, index) => { const snapshot = batch.itemSnapshots?.[index]; item.status = snapshot?.status || 'For Refining'; item.cost = roundMoney(snapshot?.cost ?? item.cost); delete item.refiningBatchId; });
+    db.refiningBatches = db.refiningBatches.filter(record => record.id !== id);
+    if (!await saveDB()) {
+        finishRefiningAction();
+        db = beforeState;
+        toast('The refining batch was not returned');
+        return;
+    }
+    finishRefiningAction();
+    render();
+    toast(`${batch.name || batch.id} returned to Current Inventory`);
 }
 let editingRefiningId = null;
 function openRefiningEdit(id) {
@@ -6187,7 +6354,7 @@ function renderLiquidationHistory() {
 }
 function renderReports() {
     const allPurchases = db.stock.filter(isPurchaseRecord);
-    const allReadyStock = db.stock.filter(s => !s.inventoryPoolId && (s.status === 'Available' || s.status === 'For Refining') && s.currentWeight > 0);
+    const allReadyStock = db.stock.filter(s => !s.inventoryPoolId && !s.refiningBatchId && (s.status === 'Available' || s.status === 'For Refining') && s.currentWeight > 0);
     const readyStock = allReadyStock.filter(readinessDateMatch).slice().sort((a, b) => b.date.localeCompare(a.date));
     const renderPurchaseReport = () => {
         const purchases = allPurchases.filter(purchaseHistoryDateMatch).slice().sort((a, b) => b.date.localeCompare(a.date));

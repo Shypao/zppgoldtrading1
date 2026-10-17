@@ -670,9 +670,25 @@ export function validateLedgerIntegrity(state: LedgerState): void {
     }
     if(liquidation.poolId&&!poolIds.has(String(liquidation.poolId))) throw new Error(`liquidation ${liquidation.id} references a missing inventory pool`);
   }
+  const openRefiningItemIds = new Set<string>();
   for (const batch of state.refiningBatches) {
-    const itemIds = Array.isArray(batch.itemIds) ? batch.itemIds : [];
-    for (const itemId of itemIds) claimInventory(String(itemId), `refining batch ${batch.id}`);
+    const itemIds = Array.isArray(batch.itemIds) ? batch.itemIds.map(String) : [];
+    if (!batch.id || !itemIds.length) throw new Error(`Refining batch ${batch.id || '(unknown)'} has no items`);
+    const isOpen = String(batch.status ?? 'Completed') === 'Open';
+    for (const itemId of itemIds) {
+      const item = stockById.get(itemId);
+      if (!item) throw new Error(`Refining batch ${batch.id} references a missing inventory item`);
+      if (isOpen) {
+        if (openRefiningItemIds.has(itemId) || consumedBy.has(itemId)) throw new Error(`Inventory item ${itemId} is already assigned to another transaction`);
+        if (item.status !== 'For Refining' || item.refiningBatchId !== batch.id || Number(item.currentWeight) <= 0) {
+          throw new Error(`Inventory item ${itemId} is not linked to refining batch ${batch.id}`);
+        }
+        openRefiningItemIds.add(itemId);
+      } else {
+        claimInventory(itemId, `refining batch ${batch.id}`);
+      }
+    }
+    if (isOpen && batch.outputItemId) throw new Error(`Open refining batch ${batch.id} cannot have an output item`);
     if (batch.outputItemId && !stockIds.has(String(batch.outputItemId))) {
       throw new Error(`Refining batch ${batch.id} references a missing output inventory item`);
     }
@@ -725,6 +741,7 @@ export function validateLedgerIntegrity(state: LedgerState): void {
     const pending=pendingItemIds.has(item.id);
     if (item.status==='For Liquidation'&&!pending) throw new Error(`Inventory item ${item.id} is missing its liquidation batch`);
     if (item.status!=='For Liquidation'&&item.liquidationBatchId) throw new Error(`Inventory item ${item.id} has a stale liquidation batch link`);
+    if (item.refiningBatchId && !openRefiningItemIds.has(item.id)) throw new Error(`Inventory item ${item.id} has a stale refining batch link`);
   }
 }
 

@@ -30,6 +30,10 @@ async function loadInventoryApi() {
     renderFeaturedBox,
     renderInventory,
     renderLiquidation,
+    mergeOpenLiquidationBatches(batchIds, name, buyer, notes = '') {
+      const result = mergeOpenLiquidationBatches(batchIds, { name, buyer, notes });
+      return JSON.parse(JSON.stringify({ result, batches: db.liquidationBatches, stock: db.stock }));
+    },
     renderRefining,
     renderRetail,
     renderRates,
@@ -334,6 +338,12 @@ async function loadInventoryApi() {
         document.getElementById = originalGetElementById;
       }
     },
+    beginRefiningAction() {
+      return beginRefiningAction();
+    },
+    finishRefiningAction() {
+      finishRefiningAction();
+    },
     async clearBuyingDraftWithFields(fields) {
       const originalGetElementById = document.getElementById;
       const originalFetch = globalThis.fetch;
@@ -459,7 +469,7 @@ test('Refine selected asks for confirmation before changing inventory status', a
   const preview = api.openInventoryRefiningConfirmation(['stock-on-hand']);
 
   assert.match(preview.html, /Move 1 item to Refining\?/);
-  assert.match(preview.html, /automatically be classified as <strong>For Refining<\/strong>/);
+  assert.match(preview.html, /assigned to an open refining batch/);
   assert.match(preview.html, /Confirm &amp; open Refining/);
   assert.deepEqual(Array.from(preview.pendingIds), ['stock-on-hand']);
   assert.equal(state.stock[0].status, 'Available');
@@ -493,16 +503,26 @@ test('Refine selected does not combine different metals into one refining select
   assert.equal(state.stock.at(-1).status, 'Available');
 });
 
-test('refining output accepts a custom karat or purity without changing preset options', async () => {
+test('refining batch setup keeps a separate batch name from output purity', async () => {
   const api = await loadInventoryApi();
   api.setState(stateFixture());
 
   const html = api.renderRefining();
-  assert.match(html, /<option value="__custom__">Custom karat \/ purity<\/option>/);
-  assert.match(html, /id="rf_custom_purity"/);
+  assert.match(html, /id="rf_batch_name"/);
+  assert.doesNotMatch(html, /id="rf_returned"/);
   assert.equal(api.selectedRefiningOutputPurity('24K'), '24K');
   assert.equal(api.selectedRefiningOutputPurity('__custom__', '23K'), '23K');
   assert.equal(api.selectedRefiningOutputPurity('__custom__', ' 99.9% '), '99.9%');
+});
+
+test('refining actions allow only one in-flight submission', async () => {
+  const api = await loadInventoryApi();
+
+  assert.equal(api.beginRefiningAction(), true);
+  assert.equal(api.beginRefiningAction(), false);
+  api.finishRefiningAction();
+  assert.equal(api.beginRefiningAction(), true);
+  api.finishRefiningAction();
 });
 
 test('individual liquidation movement accepts a configurable partial weight', async () => {
@@ -614,6 +634,20 @@ test('For Liquidation records are excluded from Current Inventory', async () => 
   assert.match(html, />1<\/div><div class="sub">active records across all dates/);
 });
 
+test('open refining batch records are excluded from Current Inventory', async () => {
+  const api = await loadInventoryApi();
+  api.setState({
+    customers: [], inventoryPools: [], liquidationBatches: [], liquidations: [], retailSales: [], pricingHistory: [],
+    stock: [{ id: 'refining-input', date: '2026-09-18', customerName: 'Refining Seller', metal: 'Gold', karat: '18K', itemType: 'Scrap', status: 'For Refining', refiningBatchId: 'R-0001', currentWeight: 5, netWeight: 5, cost: 1000 }],
+    refiningBatches: [{ id: 'R-0001', name: 'Gold refining run', metal: 'Gold', status: 'Open', itemIds: ['refining-input'], inputWeight: 5, inputCost: 1000 }]
+  });
+
+  const html = api.renderInventory();
+
+  assert.match(html, /Current items<\/div><div class="value">0<\/div>/);
+  assert.doesNotMatch(html, /Refining Seller/);
+});
+
 test('Liquidation view renders independent batches and their totals', async () => {
   const api = await loadInventoryApi();
   api.setState(stateFixture());
@@ -627,6 +661,39 @@ test('Liquidation view renders independent batches and their totals', async () =
   assert.doesNotMatch(html, /Buyer offer/i);
   assert.match(html, /PHP 500/);
   assert.match(html, /PHP 800/);
+});
+
+test('Liquidation view exposes a visible batch selection control for every batch', async () => {
+  const api = await loadInventoryApi();
+  api.setState(stateFixture());
+  const html = api.renderLiquidation();
+
+  assert.match(html, /class="liquidation-batch-select"/g);
+  assert.equal((html.match(/class="liquidation-batch-select"/g) || []).length, 2);
+  assert.match(html, /Merge selected/);
+});
+
+test('open liquidation batches can be merged without losing lines or changing item balances', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'gold-line', date: '2026-09-18', customerName: 'Gold Seller', metal: 'Gold', karat: '18K', itemType: 'Scrap', status: 'For Liquidation', liquidationBatchId: 'LB-1', currentWeight: 5, netWeight: 5, cost: 500 },
+    { id: 'silver-line', date: '2026-09-18', customerName: 'Silver Seller', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'For Liquidation', liquidationBatchId: 'LB-2', currentWeight: 10, netWeight: 10, cost: 800 }
+  ];
+  state.liquidationBatches = [
+    { id: 'LB-1', name: 'Gold batch', buyer: 'Gold Buyer', metal: 'Gold', lines: [{ itemId: 'gold-line', previousStatus: 'Available', weight: 5, cost: 500 }] },
+    { id: 'LB-2', name: 'Silver batch', buyer: 'Silver Buyer', metal: 'Silver', lines: [{ itemId: 'silver-line', previousStatus: 'For Refining', weight: 10, cost: 800 }] }
+  ];
+  api.setState(state);
+
+  const merged = api.mergeOpenLiquidationBatches(['LB-1', 'LB-2'], 'Combined batch', 'New Buyer', 'Merged for dispatch');
+
+  assert.equal(merged.batches.length, 1);
+  assert.equal(merged.batches[0].name, 'Combined batch');
+  assert.equal(merged.batches[0].buyer, 'New Buyer');
+  assert.equal(merged.batches[0].metal, 'Mixed');
+  assert.deepEqual(JSON.parse(JSON.stringify(merged.batches[0].lines.map(line => line.itemId))), ['gold-line', 'silver-line']);
+  assert.deepEqual(JSON.parse(JSON.stringify(merged.stock.map(item => item.liquidationBatchId))), [merged.batches[0].id, merged.batches[0].id]);
 });
 
 test('a mixed Gold and Silver selection stays in one liquidation batch', async () => {
