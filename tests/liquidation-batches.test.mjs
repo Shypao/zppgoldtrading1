@@ -673,6 +673,14 @@ test('Liquidation view exposes a visible batch selection control for every batch
   assert.match(html, /Merge selected/);
 });
 
+test('Liquidation batch selector uses the compact clean control styling', async () => {
+  const stylesheet = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+
+  assert.match(stylesheet, /\.liquidation-batch-select\{[^}]*border-radius:6px/);
+  assert.match(stylesheet, /\.liquidation-batch-select\{[^}]*background:transparent/);
+  assert.match(stylesheet, /\.liquidation-batch-select input\{[^}]*accent-color:var\(--brass\)/);
+});
+
 test('open liquidation batches can be merged without losing lines or changing item balances', async () => {
   const api = await loadInventoryApi();
   const state = stateFixture();
