@@ -681,6 +681,28 @@ test('Liquidation batch selector uses the compact clean control styling', async 
   assert.match(stylesheet, /\.liquidation-batch-select input\{[^}]*accent-color:var\(--brass\)/);
 });
 
+test('Liquidation view does not promote a date-only batch name as the card header', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.liquidationBatches[0].name = 'Oct 16';
+  api.setState(state);
+
+  const html = api.renderLiquidation();
+
+  assert.doesNotMatch(html, /<h2 class="block-title">Oct 16<\/h2>/);
+  assert.match(html, /Created Sep 11, 2026/);
+});
+
+test('Liquidation view gives the assigned buyer a prominent visual treatment', async () => {
+  const api = await loadInventoryApi();
+  api.setState(stateFixture());
+  const html = api.renderLiquidation();
+  const stylesheet = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+
+  assert.match(html, /class="liquidation-batch-buyer"/);
+  assert.match(stylesheet, /\.liquidation-batch-buyer strong\{[^}]*font-size:20px/);
+});
+
 test('open liquidation batches can be merged without losing lines or changing item balances', async () => {
   const api = await loadInventoryApi();
   const state = stateFixture();
