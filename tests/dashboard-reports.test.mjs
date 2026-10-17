@@ -198,3 +198,19 @@ test('daily inventory totals group every purchase by purity including liquidated
   assert.match(html, /PHP 16,000/);
   assert.match(html, /4\.00 g/);
 });
+
+test('current stock breakdown renders distinct metal section headers', async () => {
+  const api = await loadDashboardReports();
+  api.setState(testState([
+    { id: 'gold', date: '2026-09-10', metal: 'Gold', karat: '18K', itemType: 'Scrap', status: 'Available', currentWeight: 5, cost: 1000 },
+    { id: 'silver', date: '2026-09-10', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', currentWeight: 10, cost: 500 },
+    { id: 'platinum', date: '2026-09-10', metal: 'Platinum', karat: '900', itemType: 'Scrap', status: 'Available', currentWeight: 2, cost: 800 }
+  ]));
+  api.setInventoryView('All');
+
+  const html = api.renderInventory();
+
+  assert.match(html, /class="inventory-breakdown-metal-header inventory-breakdown-metal-header--gold"/);
+  assert.match(html, /class="inventory-breakdown-metal-header inventory-breakdown-metal-header--silver"/);
+  assert.match(html, /class="inventory-breakdown-metal-header inventory-breakdown-metal-header--platinum"/);
+});

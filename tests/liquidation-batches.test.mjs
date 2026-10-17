@@ -1107,11 +1107,11 @@ test('all-stock inventory breakdown groups Gold Silver and Platinum under header
   state.inventoryPools = [];
   api.setState(state);
   const html = api.renderInventory();
-  assert.match(html, /inventory-breakdown-metal-header"><th[^>]*>Gold<\/th>/);
-  assert.match(html, /inventory-breakdown-metal-header"><th[^>]*>Silver<\/th>/);
-  assert.match(html, /inventory-breakdown-metal-header"><th[^>]*>Platinum<\/th>/);
-  assert.ok(html.indexOf('inventory-breakdown-metal-header"><th colspan="5">Gold') < html.indexOf('inventory-breakdown-metal-header"><th colspan="5">Silver'));
-  assert.ok(html.indexOf('inventory-breakdown-metal-header"><th colspan="5">Silver') < html.indexOf('inventory-breakdown-metal-header"><th colspan="5">Platinum'));
+  assert.match(html, /inventory-breakdown-metal-header[^\"]*--gold"><th[^>]*>Gold<\/th>/);
+  assert.match(html, /inventory-breakdown-metal-header[^\"]*--silver"><th[^>]*>Silver<\/th>/);
+  assert.match(html, /inventory-breakdown-metal-header[^\"]*--platinum"><th[^>]*>Platinum<\/th>/);
+  assert.ok(html.indexOf('inventory-breakdown-metal-header--gold"><th colspan="5">Gold') < html.indexOf('inventory-breakdown-metal-header--silver"><th colspan="5">Silver'));
+  assert.ok(html.indexOf('inventory-breakdown-metal-header--silver"><th colspan="5">Silver') < html.indexOf('inventory-breakdown-metal-header--platinum"><th colspan="5">Platinum'));
   assert.match(html, /90% purity/);
 });
 

@@ -2552,7 +2552,7 @@ async function addPurchaseItem() {
 }
 function continueAddingPurchaseItems() {
     document.querySelector('.buying-item-step')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    setTimeout(() => document.getElementById('b_gross')?.focus(), 250);
+    requestAnimationFrame(() => document.getElementById('b_gross')?.focus());
 }
 async function requestPurchaseItemRemoval(id) {
     const item = purchaseBatch.find(line => line.id === id);
@@ -2599,7 +2599,7 @@ function purchaseCustomer() {
 function focusPurchaseSeller() {
     closePurchaseSummary();
     document.getElementById('buying_customer_step')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setTimeout(() => document.getElementById('b_seller_name')?.focus(), 250);
+    requestAnimationFrame(() => document.getElementById('b_seller_name')?.focus());
 }
 function openPurchaseSummary() {
     if (!purchaseBatch.length) {
@@ -2652,9 +2652,11 @@ async function commitPurchaseBatch(printAfter = false) {
         }
         purchaseBatch = [];
         closePurchaseSummary();
-        await clearBuyingDraft();
         render();
-        await syncCashflow();
+        // The ledger save above is the critical operation. Cleanup and the
+        // cashflow card refresh do not need to block the next screen or receipt.
+        void clearBuyingDraft();
+        void syncCashflow();
         if (printAfter)
             openPurchaseReceipt(batchId);
         toast(`${count} items recorded · ${fmtMoney(total)}`);
@@ -4232,7 +4234,7 @@ function renderInventory() {
     const metalOrder = ['Gold', 'Silver', 'Platinum'];
     const breakdown = Array.from(breakdownMap.values()).sort((a, b) => (metalOrder.indexOf(a.metal) - metalOrder.indexOf(b.metal)) || (gradeSortIndex(a.metal, a.karat) - gradeSortIndex(b.metal, b.karat)) || String(a.karat).localeCompare(String(b.karat)));
     const breakdownRows = invFilter.metal === 'All'
-        ? metalOrder.flatMap(metal => { const entries = breakdown.filter(entry => entry.metal === metal); return entries.length ? [`<tr class="inventory-breakdown-metal-header"><th colspan="5">${metal}</th></tr>`, ...entries.map(entry => `<tr><td><span class="metal-tag ${entry.metal.toLowerCase()}">${entry.metal}</span></td><td>${esc(gradeLabel(entry.metal, entry.karat))}</td><td class="num">${entry.count}</td><td class="num">${fmtWeight(entry.weight)}</td><td class="num">${fmtMoney(entry.cost)}</td></tr>`)] : []; }).join('')
+        ? metalOrder.flatMap(metal => { const entries = breakdown.filter(entry => entry.metal === metal); return entries.length ? [`<tr class="inventory-breakdown-metal-header inventory-breakdown-metal-header--${metal.toLowerCase()}"><th colspan="5">${metal}</th></tr>`, ...entries.map(entry => `<tr><td><span class="metal-tag ${entry.metal.toLowerCase()}">${entry.metal}</span></td><td>${esc(gradeLabel(entry.metal, entry.karat))}</td><td class="num">${entry.count}</td><td class="num">${fmtWeight(entry.weight)}</td><td class="num">${fmtMoney(entry.cost)}</td></tr>`)] : []; }).join('')
         : breakdown.map(entry => `<tr><td><span class="metal-tag ${entry.metal.toLowerCase()}">${entry.metal}</span></td><td>${esc(gradeLabel(entry.metal, entry.karat))}</td><td class="num">${entry.count}</td><td class="num">${fmtWeight(entry.weight)}</td><td class="num">${fmtMoney(entry.cost)}</td></tr>`).join('');
     const breakdownWeight = breakdownSource.reduce((sum, item) => sum + Number(item.currentWeight), 0);
     const breakdownCost = breakdownSource.reduce((sum, item) => sum + Number(item.cost), 0);
