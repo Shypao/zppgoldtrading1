@@ -421,6 +421,10 @@ const GRADES = Object.fromEntries(Object.entries(GRADE_META).map(([metal, grades
 function gradeMeta(metal, key) {
     return (GRADE_META[metal] || []).find(g => g.key === key) || null;
 }
+function gradeSortIndex(metal, key) {
+    const index = (GRADE_META[metal] || []).findIndex(grade => grade.key === key);
+    return index < 0 ? 99 : index;
+}
 function configuredGradeMultiplier(metal, key) {
     const saved = Number(db.pricing?.gradeMultipliers?.[metal]?.[key]);
     return Number.isFinite(saved) && saved >= 0 ? saved : (Number(gradeMeta(metal, key)?.mult) || 0);
@@ -2847,7 +2851,7 @@ function inventoryFilterGradesForDate(metal) {
     const order = ['Gold', 'Silver', 'Platinum'];
     const rows = db.stock.filter(item => inventoryDateScope(item) && activeInventoryRecord(item) && (metal === 'All' || item.metal === metal)).map(item => ({ metal: item.metal, karat: item.karat }));
     const unique = new Map(rows.map(row => [`${row.metal}|${row.karat}`, row]));
-    return Array.from(unique.values()).sort((a, b) => (order.indexOf(a.metal) - order.indexOf(b.metal)) || ((GRADE_META[a.metal]?.findIndex(grade => grade.key === a.karat) ?? 99) - (GRADE_META[b.metal]?.findIndex(grade => grade.key === b.karat) ?? 99)) || String(a.karat).localeCompare(String(b.karat)));
+    return Array.from(unique.values()).sort((a, b) => (order.indexOf(a.metal) - order.indexOf(b.metal)) || (gradeSortIndex(a.metal, a.karat) - gradeSortIndex(b.metal, b.karat)) || String(a.karat).localeCompare(String(b.karat)));
 }
 function inventoryFilterKaratsForDate(metal) {
     return Array.from(new Set(inventoryFilterGradesForDate(metal).map(row => row.karat)));
@@ -2925,7 +2929,7 @@ function purchaseTotalsByPurity(records) {
         entry.remainingWeight += Number(item.currentWeight || 0);
         groups.set(key, entry);
     });
-    return Array.from(groups.values()).sort((a, b) => a.metal.localeCompare(b.metal) || (GRADE_META[a.metal]?.findIndex(grade => grade.key === a.karat) ?? 99) - (GRADE_META[b.metal]?.findIndex(grade => grade.key === b.karat) ?? 99));
+    return Array.from(groups.values()).sort((a, b) => a.metal.localeCompare(b.metal) || gradeSortIndex(a.metal, a.karat) - gradeSortIndex(b.metal, b.karat));
 }
 function selectableInventory(item) { return Number(item.currentWeight) > 0 && !item.inventoryPoolId && (item.status === 'Available' || item.status === 'For Refining'); }
 function movableInventory(item) { return selectableInventory(item); }
@@ -4226,7 +4230,7 @@ function renderInventory() {
         breakdownMap.set(key, entry);
     });
     const metalOrder = ['Gold', 'Silver', 'Platinum'];
-    const breakdown = Array.from(breakdownMap.values()).sort((a, b) => (metalOrder.indexOf(a.metal) - metalOrder.indexOf(b.metal)) || ((GRADE_META[a.metal]?.findIndex(grade => grade.key === a.karat) ?? 99) - (GRADE_META[b.metal]?.findIndex(grade => grade.key === b.karat) ?? 99)) || String(a.karat).localeCompare(String(b.karat)));
+    const breakdown = Array.from(breakdownMap.values()).sort((a, b) => (metalOrder.indexOf(a.metal) - metalOrder.indexOf(b.metal)) || (gradeSortIndex(a.metal, a.karat) - gradeSortIndex(b.metal, b.karat)) || String(a.karat).localeCompare(String(b.karat)));
     const breakdownRows = invFilter.metal === 'All'
         ? metalOrder.flatMap(metal => { const entries = breakdown.filter(entry => entry.metal === metal); return entries.length ? [`<tr class="inventory-breakdown-metal-header"><th colspan="5">${metal}</th></tr>`, ...entries.map(entry => `<tr><td><span class="metal-tag ${entry.metal.toLowerCase()}">${entry.metal}</span></td><td>${esc(gradeLabel(entry.metal, entry.karat))}</td><td class="num">${entry.count}</td><td class="num">${fmtWeight(entry.weight)}</td><td class="num">${fmtMoney(entry.cost)}</td></tr>`)] : []; }).join('')
         : breakdown.map(entry => `<tr><td><span class="metal-tag ${entry.metal.toLowerCase()}">${entry.metal}</span></td><td>${esc(gradeLabel(entry.metal, entry.karat))}</td><td class="num">${entry.count}</td><td class="num">${fmtWeight(entry.weight)}</td><td class="num">${fmtMoney(entry.cost)}</td></tr>`).join('');

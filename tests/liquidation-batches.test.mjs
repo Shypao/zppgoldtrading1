@@ -1022,6 +1022,7 @@ test('all-stock purity filter groups options by Gold Silver and Platinum headers
   const api = await loadInventoryApi();
   const state = stateFixture();
   state.stock = [
+    { id: 'filter-gold-standard', date: '2026-09-17', customerName: 'Gold standard', metal: 'Gold', karat: '24K', itemType: 'Scrap', status: 'Available', netWeight: 1, currentWeight: 1, payout: 5000, cost: 5000 },
     { id: 'filter-gold', date: '2026-09-17', customerName: 'Gold seller', metal: 'Gold', karat: '90%', itemType: 'Scrap', status: 'Available', netWeight: 2, currentWeight: 2, payout: 10000, cost: 10000 },
     { id: 'filter-silver', date: '2026-09-17', customerName: 'Silver seller', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', netWeight: 3, currentWeight: 3, payout: 300, cost: 300 },
     { id: 'filter-platinum', date: '2026-09-17', customerName: 'Platinum seller', metal: 'Platinum', karat: '999', itemType: 'Scrap', status: 'Available', netWeight: 1, currentWeight: 1, payout: 2000, cost: 2000 }
@@ -1032,6 +1033,7 @@ test('all-stock purity filter groups options by Gold Silver and Platinum headers
   assert.match(modal, /<optgroup label="Gold">[\s\S]*90% purity[\s\S]*<\/optgroup>/);
   assert.match(modal, /<optgroup label="Silver">[\s\S]*value="Silver::925"[\s\S]*925[\s\S]*<\/optgroup>/);
   assert.match(modal, /<optgroup label="Platinum">[\s\S]*value="Platinum::999"[\s\S]*999[\s\S]*<\/optgroup>/);
+  assert.ok(modal.indexOf('90% purity') > modal.indexOf('24K'));
 });
 
 test('splitting a pool creates a proportional-cost pool without changing purchase history', async () => {
