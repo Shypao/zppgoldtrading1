@@ -234,3 +234,17 @@ test('inventory summary uses compact refining controls and aligned numeric colum
   assert.match(source, /\.low-karat-card \.btn\{padding:8px 14px/);
   assert.match(source, /\.inventory-breakdown th\.num-head\{text-align:right/);
 });
+
+test('inventory breakdown groups its heading, table, and total into one card', async () => {
+  const api = await loadDashboardReports();
+  api.setState(testState([
+    { id: 'gold', date: '2026-09-10', metal: 'Gold', karat: '18K', itemType: 'Scrap', status: 'Available', currentWeight: 5, cost: 1000 }
+  ]));
+  api.setInventoryView('All');
+
+  const html = api.renderInventory();
+
+  assert.match(html, /<div class="inventory-breakdown-card">/);
+  assert.match(html, /inventory-breakdown-intro/);
+  assert.match(html, /inventory-breakdown-card[\s\S]*inventory-breakdown[\s\S]*inventory-breakdown-total/);
+});

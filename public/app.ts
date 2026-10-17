@@ -3241,10 +3241,11 @@ function renderInventory(){
       <div class="stat"><div class="label">Karat / purity groups</div><div class="value">${breakdown.length}</div><div class="sub">shown in the breakdown below</div></div>
     </div>
     ${(invFilter.metal==='All'||invFilter.metal==='Gold')&&isAdmin()?`<div class="low-karat-card"><div><span class="low-karat-label">Quick refining selection</span><strong>Low-karat Gold</strong><small>Below 18K · ${lowKaratGold.length} item${lowKaratGold.length===1?'':'s'} · ${fmtWeight(lowKaratWeight)} across all dates</small></div><button class="btn" onclick="selectAllLowKaratGold()" ${lowKaratEligible.length?'':'disabled'}>Select all for refining (${lowKaratEligible.length})</button></div>`:''}
-    <h2 class="block-title inventory-breakdown-heading">${invFilter.metal==='All'?'All current stock by grade':`${invFilter.metal} inventory by ${invFilter.metal==='Gold'?'karat':'purity'}`}</h2>
-    <p class="form-note inventory-breakdown-caption">Totals below combine every active purchase date.</p>
-    ${breakdown.length?`<div class="table-wrap inventory-breakdown"><table><thead><tr><th>Metal</th><th>Karat / purity</th><th class="num-head">Items</th><th class="num-head">Total weight</th><th class="num-head">Total cost</th></tr></thead><tbody>${breakdownRows}</tbody></table></div><div class="inventory-breakdown-total"><span>${invFilter.metal==='All'?'All current stock':`${invFilter.metal} total`} · ${breakdownSource.length} item${breakdownSource.length===1?'':'s'} · ${fmtWeight(breakdownWeight)}</span><strong>${fmtMoney(breakdownCost)}</strong></div>`
-      : `<div class="empty-note">No active ${invFilter.metal==='All'?'inventory':esc(invFilter.metal)+' inventory'} remains.</div>`}
+    <div class="inventory-breakdown-card">
+      <div class="inventory-breakdown-intro"><h2 class="block-title inventory-breakdown-heading">${invFilter.metal==='All'?'All current stock by grade':`${invFilter.metal} inventory by ${invFilter.metal==='Gold'?'karat':'purity'}`}</h2><p class="form-note inventory-breakdown-caption">Totals below combine every active purchase date.</p></div>
+      ${breakdown.length?`<div class="table-wrap inventory-breakdown"><table><thead><tr><th>Metal</th><th>Karat / purity</th><th class="num-head">Items</th><th class="num-head">Total weight</th><th class="num-head">Total cost</th></tr></thead><tbody>${breakdownRows}</tbody></table></div><div class="inventory-breakdown-total"><span>${invFilter.metal==='All'?'All current stock':`${invFilter.metal} total`} · ${breakdownSource.length} item${breakdownSource.length===1?'':'s'} · ${fmtWeight(breakdownWeight)}</span><strong>${fmtMoney(breakdownCost)}</strong></div>`
+        : `<div class="empty-note">No active ${invFilter.metal==='All'?'inventory':esc(invFilter.metal)+' inventory'} remains.</div>`}
+    </div>
     <p class="form-note inventory-history-note">For Liquidation items are shown only in the Liquidation view. Liquidated, refined, and sold items remain in reports and transaction history.</p>
   </section>
 
