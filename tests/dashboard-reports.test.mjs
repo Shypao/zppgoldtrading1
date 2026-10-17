@@ -257,3 +257,11 @@ test('stock records content uses the full inventory width', async () => {
   assert.match(source, /\.inventory-action-panel\{width:100%;max-width:none/);
   assert.match(source, /#inventory_stock_list \.table-wrap\{width:100%;max-width:none/);
 });
+
+test('stock records table keeps its column headers visible while scrolling', async () => {
+  const indexPath = new URL('../public/index.html', import.meta.url);
+  const source = await readFile(indexPath, 'utf8');
+
+  assert.match(source, /#inventory_stock_list \.table-wrap thead th\{[^}]*position:sticky/);
+  assert.match(source, /#inventory_stock_list \.table-wrap thead th\{[^}]*top:0/);
+});
