@@ -3369,28 +3369,34 @@ function openInventoryPoolSplitModal(id){
   const pool=db.inventoryPools.find(record=>record.id===id),snapshot=pool&&inventoryPoolSnapshot(pool);
   if(!pool||!snapshot?.weight){toast('Only a pool with a remaining balance can be split');return;}
   if(snapshot.weight<=0.01){toast('The pool is too small to split');return;}
+  inventorySplitCostOverridden=false;
   document.getElementById('inventory_pool_split_modal')?.remove();
-  const modal=document.createElement('div');modal.id='inventory_pool_split_modal';modal.className='modal-backdrop';
+  const modal=document.createElement('div');modal.id='inventory_pool_split_modal';modal.dataset.poolId=id;modal.className='modal-backdrop';
   modal.innerHTML=`<form class="summary-modal" onsubmit="confirmInventoryPoolSplit(event)" role="dialog" aria-modal="true" aria-labelledby="inventory_pool_split_title">
     <div class="summary-modal-head"><div><div class="eyebrow">Administrator pool action</div><h2 id="inventory_pool_split_title">Split pool</h2></div><button type="button" class="modal-close" onclick="closeInventoryPoolSplitModal()" aria-label="Close">×</button></div>
-    <p class="form-note" style="margin:16px 0;">Separate part of the current pool into a new pool. The original purchase history stays unchanged, and the cost is divided proportionally.</p>
+    <p class="form-note" style="margin:16px 0;">Separate part of the current pool into a new pool. The original purchase history stays unchanged.</p>
     <div class="move-confirmation-summary"><div><span>Current pool weight</span><strong>${fmtWeight(snapshot.weight)}</strong></div><div><span>Remaining cost</span><strong>${fmtMoneyExact(snapshot.cost)}</strong></div></div>
-    <div class="field"><label for="inventory_pool_split_weight">Weight to split (g)</label><input id="inventory_pool_split_weight" type="number" min="0.01" max="${Number(snapshot.weight)}" step="0.01" required placeholder="Example: 10.00"><span class="hint">The original pool keeps the remaining grams.</span></div>
+    <div class="form-grid"><div class="field"><label for="inventory_pool_split_weight">Weight to split (g)</label><input id="inventory_pool_split_weight" type="number" min="0.01" max="${Number(snapshot.weight)}" step="0.01" required value="${roundWeight(Number(snapshot.weight)/2)}" oninput="updateInventoryPoolSplitCostPreview()"><span class="hint">The original pool keeps the remaining grams.</span></div><div class="field"><label for="inventory_pool_split_cost">Cost of split pool (PHP)</label><input id="inventory_pool_split_cost" type="text" inputmode="decimal" required value="${formatSplitMoneyInput(Number(snapshot.cost||0)*0.5)}" oninput="markInventorySplitCostOverride()" onblur="formatSplitMoneyInputElement(this)"></div><div class="field"><label for="inventory_pool_split_remaining_cost">Cost kept on original pool (PHP)</label><input id="inventory_pool_split_remaining_cost" type="text" inputmode="decimal" required value="${formatSplitMoneyInput(Number(snapshot.cost||0)*0.5)}" oninput="markInventorySplitCostOverride()" onblur="formatSplitMoneyInputElement(this)"></div></div><span class="hint">Costs update automatically with the grams until you edit a cost. Both costs must add up to ${fmtMoneyExact(snapshot.cost)}.</span>
     <div class="form-actions"><button type="button" class="btn secondary" onclick="closeInventoryPoolSplitModal()">Cancel</button><button type="submit" class="btn">Split pool</button></div>
   </form>`;
   modal.addEventListener('click',event=>{if(event.target===modal)closeInventoryPoolSplitModal();});document.body.appendChild(modal);document.getElementById('inventory_pool_split_weight')?.focus();
 }
 function closeInventoryPoolSplitModal(){document.getElementById('inventory_pool_split_modal')?.remove();}
-function splitInventoryPool(pool,splitWeight){
+function splitInventoryPool(pool,splitWeight,customSplitCost,customRemainderCost){
   const snapshot=inventoryPoolSnapshot(pool),current=roundWeight(snapshot.weight),amount=roundWeight(splitWeight);
   if(!pool||!Number.isFinite(amount)||amount<=0||amount>=current)return null;
-  const newPoolId=nextSequenceId('POOL',db.inventoryPools),splitCost=roundMoney(snapshot.cost*(amount/current));
+  const originalCost=roundMoney(Number(snapshot.cost||0)),automaticSplitCost=roundMoney(originalCost*(amount/current));
+  const splitCost=customSplitCost===undefined?automaticSplitCost:roundMoney(Number(customSplitCost));
+  const remainderCost=customRemainderCost===undefined?roundMoney(originalCost-splitCost):roundMoney(Number(customRemainderCost));
+  if(!Number.isFinite(splitCost)||!Number.isFinite(remainderCost)||splitCost<0||remainderCost<0||Math.abs(splitCost+remainderCost-originalCost)>0.01)return null;
+  const newPoolId=nextSequenceId('POOL',db.inventoryPools);
   let assignedWeight=0,assignedCost=0;const splitItems=[];
   const positive=snapshot.items.filter(item=>Number(item.currentWeight||0)>0);
+  const sourceCost=positive.reduce((sum,item)=>sum+Number(item.cost||0),0);
   positive.forEach((item,index)=>{
     const itemWeight=Number(item.currentWeight||0),portion=index===positive.length-1?roundWeight(amount-assignedWeight):roundWeight(amount*(itemWeight/current));
     if(portion<=0)return;
-    const itemCost=index===positive.length-1?roundMoney(splitCost-assignedCost):roundMoney(Number(item.cost||0)*(portion/itemWeight));
+    const itemCost=index===positive.length-1?roundMoney(splitCost-assignedCost):roundMoney(sourceCost>0?splitCost*(Number(item.cost||0)/sourceCost):splitCost*(portion/current));
     assignedWeight=roundWeight(assignedWeight+portion);assignedCost=roundMoney(assignedCost+itemCost);
     item.currentWeight=roundWeight(itemWeight-portion);item.cost=roundMoney(Number(item.cost||0)-itemCost);
     splitItems.push({...item,id:uid('stk'),netWeight:portion,currentWeight:portion,cost:itemCost,payout:itemCost,inventorySplitFromId:item.id,inventorySplitAt:new Date().toISOString(),inventoryPoolId:newPoolId,remarks:item.remarks?`${item.remarks} · Split pool`:'Split pool'});
@@ -3407,8 +3413,9 @@ async function confirmInventoryPoolSplit(event){
   const poolId=editingInventoryPoolId||document.querySelector('#inventory_pool_split_modal')?.dataset?.poolId;
   const pool=db.inventoryPools.find(record=>record.id===poolId),input=document.getElementById('inventory_pool_split_weight');
   if(!pool){closeInventoryPoolSplitModal();return;}
-  const beforeState=JSON.parse(JSON.stringify(db)),result=splitInventoryPool(pool,Number(input?.value));
-  if(!result){toast('Enter a weight smaller than the current pool balance');return;}
+  const splitCost=Number(String(document.getElementById('inventory_pool_split_cost')?.value||'').replace(/,/g,'')),remainingCost=Number(String(document.getElementById('inventory_pool_split_remaining_cost')?.value||'').replace(/,/g,''));
+  const beforeState=JSON.parse(JSON.stringify(db)),result=splitInventoryPool(pool,Number(input?.value),splitCost,remainingCost);
+  if(!result){toast('Enter a valid weight and make sure both costs add up to the original pool cost');return;}
   if(!await saveDB()){db=beforeState;render();toast('The pool was not split');return;}
   closeInventoryPoolSplitModal();closeAdminEditModal();editingInventoryPoolId=null;render();toast(`${fmtWeight(result.pool.remainingWeight)} kept in the new split pool`);
 }
@@ -3442,9 +3449,9 @@ function openInventorySplitModal(id){
   const modal=document.createElement('div');modal.id='inventory_split_modal';modal.className='modal-backdrop';
   modal.innerHTML=`<form class="summary-modal" onsubmit="confirmInventorySplit(event)" role="dialog" aria-modal="true" aria-labelledby="inventory_split_title">
     <div class="summary-modal-head"><div><div class="eyebrow">Administrator inventory action</div><h2 id="inventory_split_title">Split inventory</h2></div><button type="button" class="modal-close" onclick="closeInventorySplitModal()" aria-label="Close">×</button></div>
-    <p class="form-note" style="margin:16px 0;">Separate part of the current balance into a new record. Set both costs manually; together they must equal the current remaining cost.</p>
+    <p class="form-note" style="margin:16px 0;">Separate part of the current balance into a new record. Costs update with the grams until you edit a cost.</p>
     <div class="move-confirmation-summary"><div><span>Current weight</span><strong>${fmtWeight(item.currentWeight)}</strong></div><div><span>Remaining cost</span><strong>${fmtMoneyExact(item.cost)}</strong></div></div>
-    <div class="form-grid"><div class="field"><label for="inventory_split_weight">Weight to split (g)</label><input id="inventory_split_weight" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" required value="${roundWeight(Number(item.currentWeight)/2)}"><span class="hint">The original record keeps the remaining grams.</span></div><div class="field"><label for="inventory_split_cost">Cost of split record (PHP)</label><input id="inventory_split_cost" type="text" inputmode="decimal" required value="${formatSplitMoneyInput(Number(item.cost||0)*0.5)}" oninput="markInventorySplitCostOverride()" onblur="formatSplitMoneyInputElement(this)"></div><div class="field"><label for="inventory_split_remaining_cost">Cost kept on original (PHP)</label><input id="inventory_split_remaining_cost" type="text" inputmode="decimal" required value="${formatSplitMoneyInput(Number(item.cost||0)*0.5)}" oninput="markInventorySplitCostOverride()" onblur="formatSplitMoneyInputElement(this)"></div></div><span class="hint">Costs are prefilled once and stay fixed when you change grams. Both costs must add up to ${fmtMoneyExact(item.cost)}.</span>
+    <div class="form-grid"><div class="field"><label for="inventory_split_weight">Weight to split (g)</label><input id="inventory_split_weight" type="number" min="0.01" max="${Number(item.currentWeight)}" step="0.01" required value="${roundWeight(Number(item.currentWeight)/2)}" oninput="updateInventorySplitCostPreview()"><span class="hint">The original record keeps the remaining grams.</span></div><div class="field"><label for="inventory_split_cost">Cost of split record (PHP)</label><input id="inventory_split_cost" type="text" inputmode="decimal" required value="${formatSplitMoneyInput(Number(item.cost||0)*0.5)}" oninput="markInventorySplitCostOverride()" onblur="formatSplitMoneyInputElement(this)"></div><div class="field"><label for="inventory_split_remaining_cost">Cost kept on original (PHP)</label><input id="inventory_split_remaining_cost" type="text" inputmode="decimal" required value="${formatSplitMoneyInput(Number(item.cost||0)*0.5)}" oninput="markInventorySplitCostOverride()" onblur="formatSplitMoneyInputElement(this)"></div></div><span class="hint">Costs update automatically with the grams until you edit a cost. Both costs must add up to ${fmtMoneyExact(item.cost)}.</span>
     <div class="form-actions"><button type="button" class="btn secondary" onclick="closeInventorySplitModal()">Cancel</button><button type="submit" class="btn">Split inventory</button></div>
   </form>`;
   modal.addEventListener('click',event=>{if(event.target===modal)closeInventorySplitModal();});document.body.appendChild(modal);document.getElementById('inventory_split_weight')?.focus();
@@ -3465,6 +3472,14 @@ function updateInventorySplitCostPreview(){
   const splitInput=document.getElementById('inventory_split_cost'),remainingInput=document.getElementById('inventory_split_remaining_cost');
   if(splitInput)splitInput.value=formatSplitMoneyInput(splitCost);
   if(remainingInput)remainingInput.value=formatSplitMoneyInput(roundMoney(Number(item.cost||0)-splitCost));
+}
+function updateInventoryPoolSplitCostPreview(){
+  if(inventorySplitCostOverridden)return;
+  const modal=document.getElementById('inventory_pool_split_modal'),poolId=editingInventoryPoolId||modal?.dataset?.poolId,pool=poolId&&db.inventoryPools.find(record=>record.id===poolId),snapshot=pool&&inventoryPoolSnapshot(pool),amount=Number(document.getElementById('inventory_pool_split_weight')?.value||0);
+  if(!snapshot?.weight||!Number.isFinite(amount)||amount<=0||amount>=snapshot.weight)return;
+  const splitCost=roundMoney(Number(snapshot.cost||0)*(amount/Number(snapshot.weight))),splitInput=document.getElementById('inventory_pool_split_cost'),remainingInput=document.getElementById('inventory_pool_split_remaining_cost');
+  if(splitInput)splitInput.value=formatSplitMoneyInput(splitCost);
+  if(remainingInput)remainingInput.value=formatSplitMoneyInput(roundMoney(Number(snapshot.cost||0)-splitCost));
 }
 function splitInventoryRecord(item,splitWeight,customSplitCost,customRemainderCost){
   const current=roundWeight(item?.currentWeight),amount=roundWeight(splitWeight);

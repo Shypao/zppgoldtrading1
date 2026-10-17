@@ -220,9 +220,9 @@ async function loadInventoryApi() {
       if (split) db.stock.push(split);
       return JSON.parse(JSON.stringify({ split, stock: db.stock }));
     },
-    splitPool(poolId, grams) {
+    splitPool(poolId, grams, splitCost, remainingCost) {
       const pool = db.inventoryPools.find(item => item.id === poolId);
-      const result = typeof splitInventoryPool === 'function' ? splitInventoryPool(pool, grams) : null;
+      const result = typeof splitInventoryPool === 'function' ? splitInventoryPool(pool, grams, splitCost, remainingCost) : null;
       return JSON.parse(JSON.stringify({ result, stock: db.stock, pools: db.inventoryPools }));
     },
     openInventoryRefiningConfirmation(itemIds) {
@@ -1011,6 +1011,22 @@ test('splitting a pool creates a proportional-cost pool without changing purchas
   assert.equal(result.pools[1].remainingCost, 1000);
   assert.equal(result.stock.filter(item => item.inventorySplitFromId).length, 2);
   assert.deepEqual(state.stock.filter(item => !item.inventorySplitFromId).map(item => item.netWeight), beforePurchaseWeights);
+});
+
+test('splitting a pool accepts manual split and kept costs while preserving the total', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'pool-manual-a', date: '2026-09-17', customerName: 'Seller A', metal: 'Gold', karat: '18K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-0005', netWeight: 10, currentWeight: 10, payout: 1000, cost: 1000 },
+    { id: 'pool-manual-b', date: '2026-09-17', customerName: 'Seller B', metal: 'Gold', karat: '18K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-0005', netWeight: 30, currentWeight: 30, payout: 3000, cost: 3000 }
+  ];
+  state.inventoryPools = [{ id: 'POOL-0005', name: 'Gold pool', metal: 'Gold', karat: '18K', itemIds: ['pool-manual-a', 'pool-manual-b'], originalWeight: 40, originalCost: 4000, onHold: false }];
+  api.setState(state);
+  const result = api.splitPool('POOL-0005', 10, 1500, 2500);
+  assert.equal(result.pools[0].remainingCost, 2500);
+  assert.equal(result.pools[1].remainingCost, 1500);
+  assert.equal(result.stock.filter(item => item.inventorySplitFromId).reduce((sum, item) => sum + item.cost, 0), 1500);
+  assert.equal(result.stock.filter(item => !item.inventorySplitFromId).reduce((sum, item) => sum + item.cost, 0), 2500);
 });
 
 test('inventory lists transactions newest first, including transactions on the same date', async () => {
