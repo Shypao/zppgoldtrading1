@@ -559,7 +559,7 @@
   .liquidation-compact-overview>span:last-child{border-right:0}
   .liquidation-compact-overview small,.liquidation-batch-compact-summary small{font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em}
   .liquidation-compact-overview strong{font-size:15px;font-variant-numeric:tabular-nums}
-  .liquidation-batch-card{box-sizing:border-box;border:1px solid var(--line);border-left:4px solid var(--brass-bright);background:var(--paper-2);padding:20px;margin-bottom:30px;box-shadow:0 6px 18px rgba(58,45,20,.06);}
+  .liquidation-batch-card{box-sizing:border-box;border:1px solid var(--line);border-left:4px solid var(--brass-bright);background:var(--paper-2);padding:16px 18px 18px;margin-bottom:30px;box-shadow:0 6px 18px rgba(58,45,20,.06);}
   .inventory-pool-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:16px;margin-top:16px}
   .inventory-pool-card{border:1px solid var(--line);border-left:4px solid var(--brass);background:var(--paper-2);padding:17px}
   .inventory-pool-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:14px}
@@ -569,8 +569,8 @@
   .pool-status.active{background:#eaf3e4;color:#385b2d}.pool-status.on-hold{background:#f4ead0;color:#74520e}.pool-status.partially-liquidated{background:#e8edf4;color:#364f70}.pool-status.fully-liquidated{background:#ece8e1;color:#665f55}
   .pool-liquidation-types{display:flex;gap:20px;flex-wrap:wrap;padding:10px 0 16px}.pool-liquidation-types label{display:flex;align-items:center;gap:7px;font-weight:700}.pool-liquidation-types input{width:17px;height:17px}
   output#pool_liquidation_cost{display:flex;align-items:center;min-height:42px;padding:0 11px;border:1px solid var(--line);background:var(--paper-2);font-weight:800;font-variant-numeric:tabular-nums}
-  .liquidation-batch-head{align-items:flex-end;margin-bottom:18px;}
-  .liquidation-batch-head>.form-actions{align-self:flex-end;justify-content:flex-end;margin:0;}
+  .liquidation-batch-head{align-items:center;margin-bottom:14px;}
+  .liquidation-batch-head>.form-actions{align-self:center;justify-content:flex-end;margin:0;flex-wrap:wrap;}
   .liquidation-batch-identity{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-bottom:8px}
   .liquidation-batch-identity .eyebrow{margin:0}
   .liquidation-batch-select{display:inline-flex;align-items:center;gap:8px;margin:0;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink-soft);font-size:11px;font-weight:700;line-height:1.2;cursor:pointer;white-space:nowrap;transition:background .15s ease,border-color .15s ease,color .15s ease}
@@ -581,13 +581,13 @@
   .liquidation-batch-buyer{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;margin:3px 0 0;color:var(--ink-soft);font-size:11px}
   .liquidation-batch-buyer strong{font-family:'Fraunces',serif;font-size:20px;line-height:1.1;color:var(--ink)}
   .liquidation-batch-buyer small{font-size:11px;color:var(--ink-soft)}
-  .liquidation-batch-compact-summary{display:grid;grid-template-columns:110px 150px minmax(180px,1fr);border:1px solid var(--line);background:var(--paper);margin-bottom:14px}
+  .liquidation-batch-compact-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border:1px solid var(--line);background:var(--paper);margin-bottom:14px}
   .liquidation-batch-compact-summary>span{display:flex;flex-direction:column;gap:4px;padding:9px 11px;border-right:1px solid var(--line)}
   .liquidation-batch-compact-summary>span:last-child{border-right:0}
   .liquidation-batch-compact-summary strong{font-size:13px;font-variant-numeric:tabular-nums}
   .liquidation-batch-karat-totals{margin:0 0 14px}
   .liquidation-batch-karat-totals h3{font-family:'Fraunces',serif;font-size:15px;color:var(--brass-deep);margin:0 0 7px}
-  .liquidation-batch-karat-totals>.table-wrap{width:min(100%,820px);margin:0;background:var(--paper)}
+  .liquidation-batch-karat-totals>.table-wrap{width:100%;max-width:none;margin:0;background:var(--paper)}
   .liquidation-batch-karat-totals th,.liquidation-batch-karat-totals td{padding-top:8px;padding-bottom:8px}
   .liquidation-batch-card.is-minimized{padding-top:14px;padding-bottom:14px}
   .liquidation-batch-card.is-minimized .liquidation-batch-head{margin-bottom:10px}

@@ -20,3 +20,11 @@ test('open liquidation cards show the compact purity summary from the classic la
   assert.match(index, /\.liquidation-batch-karat-totals/);
   assert.match(index, /\.liquidation-batch-card\.is-minimized/);
 });
+
+test('open liquidation batch summaries use the full card width without excess empty space', async () => {
+  const stylesheet = await readFile(indexPath, 'utf8');
+
+  assert.match(stylesheet, /\.liquidation-batch-card\{[^}]*padding:16px 18px 18px/);
+  assert.match(stylesheet, /\.liquidation-batch-karat-totals>\.table-wrap\{width:100%;max-width:none/);
+  assert.match(stylesheet, /\.liquidation-batch-compact-summary\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)/);
+});
