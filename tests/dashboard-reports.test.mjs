@@ -220,7 +220,7 @@ test('inventory summary cards align with the full inventory content width', asyn
   const source = await readFile(indexPath, 'utf8');
 
   assert.match(source, /\.low-karat-card\{[^}]*width:100%/);
-  assert.match(source, /\.inventory-breakdown\{width:100%;max-width:none/);
+  assert.match(source, /\.table-wrap\.inventory-breakdown\{width:100%;max-width:none/);
   assert.match(source, /\.inventory-breakdown-total\{width:100%/);
   assert.doesNotMatch(source, /\.low-karat-card\{[^}]*1080px/);
   assert.doesNotMatch(source, /\.inventory-breakdown-total\{width:min\(100%,1080px\)/);
