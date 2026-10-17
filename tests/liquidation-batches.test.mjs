@@ -994,6 +994,25 @@ test('inventory displays a pool as one available row with combined weight and co
   assert.match(liquidationModal, /Reset automatic cost/);
 });
 
+test('all-stock inventory breakdown groups Gold Silver and Platinum under headers', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'gold-custom', date: '2026-09-17', customerName: 'Gold seller', metal: 'Gold', karat: '90%', itemType: 'Scrap', status: 'Available', netWeight: 2, currentWeight: 2, payout: 10000, cost: 10000 },
+    { id: 'silver-stock', date: '2026-09-17', customerName: 'Silver seller', metal: 'Silver', karat: '925', itemType: 'Scrap', status: 'Available', netWeight: 3, currentWeight: 3, payout: 300, cost: 300 },
+    { id: 'platinum-stock', date: '2026-09-17', customerName: 'Platinum seller', metal: 'Platinum', karat: '999', itemType: 'Scrap', status: 'Available', netWeight: 1, currentWeight: 1, payout: 2000, cost: 2000 }
+  ];
+  state.inventoryPools = [];
+  api.setState(state);
+  const html = api.renderInventory();
+  assert.match(html, /inventory-breakdown-metal-header"><th[^>]*>Gold<\/th>/);
+  assert.match(html, /inventory-breakdown-metal-header"><th[^>]*>Silver<\/th>/);
+  assert.match(html, /inventory-breakdown-metal-header"><th[^>]*>Platinum<\/th>/);
+  assert.ok(html.indexOf('inventory-breakdown-metal-header"><th colspan="5">Gold') < html.indexOf('inventory-breakdown-metal-header"><th colspan="5">Silver'));
+  assert.ok(html.indexOf('inventory-breakdown-metal-header"><th colspan="5">Silver') < html.indexOf('inventory-breakdown-metal-header"><th colspan="5">Platinum'));
+  assert.match(html, /90% purity/);
+});
+
 test('splitting a pool creates a proportional-cost pool without changing purchase history', async () => {
   const api = await loadInventoryApi();
   const state = stateFixture();
