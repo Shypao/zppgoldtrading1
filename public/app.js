@@ -2856,9 +2856,9 @@ function updateInventoryFilterModalKarats() {
     const metal = val('modal_inv_metal'), select = document.getElementById('modal_inv_karat');
     if (!select)
         return;
-    const current = select.value || invFilter.karat, grades = inventoryFilterGradesForDate(metal), groups = Array.from(new Set(grades.map(row => row.metal)));
-    select.innerHTML = `<option value="All">All purities</option>${groups.map(group => `<optgroup label="${esc(group)}">${grades.filter(row => row.metal === group).map(row => `<option value="${esc(row.karat)}">${esc(gradeLabel(row.metal, row.karat))}</option>`).join('')}</optgroup>`).join('')}`;
-    select.value = grades.some(row => row.karat === current) ? current : 'All';
+    const current = select.value, grades = inventoryFilterGradesForDate(metal), groups = Array.from(new Set(grades.map(row => row.metal))), allMetals = metal === 'All';
+    select.innerHTML = `<option value="All">All purities</option>${groups.map(group => `<optgroup label="${esc(group)}">${grades.filter(row => row.metal === group).map(row => { const value = allMetals ? `${row.metal}::${row.karat}` : row.karat; return `<option value="${esc(value)}">${esc(gradeLabel(row.metal, row.karat))}</option>`; }).join('')}</optgroup>`).join('')}`;
+    select.value = Array.from(select.options || []).some(option => option.value === current) ? current : 'All';
 }
 function openInventoryFilterModal() {
     closeInventoryFilterModal();
@@ -2873,7 +2873,7 @@ function openInventoryFilterModal() {
     <p class="move-confirmation-intro">This view has <strong>${dayStock.length} stock record${dayStock.length === 1 ? '' : 's'}</strong>, with <strong>${available.length} currently available</strong>. Choose what you want to see.</p>
     <div class="form-grid inventory-filter-modal-grid">
       <div class="field"><label for="modal_inv_metal">Metal</label><select id="modal_inv_metal" onchange="updateInventoryFilterModalKarats()">${['All', 'Gold', 'Silver', 'Platinum'].map(metal => `<option value="${metal}" ${invFilter.metal === metal ? 'selected' : ''}>${metal === 'All' ? 'All metals' : metal}</option>`).join('')}</select></div>
-      <div class="field"><label for="modal_inv_karat">Karat / purity</label><select id="modal_inv_karat"><option value="All">All purities</option>${groups.map(group => `<optgroup label="${esc(group)}">${grades.filter(row => row.metal === group).map(row => `<option value="${esc(row.karat)}" ${invFilter.karat === row.karat ? 'selected' : ''}>${esc(gradeLabel(row.metal, row.karat))}</option>`).join('')}</optgroup>`).join('')}</select></div>
+      <div class="field"><label for="modal_inv_karat">Karat / purity</label><select id="modal_inv_karat"><option value="All">All purities</option>${groups.map(group => `<optgroup label="${esc(group)}">${grades.filter(row => row.metal === group).map(row => { const value = invFilter.metal === 'All' ? `${row.metal}::${row.karat}` : row.karat, selected = invFilter.metal === 'All' ? invFilter.karat === row.karat && invFilter.metal === row.metal : invFilter.karat === row.karat; return `<option value="${esc(value)}" ${selected ? 'selected' : ''}>${esc(gradeLabel(row.metal, row.karat))}</option>`; }).join('')}</optgroup>`).join('')}</select></div>
       <div class="field"><label for="modal_inv_type">Item type</label><select id="modal_inv_type">${['All', 'Jewelry', 'Scrap'].map(type => `<option value="${type}" ${invFilter.type === type ? 'selected' : ''}>${type === 'All' ? 'All item types' : type}</option>`).join('')}</select></div>
       <div class="field"><label for="modal_inv_status">Status</label><select id="modal_inv_status">${['All', 'Available', 'For Refining', 'On Hold'].map(status => `<option value="${status}" ${invFilter.status === status ? 'selected' : ''}>${status === 'All' ? 'All statuses' : status}</option>`).join('')}</select></div>
     </div>
@@ -2894,7 +2894,9 @@ function showAllInventoryForSelectedDate() {
     finishInventoryDateFilter();
 }
 function applyInventoryDateFilters() {
-    invFilter = { metal: val('modal_inv_metal'), karat: val('modal_inv_karat'), type: val('modal_inv_type'), status: val('modal_inv_status') };
+    const selectedMetal = val('modal_inv_metal'), selectedPurity = val('modal_inv_karat');
+    const [purityMetal, purity] = selectedMetal === 'All' && selectedPurity.includes('::') ? selectedPurity.split('::') : ['', selectedPurity];
+    invFilter = { metal: purityMetal || selectedMetal, karat: purityMetal ? purity : selectedPurity, type: val('modal_inv_type'), status: val('modal_inv_status') };
     finishInventoryDateFilter();
 }
 function selectInventoryMetalCategory(metal) {

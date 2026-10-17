@@ -1030,8 +1030,8 @@ test('all-stock purity filter groups options by Gold Silver and Platinum headers
   api.setState(state);
   const modal = api.openInventoryFilter();
   assert.match(modal, /<optgroup label="Gold">[\s\S]*90% purity[\s\S]*<\/optgroup>/);
-  assert.match(modal, /<optgroup label="Silver">[\s\S]*925[\s\S]*<\/optgroup>/);
-  assert.match(modal, /<optgroup label="Platinum">[\s\S]*999[\s\S]*<\/optgroup>/);
+  assert.match(modal, /<optgroup label="Silver">[\s\S]*value="Silver::925"[\s\S]*925[\s\S]*<\/optgroup>/);
+  assert.match(modal, /<optgroup label="Platinum">[\s\S]*value="Platinum::999"[\s\S]*999[\s\S]*<\/optgroup>/);
 });
 
 test('splitting a pool creates a proportional-cost pool without changing purchase history', async () => {
