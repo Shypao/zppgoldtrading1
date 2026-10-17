@@ -274,3 +274,11 @@ test('stock records sticky headers are not blocked by the main overflow containe
   assert.match(source, /main\{\s*flex:1;\s*min-width:0;\s*overflow-x:clip;/);
   assert.doesNotMatch(source, /main\{\s*flex:1;\s*min-width:0;\s*overflow-x:hidden;/);
 });
+
+test('stock records table can be dragged horizontally on phone widths', async () => {
+  const indexPath = new URL('../public/index.html', import.meta.url);
+  const source = await readFile(indexPath, 'utf8');
+
+  assert.match(source, /#inventory_stock_list \.table-wrap\{overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y\}/);
+  assert.match(source, /#inventory_stock_list table\{min-width:960px\}/);
+});
