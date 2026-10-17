@@ -225,3 +225,12 @@ test('inventory summary cards align with the full inventory content width', asyn
   assert.doesNotMatch(source, /\.low-karat-card\{[^}]*1080px/);
   assert.doesNotMatch(source, /\.inventory-breakdown-total\{width:min\(100%,1080px\)/);
 });
+
+test('inventory summary uses compact refining controls and aligned numeric columns', async () => {
+  const indexPath = new URL('../public/index.html', import.meta.url);
+  const source = await readFile(indexPath, 'utf8');
+
+  assert.match(source, /\.low-karat-card\{[^}]*padding:10px 14px/);
+  assert.match(source, /\.low-karat-card \.btn\{padding:8px 14px/);
+  assert.match(source, /\.inventory-breakdown th\.num-head\{text-align:right/);
+});
