@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ZPP Gold Trading buys and trades gold and silver in Zamboanga City.">
+  <title>ZPP Gold Trading | Gold &amp; Silver Trading</title>
+  <link rel="icon" type="image/png" href="zpp-logo.png">
+  <link rel="stylesheet" href="website.css">
+</head>
+<body id="public-site" data-rates-api="https://zppgoldtrading.vercel.app/api/public-pricing">
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="ZPP Gold Trading home">
+      <span class="brand-mark"><img src="zpp-logo.png" alt="ZPP Gold Trading logo"></span>
+      <span><strong>ZPP</strong> Gold Trading</span>
+    </a>
+    <nav class="site-nav" aria-label="Main navigation">
+      <a href="#services">What we do</a>
+      <a href="#public-rates">Daily rates</a>
+      <a href="#location">Visit us</a>
+      <a class="nav-cta" href="https://www.facebook.com/parengzp" target="_blank" rel="noreferrer">Message us</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero section-shell">
+      <div class="hero-copy">
+        <p class="eyebrow">Trusted local gold &amp; silver trading</p>
+        <h1>Your gold has value.<br><em>Let’s talk.</em></h1>
+        <p class="hero-text">ZPP Gold Trading helps customers in Zamboanga City turn gold and silver into clear, fair opportunities.</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="#location">Visit our store <span>↗</span></a>
+          <a class="button button-quiet" href="https://www.facebook.com/parengzp" target="_blank" rel="noreferrer">Message us on Facebook</a>
+        </div>
+        <p class="hero-note"><span class="status-dot"></span> Open daily · 10:30 AM–6:00 PM</p>
+      </div>
+      <div class="hero-art" aria-label="Gold jewelry detail">
+        <div class="sun-disc"></div>
+        <div class="gold-ring ring-one"></div>
+        <div class="gold-ring ring-two"></div>
+        <div class="hero-card"><span>ZPP</span><small>GOLD<br>TRADING</small></div>
+        <p class="art-caption">Value you can<br>see. Service you<br>can trust.</p>
+      </div>
+    </section>
+
+    <section id="public-rates" class="public-rates section-shell" aria-labelledby="public-rates-title">
+      <div class="section-heading"><div><p class="eyebrow">For today’s reference</p><h2 id="public-rates-title">Current daily<br><em>buying rates.</em></h2></div><div class="public-rates-meta"><span id="public-rates-date">Published rate sheet</span><span>PHP per gram</span></div></div>
+      <div id="public-rates-status" class="public-rates-status" role="status" aria-live="polite">Loading current rates…</div>
+      <div id="public-rates-grid" class="public-rates-grid" hidden></div>
+      <button id="public-rates-retry" class="button button-quiet" type="button" hidden>Try again</button>
+      <p class="public-rates-note">Rates are for reference only. Final quotes are confirmed in-store after checking the item.</p>
+    </section>
+
+    <section id="services" class="services section-shell">
+      <div class="section-heading"><p class="eyebrow">How we can help</p><h2>Simple, personal,<br><em>straightforward.</em></h2></div>
+      <div class="service-grid">
+        <article class="service-card"><span class="card-number">01</span><h3>Gold &amp; silver trading</h3><p>Talk with our team about your gold and silver items and understand your options.</p></article>
+        <article class="service-card featured"><span class="card-number">02</span><h3>Get a clear quote</h3><p>Bring your item to our store for a friendly conversation and a straightforward quote.</p></article>
+        <article class="service-card"><span class="card-number">03</span><h3>Local, easy to find</h3><p>Visit us on Barcelona St, Zone II, right by the Puregold Center and JW Gadgets.</p></article>
+      </div>
+    </section>
+
+    <section id="location" class="location section-shell">
+      <div class="location-visual">
+        <div class="map-wrap"><iframe title="Google Maps location of ZPP Gold Trading" src="https://www.google.com/maps?q=6.9070538%2C122.0758178&output=embed" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe></div>
+      </div>
+      <div class="location-copy">
+        <p class="eyebrow">Come see us</p>
+        <h2>Our store<br><em>location</em></h2>
+        <div class="address"><span class="pin">●</span><p>Barcelona St, Zone II,<br><strong>Zamboanga City</strong></p></div>
+        <p class="landmark">Landmark: Puregold Center / JW Gadgets</p>
+        <a class="text-link" href="https://www.google.com/maps/dir/?api=1&destination=6.9070538%2C122.0758178" target="_blank" rel="noreferrer">Open directions <span>↗</span></a>
+      </div>
+    </section>
+
+    <section id="store-hours" class="visit-banner section-shell">
+      <div><p class="eyebrow">Plan your visit</p><h2>We’re here<br><em>every day.</em></h2></div>
+      <div class="hours"><strong>10:30 AM – 6:00 PM</strong><span>Open daily</span></div>
+      <a class="button button-primary" href="https://www.facebook.com/parengzp" target="_blank" rel="noreferrer">Get a quote <span>↗</span></a>
+    </section>
+  </main>
+
+  <footer class="site-footer section-shell"><span>© <span id="year">2026</span> ZPP Gold Trading</span><span>Barcelona St, Zone II · Zamboanga City</span><a href="https://www.facebook.com/parengzp" target="_blank" rel="noreferrer">Facebook ↗</a></footer>
+  <script src="website.js" defer></script>
+</body>
+</html>

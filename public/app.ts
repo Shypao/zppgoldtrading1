@@ -883,8 +883,9 @@ function renderRates(){
         ${admin?`
         <button class="btn small" onclick="refreshPhilippineRates()" ${pricingFetchBusy?'disabled':''}>Refresh &amp; apply now</button>
         <button class="btn secondary small" onclick="openDailyBaseEditor('Gold')">Edit today's PHP base</button>
+        <button class="btn secondary small" onclick="openPublicDailyRatesEditor()">Edit public website rates</button>
         <button class="btn secondary small" onclick="openGoldMultiplierEditor()">Edit Gold karat multipliers</button>
-        <button class="btn secondary small" onclick="openPublicDailyRatesEditor()">Edit public daily rates</button>`:''}
+        `:''}
       </div>
     </div>
     <div class="stat-row" style="margin-top:16px">

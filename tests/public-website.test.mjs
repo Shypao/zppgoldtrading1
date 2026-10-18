@@ -22,6 +22,13 @@ test('public website includes essential business information and accessible acti
   assert.match(html, /title="Google Maps location of ZPP Gold Trading"/i);
   assert.match(html, /href="https:\/\/www\.facebook\.com\/parengzp/i);
   assert.match(html, /name="viewport"/i);
+  assert.match(html, /id="public-rates"/i);
+  assert.match(html, /data-rates-api="https:\/\/zppgoldtrading\.vercel\.app\/api\/public-pricing"/i);
+  assert.match(html, /Current daily[\s\S]*buying rates/i);
+  assert.match(html, /id="public-rates-status"/i);
+  assert.match(html, /id="public-rates-retry"/i);
+  assert.match(fs.readFileSync(path.join(root, 'public', 'website.js'), 'utf8'), /api\/public-pricing/);
+  assert.match(fs.readFileSync(path.join(root, 'public', 'website.js'), 'utf8'), /public-rates-retry/);
   assert.doesNotMatch(html, /login-screen/i);
   assert.match(css, /@keyframes art-drift/);
   assert.match(css, /@keyframes ring-float/);

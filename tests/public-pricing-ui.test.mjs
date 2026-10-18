@@ -8,7 +8,7 @@ const source = fs.readFileSync(path.join(root, 'public', 'app.ts'), 'utf8');
 
 test('admin daily-rate view exposes a dedicated public-rate editor button', () => {
   assert.match(source, /openPublicDailyRatesEditor\(\)/);
-  assert.match(source, /Edit public daily rates/);
+  assert.match(source, /Edit public website rates/);
 });
 
 test('public-rate editor does not offer internal-rate fallback controls', () => {

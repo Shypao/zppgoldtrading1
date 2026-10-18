@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="zpp-logo.png">
   <link rel="stylesheet" href="website.css">
 </head>
-<body id="public-site">
+<body id="public-site" data-rates-api="https://zppgoldtrading.vercel.app/api/public-pricing">
   <header class="site-header">
     <a class="brand" href="#top" aria-label="ZPP Gold Trading home">
       <span class="brand-mark"><img src="zpp-logo.png" alt="ZPP Gold Trading logo"></span>
@@ -16,6 +16,7 @@
     </a>
     <nav class="site-nav" aria-label="Main navigation">
       <a href="#services">What we do</a>
+      <a href="#public-rates">Daily rates</a>
       <a href="#location">Visit us</a>
       <a class="nav-cta" href="https://www.facebook.com/parengzp" target="_blank" rel="noreferrer">Message us</a>
     </nav>
@@ -40,6 +41,14 @@
         <div class="hero-card"><span>ZPP</span><small>GOLD<br>TRADING</small></div>
         <p class="art-caption">Value you can<br>see. Service you<br>can trust.</p>
       </div>
+    </section>
+
+    <section id="public-rates" class="public-rates section-shell" aria-labelledby="public-rates-title">
+      <div class="section-heading"><div><p class="eyebrow">For today’s reference</p><h2 id="public-rates-title">Current daily<br><em>buying rates.</em></h2></div><div class="public-rates-meta"><span id="public-rates-date">Published rate sheet</span><span>PHP per gram</span></div></div>
+      <div id="public-rates-status" class="public-rates-status" role="status" aria-live="polite">Loading current rates…</div>
+      <div id="public-rates-grid" class="public-rates-grid" hidden></div>
+      <button id="public-rates-retry" class="button button-quiet" type="button" hidden>Try again</button>
+      <p class="public-rates-note">Rates are for reference only. Final quotes are confirmed in-store after checking the item.</p>
     </section>
 
     <section id="services" class="services section-shell">
