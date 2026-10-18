@@ -5,6 +5,7 @@ import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public', 'website.html'), 'utf8');
+const css = fs.readFileSync(path.join(root, 'public', 'website.css'), 'utf8');
 
 test('public website includes essential business information and accessible actions', () => {
   assert.match(html, /ZPP Gold Trading/i);
@@ -22,4 +23,7 @@ test('public website includes essential business information and accessible acti
   assert.match(html, /href="https:\/\/www\.facebook\.com\/parengzp/i);
   assert.match(html, /name="viewport"/i);
   assert.doesNotMatch(html, /login-screen/i);
+  assert.match(css, /@keyframes art-drift/);
+  assert.match(css, /@keyframes ring-float/);
+  assert.match(css, /prefers-reduced-motion:reduce/);
 });
