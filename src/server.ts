@@ -1224,6 +1224,10 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
       return sendJson(response, 200, { ok: true, deletedUser: target.username });
     }
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) return serveFile(response, 'index.html', 'text/html; charset=utf-8');
+    if (request.method === 'GET' && (url.pathname === '/website' || url.pathname === '/website.html')) return serveFile(response, 'website.html', 'text/html; charset=utf-8');
+    if (request.method === 'GET' && url.pathname === '/website.css') return serveFile(response, 'website.css', 'text/css; charset=utf-8');
+    if (request.method === 'GET' && url.pathname === '/website.js') return serveFile(response, 'website.js', 'text/javascript; charset=utf-8');
+    if (request.method === 'GET' && url.pathname === '/store-location.png') return serveFile(response, 'store-location.png', 'image/png');
     if (request.method === 'GET' && url.pathname === '/app.js') return serveFile(response, 'app.js', 'text/javascript; charset=utf-8');
     if (request.method === 'GET' && url.pathname === '/zpp-logo.png') return serveFile(response, 'zpp-logo.png', 'image/png');
     return sendJson(response, 404, { error: 'Not found' });
