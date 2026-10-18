@@ -2,15 +2,20 @@
 
 ## Outcome
 
-Connect the customer-facing ZPP Gold Trading landing page to the trading
-software's saved public daily buying rates. Customers can view the current
+Connect the customer-facing ZPP Gold Trading landing page to a new,
+independent public daily buying-rate sheet. Customers can view the public
 rate sheet without signing in, while only authenticated administrators can
-edit and publish those rates.
+edit and publish it. The public sheet must not automatically copy, inherit,
+or change with the internal Daily Rate Setup.
 
 ## Scope
 
-- Keep the existing authenticated trading-software editor as the only place
-  where public daily rates can be changed.
+- Add a separate **Edit Public Daily Rates** button on the administrator's
+  Daily Rate Setup page.
+- Open a separate public-rate editor from that button, with its own Gold,
+  Silver, Platinum rates and effective date.
+- Keep the existing internal Daily Rate Setup and its calculations unchanged;
+  editing either sheet must not alter the other.
 - Enforce administrator-only writes for the public-rate settings endpoint.
 - Expose the already-supported public pricing read endpoint to the landing
   page with no customer authentication requirement.
@@ -24,10 +29,10 @@ edit and publish those rates.
 
 ## Security and data flow
 
-1. An administrator signs in to the trading software and edits public daily
-   rates using the existing editor.
+1. An administrator signs in to the trading software and opens the separate
+   public-rate editor.
 2. The authenticated pricing write path validates the user's administrator
-   role before saving `publicDailyRates`.
+   role before saving the independent public-rate sheet.
 3. The public page calls `GET /api/public-pricing` and receives only the
    effective date, unit, and public rate values. No session, account, or
    private pricing history is returned.
@@ -47,7 +52,8 @@ return `403` and leave the saved rates unchanged.
 
 ## Verification and acceptance criteria
 
-1. Admin can edit and save public rates from the trading software.
+1. Admin can open the new button, edit, and save public rates independently
+   from the internal Daily Rate Setup.
 2. Staff/non-admin cannot save public-rate changes and receives `403`.
 3. The landing page displays the saved effective date and rates by metal.
 4. The landing page remains usable when the pricing endpoint is unavailable.
@@ -59,4 +65,5 @@ return `403` and leave the saved rates unchanged.
 - Customer accounts or public editing.
 - Changes to internal buying/inventory calculations.
 - A new database or external pricing provider.
-- Automatic rate changes based on the calendar or market feeds.
+- Automatic rate changes based on the calendar, internal rate edits, or market
+  feeds.
