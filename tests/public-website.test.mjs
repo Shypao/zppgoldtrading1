@@ -23,7 +23,7 @@ test('public website includes essential business information and accessible acti
   assert.match(html, /href="https:\/\/www\.facebook\.com\/parengzp/i);
   assert.match(html, /name="viewport"/i);
   assert.match(html, /id="public-rates"/i);
-  assert.match(html, /data-rates-api="https:\/\/zppgoldtrading\.vercel\.app\/api\/public-pricing"/i);
+  assert.match(html, /data-rates-api="https:\/\/zppgoldtrading1-zpp-gold-trading\.vercel\.app\/api\/public-pricing"/i);
   assert.match(html, /Current daily[\s\S]*buying rates/i);
   assert.match(html, /id="public-rates-status"/i);
   assert.match(html, /id="public-rates-retry"/i);
