@@ -66,6 +66,39 @@ interface ExchangeApiResponse { rates?: { PHP?: number } }
 type UserRole = 'admin' | 'staff';
 interface AuthUser { id: string; username: string; displayName: string; role: UserRole }
 
+const PUBLIC_GRADE_META: Record<string, Array<{ key: string; label: string }>> = {
+  Gold: ['24K','23K','22K','21K','20K','18K','18K-BUO','17K','16K','14K','12K','10K','9K','8K','5K','98%','73%'].map(key => ({ key, label: key === '18K-BUO' ? '18K-Buo' : key })),
+  Silver: ['999','925','900','800','750','600'].map(key => ({ key, label: ['750','600'].includes(key) ? `${Number(key) / 10}%` : key })),
+  Platinum: ['999','950','900','850'].map(key => ({ key, label: key }))
+};
+
+export function validatePublicDailyRates(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const sheet = value as Record<string, any>;
+  if (typeof sheet.effectiveDate !== 'string' || !sheet.effectiveDate) return false;
+  if (!sheet.rates || typeof sheet.rates !== 'object' || Array.isArray(sheet.rates)) return false;
+  for (const metal of Object.keys(PUBLIC_GRADE_META)) {
+    const rates = sheet.rates[metal];
+    if (!rates || typeof rates !== 'object' || Array.isArray(rates)) return false;
+    for (const [key, raw] of Object.entries(rates)) {
+      if (!PUBLIC_GRADE_META[metal].some(grade => grade.key === key) || !Number.isFinite(Number(raw)) || Number(raw) <= 0) return false;
+    }
+    if (!Object.keys(rates).length) return false;
+  }
+  return true;
+}
+
+export function publicPricingPayload(pricing: PricingSettings | null): { effectiveDate: string; unit: string; rates: Record<string, unknown[]> } {
+  const sheet = pricing && typeof pricing === 'object' ? (pricing as Record<string, any>).publicDailyRates : null;
+  if (!validatePublicDailyRates(sheet)) return { effectiveDate: '', unit: 'PHP per gram', rates: {} };
+  const rates = Object.fromEntries(Object.entries(PUBLIC_GRADE_META).map(([metal, grades]) => [
+    metal,
+    grades.filter(grade => Number.isFinite(Number(sheet.rates[metal][grade.key])) && Number(sheet.rates[metal][grade.key]) > 0)
+      .map(grade => ({ key: grade.key, label: grade.label, rate: Math.round(Number(sheet.rates[metal][grade.key])) }))
+  ]));
+  return { effectiveDate: sheet.effectiveDate, unit: 'PHP per gram', rates };
+}
+
 if (!usesTurso && !usesUpstream) fs.mkdirSync(dataDirectory, { recursive: true });
 const localDatabase = usesTurso || usesUpstream ? null : new DatabaseSync(databaseFile);
 const tursoClient: Client | null = usesTurso ? createClient({ url: tursoDatabaseUrl, authToken: tursoAuthToken }) : null;
@@ -999,45 +1032,7 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
     }
     if (request.method === 'GET' && url.pathname === '/api/public-pricing') {
       const state = await loadState();
-      const pricing = state.pricing as Record<string, any> | null;
-      const dailyFormula = pricing?.dailyFormula ?? {};
-      const baseRates = dailyFormula.baseRates ?? {};
-      const gradeMeta: Record<string, Array<{ key: string; label: string; mult: number }>> = {
-        Gold: [{key:'24K',label:'24K',mult:1},{key:'23K',label:'23K',mult:.95},{key:'22K',label:'22K',mult:.916},{key:'21K',label:'21K',mult:.875},{key:'20K',label:'20K',mult:.79},{key:'18K',label:'18K',mult:.75},{key:'18K-BUO',label:'18K-Buo',mult:.75},{key:'17K',label:'17K',mult:.7},{key:'16K',label:'16K',mult:.645},{key:'14K',label:'14K',mult:.585},{key:'12K',label:'12K',mult:.4789},{key:'10K',label:'10K',mult:.35},{key:'9K',label:'9K',mult:.335},{key:'8K',label:'8K',mult:.24},{key:'5K',label:'5K',mult:.06},{key:'98%',label:'98%',mult:.98},{key:'73%',label:'73%',mult:.73}],
-        Silver: [{key:'999',label:'999',mult:1},{key:'925',label:'925',mult:925/999},{key:'900',label:'900',mult:.9},{key:'800',label:'800',mult:.8},{key:'750',label:'75%',mult:.75},{key:'600',label:'60%',mult:.6}],
-        Platinum: [{key:'999',label:'999',mult:1},{key:'950',label:'950',mult:950/999},{key:'900',label:'900',mult:900/999},{key:'850',label:'850',mult:850/999}]
-      };
-      const baseRate = (metal: 'Gold' | 'Silver' | 'Platinum') => {
-        const daily = Number(baseRates[metal]);
-        if (Number.isFinite(daily) && daily > 0) return Math.round(daily);
-        const legacy = Number(pricing?.[metal.toLowerCase()]?.base);
-        return Number.isFinite(legacy) && legacy > 0 ? Math.round(legacy) : 0;
-      };
-      const configuredMultiplier = (metal: string, key: string, fallback: number) => {
-        const value = Number(pricing?.gradeMultipliers?.[metal]?.[key]);
-        return Number.isFinite(value) && value >= 0 ? value : fallback;
-      };
-      const rateFor = (metal: 'Gold' | 'Silver' | 'Platinum', key: string, fallbackMultiplier: number) => {
-        const publicRate = Number(pricing?.publicDailyRates?.rates?.[metal]?.[key]);
-        if (Number.isFinite(publicRate) && publicRate > 0) return Math.round(publicRate);
-        const override = Number(pricing?.[metal.toLowerCase()]?.overrides?.[key]);
-        if (Number.isFinite(override) && override > 0) return Math.round(override);
-        const base = baseRate(metal);
-        if (!base) return 0;
-        if (metal === 'Gold') return Math.round(base * configuredMultiplier(metal, key, fallbackMultiplier));
-        if (metal === 'Silver') {
-          const sterling = Number(baseRates.Silver925) > 0 ? Number(baseRates.Silver925) : Math.max(base - 10, 0);
-          return Math.round(key === '999' ? base : key === '925' ? sterling : sterling * Number(key) / 925);
-        }
-        const deductions: Record<string, number> = {999:0,950:100,900:150,850:200};
-        return Math.max(Math.round(base - (deductions[key] ?? 0)), 0);
-      };
-      const rates = Object.fromEntries(Object.entries(gradeMeta).map(([metal, grades]) => [metal, grades.map(grade => ({ key: grade.key, label: grade.label, rate: rateFor(metal as 'Gold'|'Silver'|'Platinum', grade.key, grade.mult) }))]));
-      return sendJson(response, 200, {
-        effectiveDate: String(pricing?.publicDailyRates?.effectiveDate || dailyFormula.effectiveDate || pricing?.effectiveDate || ''),
-        unit: 'PHP per gram',
-        rates
-      }, { 'Access-Control-Allow-Origin': '*', Vary: 'Origin' });
+      return sendJson(response, 200, publicPricingPayload(state.pricing), { 'Access-Control-Allow-Origin': '*', Vary: 'Origin' });
     }
     const user = await sessionUser(request);
     if (url.pathname.startsWith('/api/') && !user) return sendJson(response, 401, { error: 'Sign in required' });
@@ -1122,6 +1117,14 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
       }
       if (user!.role !== 'admin' && pricingHistory !== undefined) return sendJson(response, 403, { error: 'Only administrators can save rate-sheet history' });
       const current = await loadState();
+      const candidatePublicRates = (pricing as Record<string, any>).publicDailyRates;
+      const currentPublicRates = (current.pricing as Record<string, any> | null)?.publicDailyRates;
+      if (user!.role !== 'admin' && JSON.stringify(candidatePublicRates) !== JSON.stringify(currentPublicRates)) {
+        return sendJson(response, 403, { error: 'Only administrators can edit public daily rates' });
+      }
+      if (candidatePublicRates !== undefined && !validatePublicDailyRates(candidatePublicRates)) {
+        return sendJson(response, 400, { error: 'Invalid public daily rates' });
+      }
       const nextPricing = user!.role === 'admin'
         ? pricing as PricingSettings
         : staffEditablePricing(current.pricing as PricingSettings, pricing as PricingSettings);
