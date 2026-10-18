@@ -112,6 +112,7 @@ function ensureShape() {
     db.pricing.gradeMultipliers = db.pricing.gradeMultipliers || {};
     db.pricing.dailyFormula = db.pricing.dailyFormula || { effectiveDate: '', baseRates: {} };
     db.pricing.dailyFormula.baseRates = db.pricing.dailyFormula.baseRates || {};
+    db.pricing.publicDailyRates = db.pricing.publicDailyRates || null;
     db.pricing.staffRateEditingUnlocked = Boolean(db.pricing.staffRateEditingUnlocked);
 }
 function openLedgerDB() {
@@ -537,6 +538,114 @@ async function setSilver925Base(value) {
         toast('Silver 925 basis rate updated for today');
     }
 }
+function publicDailyRateValue(metal, key) {
+    const saved = Number(db.pricing.publicDailyRates?.rates?.[metal]?.[key]);
+    return Number.isFinite(saved) && saved > 0 ? roundPeso(saved) : metalRate(metal, key);
+}
+function publicGoldBaseValue() {
+    const saved = Number(db.pricing.publicDailyRates?.rates?.Gold?.['24K']);
+    return Number.isFinite(saved) && saved > 0 ? roundPeso(saved) : roundPeso(metalRate('Gold', '24K'));
+}
+function publicGoldRateValue(key) {
+    return roundPeso(publicGoldBaseValue() * configuredGradeMultiplier('Gold', key));
+}
+function publicBaseValue(metal) {
+    const saved = Number(db.pricing.publicDailyRates?.rates?.[metal]?.['999']);
+    return Number.isFinite(saved) && saved > 0 ? roundPeso(saved) : roundPeso(metalRate(metal, '999'));
+}
+function publicLinkedRateValue(metal, key, base) {
+    if (metal === 'Gold')
+        return roundPeso(base * configuredGradeMultiplier('Gold', key));
+    return calculatedRateFromBase(metal, key, base);
+}
+function syncPublicDailyRateFields(modal) {
+    const bases = {
+        Gold: roundPeso(parseFloat(modal.querySelector('#public_rate_Gold_24K')?.value || '')),
+        Silver: roundPeso(parseFloat(modal.querySelector('#public_rate_Silver_999')?.value || '')),
+        Platinum: roundPeso(parseFloat(modal.querySelector('#public_rate_Platinum_999')?.value || ''))
+    };
+    Object.entries(GRADE_META).forEach(([metal, grades]) => {
+        const baseKey = metal === 'Gold' ? '24K' : '999';
+        const base = bases[metal];
+        if (!Number.isFinite(base) || base <= 0)
+            return;
+        grades.forEach(grade => {
+            if (grade.key === baseKey)
+                return;
+            if (metal === 'Silver' && grade.key !== '925')
+                return;
+            const input = modal.querySelector(`#public_rate_${metal}_${grade.key.replace(/[^a-z0-9]/gi, '_')}`);
+            if (input)
+                input.value = publicLinkedRateValue(metal, grade.key, base);
+        });
+    });
+}
+async function savePublicDailyRates() {
+    if (!adminEditGuard())
+        return;
+    const rates = { Gold: {}, Silver: {}, Platinum: {} };
+    const goldBaseInput = document.getElementById('public_rate_Gold_24K');
+    const goldBase = roundPeso(parseFloat(goldBaseInput?.value || ''));
+    if (!Number.isFinite(goldBase) || goldBase <= 0) {
+        toast('Enter a valid Gold 24K public rate');
+        goldBaseInput?.focus();
+        return;
+    }
+    const silverBaseInput = document.getElementById('public_rate_Silver_999');
+    const platinumBaseInput = document.getElementById('public_rate_Platinum_999');
+    const silverBase = roundPeso(parseFloat(silverBaseInput?.value || ''));
+    const platinumBase = roundPeso(parseFloat(platinumBaseInput?.value || ''));
+    if (!Number.isFinite(silverBase) || silverBase <= 0) {
+        toast('Enter a valid Silver 999 public rate');
+        silverBaseInput?.focus();
+        return;
+    }
+    if (!Number.isFinite(platinumBase) || platinumBase <= 0) {
+        toast('Enter a valid Platinum 999 public rate');
+        platinumBaseInput?.focus();
+        return;
+    }
+    for (const [metal, grades] of Object.entries(GRADE_META)) {
+        for (const grade of grades) {
+            const input = document.getElementById(`public_rate_${metal}_${grade.key.replace(/[^a-z0-9]/gi, '_')}`);
+            const value = roundPeso(parseFloat(input?.value || ''));
+            if (!Number.isFinite(value) || value <= 0) {
+                toast(`Enter a valid ${metal} rate for ${grade.label}`);
+                input?.focus();
+                return;
+            }
+            rates[metal][grade.key] = value;
+        }
+    }
+    db.pricing.publicDailyRates = { effectiveDate: todayStr(), rates };
+    if (await savePricingDB()) {
+        closePublicDailyRatesEditor();
+        render();
+        toast('Public daily buying rates updated');
+    }
+}
+function resetPublicDailyRates() {
+    if (!adminEditGuard() || !confirm('Reset the public rate sheet to the current internal buying rates?'))
+        return;
+    db.pricing.publicDailyRates = null;
+    savePricingDB().then(() => { closePublicDailyRatesEditor(); render(); toast('Public rates reset to internal buying rates'); });
+}
+function openPublicDailyRatesEditor() {
+    if (!adminEditGuard())
+        return;
+    closePublicDailyRatesEditor();
+    const modal = document.createElement('div');
+    modal.id = 'public_daily_rates_modal';
+    modal.className = 'modal-backdrop';
+    const sections = Object.entries(GRADE_META).map(([metal, grades]) => `<section class="public-rate-modal-section"><h3>${metal}</h3>${metal === 'Gold' ? '<p class="form-note">The rates open with the saved karat-multiplier values. You can edit every Gold grade manually.</p>' : metal === 'Silver' ? '<p class="form-note">Change Silver 999 to move only the 925 rate. Silver 900, 800, 75%, and 60% remain independently configurable.</p>' : '<p class="form-note">The rates open from the internal formula. You can edit every Platinum purity manually.</p>'}<div class="multiplier-grid public-rate-modal-grid">${grades.map(grade => { const baseKey = metal === 'Gold' ? '24K' : '999'; const linked = metal === 'Gold' ? grade.key !== '24K' : metal === 'Silver' ? grade.key === '925' : grade.key !== '999'; const base = metal === 'Gold' ? publicGoldBaseValue() : publicBaseValue(metal); const value = linked ? publicLinkedRateValue(metal, grade.key, base) : base; return `<label class="field"><span>${esc(grade.label)}${linked ? ' · calculated' : ''}</span><div class="base-input"><span>₱</span><input id="public_rate_${metal}_${grade.key.replace(/[^a-z0-9]/gi, '_')}" type="number" min="1" step="1" value="${value}"></div></label>`; }).join('')}</div></section>`).join('');
+    modal.innerHTML = `<div class="summary-modal public-rates-modal" role="dialog" aria-modal="true" aria-labelledby="public_daily_rates_title"><div class="summary-modal-head"><div><div class="eyebrow">Public website settings</div><h2 id="public_daily_rates_title">Edit public daily buying rates</h2></div><button type="button" class="modal-close" onclick="closePublicDailyRatesEditor()" aria-label="Close">×</button></div><p class="form-note multiplier-modal-note">These rates start from the same formulas as the internal rate setup, but every field is configurable. Change the base or adjust any individual grade before saving.</p>${sections}<div class="form-actions multiplier-modal-actions"><button type="button" class="btn secondary" onclick="resetPublicDailyRates()">Use internal rates</button><button type="button" class="btn secondary" onclick="closePublicDailyRatesEditor()">Cancel</button><button type="button" class="btn" onclick="savePublicDailyRates()">Save public rates</button></div></div>`;
+    modal.addEventListener('click', event => { if (event.target === modal)
+        closePublicDailyRatesEditor(); });
+    document.body.appendChild(modal);
+    ['Gold_24K', 'Silver_999', 'Platinum_999'].forEach(key => modal.querySelector(`#public_rate_${key}`)?.addEventListener('input', () => syncPublicDailyRateFields(modal)));
+    modal.querySelector('input')?.focus();
+}
+function closePublicDailyRatesEditor() { document.getElementById('public_daily_rates_modal')?.remove(); }
 let staffRateEditingToggleBusy = false;
 async function toggleStaffRateEditing() {
     if (!isAdmin() || staffRateEditingToggleBusy)
@@ -1063,7 +1172,8 @@ function renderRates() {
         ${admin ? `
         <button class="btn small" onclick="refreshPhilippineRates()" ${pricingFetchBusy ? 'disabled' : ''}>Refresh &amp; apply now</button>
         <button class="btn secondary small" onclick="openDailyBaseEditor('Gold')">Edit today's PHP base</button>
-        <button class="btn secondary small" onclick="openGoldMultiplierEditor()">Edit Gold karat multipliers</button>` : ''}
+        <button class="btn secondary small" onclick="openGoldMultiplierEditor()">Edit Gold karat multipliers</button>
+        <button class="btn secondary small" onclick="openPublicDailyRatesEditor()">Edit public daily rates</button>` : ''}
       </div>
     </div>
     <div class="stat-row" style="margin-top:16px">
