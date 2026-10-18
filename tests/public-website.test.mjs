@@ -18,7 +18,7 @@ test('public website includes essential business information and accessible acti
   assert.match(html, /src="website\.js"/i);
   assert.doesNotMatch(html, /<span class="brand-mark">Z<\/span>/i);
   assert.doesNotMatch(html, /価/);
-  assert.match(html, /google\.com\/maps\?q=Barcelona\+St\+Zone\+II\+Zamboanga\+City&output=embed/i);
+  assert.match(html, /google\.com\/maps\?q=6\.9070538%2C122\.0758178&output=embed/i);
   assert.match(html, /title="Google Maps location of ZPP Gold Trading"/i);
   assert.match(html, /href="https:\/\/www\.facebook\.com\/parengzp/i);
   assert.match(html, /name="viewport"/i);
