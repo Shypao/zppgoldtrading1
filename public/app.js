@@ -5484,6 +5484,34 @@ function refiningEligibleItem(item) {
     const pool = db.inventoryPools.find(candidate => candidate.id === item.inventoryPoolId);
     return pool && poolInventoryClassification(pool) === 'For Refining';
 }
+function refiningEligibleGroups() {
+    const groups = [], byPool = new Map();
+    db.stock.filter(item => item.metal === refMetal && refiningEligibleItem(item)).forEach(item => {
+        if (!item.inventoryPoolId) {
+            groups.push({ id: item.id, items: [item], pooled: false });
+            return;
+        }
+        if (!byPool.has(item.inventoryPoolId)) {
+            const pool = db.inventoryPools.find(candidate => candidate.id === item.inventoryPoolId);
+            const group = { id: item.inventoryPoolId, items: [], pooled: true, pool };
+            byPool.set(item.inventoryPoolId, group);
+            groups.push(group);
+        }
+        byPool.get(item.inventoryPoolId).items.push(item);
+    });
+    return groups;
+}
+function toggleRefiningGroup(groupId, checked) {
+    const group = refiningEligibleGroups().find(candidate => candidate.id === groupId);
+    if (!group)
+        return;
+    group.items.forEach(item => { if (checked)
+        refiningSelection.add(item.id);
+    else
+        refiningSelection.delete(item.id); });
+    updateRefiningCombinedSummary();
+    render();
+}
 function toggleRefiningSelection(id, checked) {
     if (checked)
         refiningSelection.add(id);
@@ -5500,7 +5528,7 @@ function toggleAllRefiningSelection() {
     const eligible = db.stock.filter(item => item.metal === refMetal && refiningEligibleItem(item));
     const shouldSelect = eligible.length > 0 && !eligible.every(item => refiningSelection.has(item.id));
     eligible.forEach(item => shouldSelect ? refiningSelection.add(item.id) : refiningSelection.delete(item.id));
-    document.querySelectorAll('.ref-chk').forEach(input => { input.checked = shouldSelect; });
+    document.querySelectorAll('.ref-group-chk').forEach(input => { input.checked = shouldSelect; });
     const selectAll = document.getElementById('rf_select_all');
     if (selectAll)
         selectAll.textContent = shouldSelect ? 'Clear all' : 'Select all';
@@ -5606,6 +5634,7 @@ async function confirmInventoryForRefining() {
 function renderRefining() {
     const openBatches = db.refiningBatches.filter(batch => String(batch.status || 'Completed') === 'Open').sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
     const eligible = db.stock.filter(s => s.metal === refMetal && refiningEligibleItem(s));
+    const groups = refiningEligibleGroups();
     Array.from(refiningSelection).forEach(id => { if (!eligible.some(item => item.id === id))
         refiningSelection.delete(id); });
     const selected = selectedRefiningItems();
@@ -5624,15 +5653,18 @@ function renderRefining() {
     <div class="filter-row">
       <div class="field"><label>Metal</label><select onchange="changeRefiningMetal(this.value)">
         ${['Gold', 'Silver', 'Platinum'].map(m => `<option ${refMetal === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
-      <button type="button" class="btn secondary small" id="rf_select_all" onclick="toggleAllRefiningSelection()" ${eligible.length ? '' : 'disabled'}>${eligible.length && eligible.every(item => refiningSelection.has(item.id)) ? 'Clear all' : 'Select all'}</button>
+      <button type="button" class="btn secondary small" id="rf_select_all" onclick="toggleAllRefiningSelection()" ${groups.length ? '' : 'disabled'}>${eligible.length && eligible.every(item => refiningSelection.has(item.id)) ? 'Clear all' : 'Select all'}</button>
     </div>
-    ${eligible.length ? `
+    ${groups.length ? `
     <div class="item-check-row head"><span></span><span>Item</span><span>Weight</span><span>Cost</span><span></span><span></span></div>
-    ${eligible.map(s => `<div class="item-check-row" data-item="${s.id}">
-      <input type="checkbox" class="ref-chk" onchange="toggleRefiningSelection('${s.id}',this.checked)" ${refiningSelection.has(s.id) ? 'checked' : ''}>
-      <span>${fmtDate(s.date)} · ${esc(s.karat)} · ${esc(s.customerName)}</span>
-      <span class="num">${fmtWeight(s.currentWeight)}</span><span class="num">${fmtMoney(s.cost)}</span><span></span><span></span>
-      </div>`).join('')}
+    ${groups.map(group => {
+        const first = group.items[0], pool = group.pool, weight = group.items.reduce((sum, item) => sum + Number(item.currentWeight || 0), 0), cost = group.items.reduce((sum, item) => sum + Number(item.cost || 0), 0), date = group.items.map(item => item.date).sort().at(-1) || first.date, label = group.pooled ? `${pool?.name || pool?.id || 'Pooled inventory'} · ${group.items.length} pooled records` : `${fmtDate(first.date)} · ${esc(first.karat)} · ${esc(first.customerName)}`;
+        return `<div class="item-check-row" data-item="${esc(group.id)}">
+      <input type="checkbox" class="ref-group-chk" onchange="toggleRefiningGroup('${esc(group.id)}',this.checked)" ${group.items.every(item => refiningSelection.has(item.id)) ? 'checked' : ''}>
+      <span>${group.pooled ? `${fmtDate(date)} · ${esc(pool?.karat || first.karat)} · ${esc(label)}` : label}</span>
+      <span class="num">${fmtWeight(weight)}</span><span class="num">${fmtMoney(cost)}</span><span></span><span></span>
+      </div>`;
+    }).join('')}
     ` : `<div class="empty-note">No ${refMetal.toLowerCase()} stock marked "For Refining".</div>`}
   </section>
 

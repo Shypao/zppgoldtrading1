@@ -1201,8 +1201,10 @@ test('editing a pool can classify its active balance for refining', async () => 
   assert.equal(refining.pool.inventoryStatus, 'For Refining');
   assert.equal(refining.stock.every(item => item.status === 'For Refining'), true);
   assert.match(refining.inventory, />For Refining</);
-  assert.match(refining.refining, /Seller A/);
-  assert.match(refining.refining, /Seller B/);
+  assert.match(refining.refining, /18K refining pool/);
+  assert.match(refining.refining, /2 pooled records/);
+  assert.doesNotMatch(refining.refining, /Seller A/);
+  assert.doesNotMatch(refining.refining, /Seller B/);
 
   const available = api.setPoolClassification('POOL-REFINE', 'Available');
   assert.equal(available.stock.every(item => item.status === 'Available'), true);
@@ -1221,8 +1223,10 @@ test('refining tracking includes pooled records classified at the pool level', a
 
   const html = api.renderRefining();
 
-  assert.match(html, /Pooled Seller A/);
-  assert.match(html, /Pooled Seller B/);
+  assert.match(html, /18K refining pool/);
+  assert.match(html, /2 pooled records/);
+  assert.doesNotMatch(html, /Pooled Seller A/);
+  assert.doesNotMatch(html, /Pooled Seller B/);
 });
 
 test('editing a pool can raise its remaining cost for a later liquidation', async () => {
