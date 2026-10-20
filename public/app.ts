@@ -4009,16 +4009,23 @@ let pendingInventoryRefiningIds=[];
 let refiningActionBusy=false;
 function beginRefiningAction(){ if(refiningActionBusy) return false; refiningActionBusy=true; return true; }
 function finishRefiningAction(){ refiningActionBusy=false; }
+function refiningEligibleItem(item){
+  if(!item||item.refiningBatchId||Number(item.currentWeight)<=0) return false;
+  if(item.status==='For Refining') return true;
+  if(!item.inventoryPoolId) return false;
+  const pool=db.inventoryPools.find(candidate=>candidate.id===item.inventoryPoolId);
+  return pool&&poolInventoryClassification(pool)==='For Refining';
+}
 function toggleRefiningSelection(id,checked){
   if(checked) refiningSelection.add(id); else refiningSelection.delete(id);
   updateRefiningCombinedSummary();
-  const eligible=db.stock.filter(item=>item.metal===refMetal&&item.status==='For Refining'&&!item.refiningBatchId&&Number(item.currentWeight)>0);
+  const eligible=db.stock.filter(item=>item.metal===refMetal&&refiningEligibleItem(item));
   const selectAll=document.getElementById('rf_select_all');
   if(selectAll) selectAll.textContent=eligible.length&&eligible.every(item=>refiningSelection.has(item.id))?'Clear all':'Select all';
 }
 function changeRefiningMetal(metal){ refMetal=metal; refiningSelection.clear(); render(); }
 function toggleAllRefiningSelection(){
-  const eligible=db.stock.filter(item=>item.metal===refMetal&&item.status==='For Refining'&&!item.refiningBatchId&&Number(item.currentWeight)>0);
+  const eligible=db.stock.filter(item=>item.metal===refMetal&&refiningEligibleItem(item));
   const shouldSelect=eligible.length>0&&!eligible.every(item=>refiningSelection.has(item.id));
   eligible.forEach(item=>shouldSelect?refiningSelection.add(item.id):refiningSelection.delete(item.id));
   document.querySelectorAll('.ref-chk').forEach(input=>{input.checked=shouldSelect;});
@@ -4027,7 +4034,7 @@ function toggleAllRefiningSelection(){
   updateRefiningCombinedSummary();
 }
 function selectedRefiningItems(){
-  return db.stock.filter(item=>refiningSelection.has(item.id)&&item.metal===refMetal&&item.status==='For Refining'&&!item.refiningBatchId&&Number(item.currentWeight)>0);
+  return db.stock.filter(item=>refiningSelection.has(item.id)&&item.metal===refMetal&&refiningEligibleItem(item));
 }
 function updateRefiningCombinedSummary(){
   const items=selectedRefiningItems();
@@ -4103,7 +4110,7 @@ async function confirmInventoryForRefining(){
 }
 function renderRefining(){
   const openBatches=db.refiningBatches.filter(batch=>String(batch.status||'Completed')==='Open').sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
-  const eligible = db.stock.filter(s=>s.metal===refMetal && s.status==='For Refining' && !s.refiningBatchId && s.currentWeight>0);
+  const eligible = db.stock.filter(s=>s.metal===refMetal && refiningEligibleItem(s));
   Array.from(refiningSelection).forEach(id=>{if(!eligible.some(item=>item.id===id))refiningSelection.delete(id);});
   const selected=selectedRefiningItems();
   const selectedWeight=selected.reduce((sum,item)=>sum+Number(item.currentWeight),0);

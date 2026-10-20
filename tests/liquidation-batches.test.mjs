@@ -1209,6 +1209,22 @@ test('editing a pool can classify its active balance for refining', async () => 
   assert.match(available.inventory, />Available</);
 });
 
+test('refining tracking includes pooled records classified at the pool level', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'pooled-a', date: '2026-09-19', customerName: 'Pooled Seller A', metal: 'Gold', karat: '18K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-LEVEL-REFINE', netWeight: 4, currentWeight: 4, cost: 20000 },
+    { id: 'pooled-b', date: '2026-09-19', customerName: 'Pooled Seller B', metal: 'Gold', karat: '18K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-LEVEL-REFINE', netWeight: 6, currentWeight: 6, cost: 30000 }
+  ];
+  state.inventoryPools = [{ id: 'POOL-LEVEL-REFINE', name: '18K refining pool', metal: 'Gold', karat: '18K', itemIds: ['pooled-a', 'pooled-b'], originalWeight: 10, originalCost: 50000, remainingWeight: 10, remainingCost: 50000, inventoryStatus: 'For Refining', onHold: false }];
+  api.setState(state);
+
+  const html = api.renderRefining();
+
+  assert.match(html, /Pooled Seller A/);
+  assert.match(html, /Pooled Seller B/);
+});
+
 test('editing a pool can raise its remaining cost for a later liquidation', async () => {
   const api = await loadInventoryApi();
   const state = stateFixture();
