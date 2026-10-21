@@ -4919,10 +4919,27 @@ function liquidationBatchGradeBadges(batch) {
         const item = db.stock.find(stock => stock.id === line.itemId) || {};
         const grade = gradeLabel(item.metal || '', item.karat || '');
         const label = mixed ? `${item.metal || ''} ${grade}`.trim() : grade;
-        if (label && !labels.includes(label))
-            labels.push(label);
+        if (label && !labels.some(entry => entry.label === label))
+            labels.push({ label, metal: item.metal || batch.metal || '', key: item.karat || '' });
     });
-    return labels.map(label => `<span class="liquidation-batch-grade">${esc(label)}</span>`).join('');
+    return labels.sort(compareLiquidationGrades).map(entry => `<span class="liquidation-batch-grade">${esc(entry.label)}</span>`).join('');
+}
+function liquidationGradeValue(metal, key) {
+    const custom = customPurityFromKey(key);
+    if (custom !== null)
+        return custom;
+    const karat = String(key || '').match(/^(\d+(?:\.\d+)?)K/i);
+    if (karat && metal === 'Gold')
+        return Number(karat[1]) * 100 / 24;
+    const numeric = Number(String(key || '').replace(/[^\d.]/g, ''));
+    return Number.isFinite(numeric) ? numeric : 0;
+}
+function compareLiquidationGrades(a, b) {
+    if (a.metal !== b.metal)
+        return a.metal.localeCompare(b.metal);
+    const aKey = a.key || a.grade || '', bKey = b.key || b.grade || '';
+    const valueDelta = liquidationGradeValue(b.metal, bKey) - liquidationGradeValue(a.metal, aKey);
+    return Math.abs(valueDelta) > 0.001 ? valueDelta : gradeSortIndex(a.metal, aKey) - gradeSortIndex(b.metal, bKey);
 }
 function liquidationBatchKaratTotals(batch) {
     const totals = new Map();
@@ -4936,7 +4953,7 @@ function liquidationBatchKaratTotals(batch) {
         entry.cost += Number(line.cost || 0);
         totals.set(key, entry);
     });
-    return Array.from(totals.values());
+    return Array.from(totals.values()).sort(compareLiquidationGrades);
 }
 function liquidationBatchDisplayName(batch) {
     const name = String(batch?.name || '').trim();

@@ -663,6 +663,29 @@ test('Liquidation view renders independent batches and their totals', async () =
   assert.match(html, /PHP 800/);
 });
 
+test('liquidation Gold totals sort from 24K down by purity', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'gold-18k', metal: 'Gold', karat: '18K', status: 'For Liquidation', currentWeight: 5, cost: 500 },
+    { id: 'gold-24k', metal: 'Gold', karat: '24K', status: 'For Liquidation', currentWeight: 5, cost: 500 },
+    { id: 'gold-92-8', metal: 'Gold', karat: '92.8%', status: 'For Liquidation', currentWeight: 5, cost: 500 },
+    { id: 'gold-22k', metal: 'Gold', karat: '22K', status: 'For Liquidation', currentWeight: 5, cost: 500 },
+    { id: 'gold-20k', metal: 'Gold', karat: '20K', status: 'For Liquidation', currentWeight: 5, cost: 500 }
+  ];
+  state.liquidationBatches = [{ id: 'LB-GOLD', name: 'Gold batch', buyer: 'Gold Buyer', metal: 'Gold', lines: [
+    ...state.stock.map(item => ({ itemId: item.id, weight: item.currentWeight, cost: item.cost }))
+  ] }];
+  api.setState(state);
+
+  const html = api.renderLiquidation();
+  const totals = html.slice(html.indexOf('Totals per karat / purity'), html.indexOf('</table>', html.indexOf('Totals per karat / purity')));
+  const positions = ['24K', '92.8% purity', '22K', '20K', '18K'].map(label => totals.indexOf(label));
+
+  assert.ok(positions.every(position => position >= 0));
+  assert.deepEqual(positions, [...positions].sort((a, b) => a - b));
+});
+
 test('Liquidation view exposes a visible batch selection control for every batch', async () => {
   const api = await loadInventoryApi();
   api.setState(stateFixture());
