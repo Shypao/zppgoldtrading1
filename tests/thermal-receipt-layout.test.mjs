@@ -47,7 +47,8 @@ test('thermal receipt includes the complete POS structure', async () => {
 
   assert.match(source, /Transaction No\.:/);
   assert.match(source, /class="receipt-items"/);
-  assert.match(source, /<th>ITEM<\/th><th>QTY<\/th><th>WT<\/th><th>AMT<\/th>/);
+  assert.match(source, /<th>ITEM<\/th><th>WT<\/th><th>AMT<\/th>/);
+  assert.doesNotMatch(source, /receipt-(?:col-)?qty|<th>QTY<\/th>/);
   assert.match(source, /\.receipt-items th\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*10\s*:\s*9\.5\}px[^}]*white-space:nowrap/);
   assert.match(source, /class="receipt-item-detail">\$\{esc\(item\.itemType\)\}/);
   assert.match(source, /Rate: PHP \$\{receiptMoneyNumber\(item\.rate\)\}\/g/);
@@ -66,7 +67,7 @@ test('every printed receipt line uses larger heavy thermal typography', async ()
   assert.match(source, /\.thermal-receipt,\.thermal-receipt \*\{font-weight:900\}/);
   assert.match(source, /\.receipt-address\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*10\.5\s*:\s*9\.5\}px/);
   assert.match(source, /\.receipt-items\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*10\s*:\s*9\}px/);
-  assert.match(source, /\.receipt-item-title,\.receipt-qty,\.receipt-weight,\.receipt-amount\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*11\s*:\s*10\}px;font-weight:900;[^}]*-webkit-text-stroke:\.16px #000/);
+  assert.match(source, /\.receipt-item-title,\.receipt-weight,\.receipt-amount\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*11\s*:\s*10\}px;font-weight:900;[^}]*-webkit-text-stroke:\.16px #000/);
   assert.match(source, /\.receipt-item-rate\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*10\s*:\s*9\}px;font-weight:900;[^}]*-webkit-text-stroke:\.12px #000/);
   assert.match(source, /\.receipt-quote\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*9\s*:\s*8\}px;font-style:italic/);
 });
