@@ -49,6 +49,7 @@ test('pricing API saves public and internal rates independently, including stale
   const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', `
     import http from 'node:http';
     import { requestHandler } from './src/server.ts';
+    globalThis.fetch=()=>{throw new Error('Tests must not fetch internet market prices');};
     const server=http.createServer(requestHandler);
     server.listen(0,'127.0.0.1',()=>console.log('TEST_PORT='+server.address().port));
   `], { cwd: directory, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -68,6 +69,10 @@ test('pricing API saves public and internal rates independently, including stale
   const login = await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: 'IsolationTest@123' }) });
   assert.equal(login.status, 200);
   const cookie = login.headers.get('set-cookie').split(';')[0];
+  for (const method of ['GET', 'POST']) {
+    const response = await fetch(base + '/api/market', { method, headers: { Cookie: cookie } });
+    assert.equal(response.status, 410, 'internet pricing must remain disabled even for administrators');
+  }
   async function api(url, body) {
     const response = await fetch(base + url, { method: body ? 'PUT' : 'GET', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
     const result = await response.json();

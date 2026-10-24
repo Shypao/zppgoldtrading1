@@ -2,7 +2,7 @@
 
 This guide explains how to use ZPP Gold Trading for daily rate setting, buying, inventory control, liquidation, refining, retail sales, customer records, reports, and user administration.
 
-> **Important:** Internet prices are reference inputs. Verify the metal, purity, weight, deductions, buying rate, and payout before confirming a high-value transaction.
+> **Important:** Verify the metal, purity, weight, deductions, manually entered buying rate, and payout before confirming a transaction.
 
 ## Contents
 
@@ -140,15 +140,15 @@ For a purchase, the system uses rates in this order:
 
 1. an exact grade override, if one exists;
 2. today's configured PHP base and calculation rule; or
-3. the active internet-derived base rate.
+3. the previously saved base rate for older records without a separate daily base.
 
 The Buying page still allows a one-transaction rate adjustment. That transaction-level adjustment does not change the shared Daily Rate Setup.
 
-### Automatic pricing
+### Manual pricing
 
-The administrator view displays PHP-per-gram market prices for Gold, Silver, and Platinum. When automatic updates are enabled, the application checks market pricing every five seconds while the page is open and visible.
+Enter PHP-per-gram buying rates manually for Gold, Silver, and Platinum. Saved rates stay in effect until an authorized user edits them. The application does not retrieve or apply internet market prices.
 
-To refresh manually, select **Refresh & apply now**. If the price service is unavailable, the current rates remain unchanged.
+Silver 999 and the Silver 925 basis are independent. Editing 999 keeps the existing 925 and lower-grade rates unchanged. Editing the 925 basis recalculates 900, 800, 75%, and 60%; 999 stays unchanged. Explicit per-grade overrides remain in effect until reset. Public website rates are managed separately through **Edit public website rates**.
 
 ### Set today's exact base rate (Admin)
 
@@ -443,9 +443,9 @@ CSV exports reflect the active date range where the report provides date filters
 
 The session may have expired, the account may have been disabled, or the server may have restarted. Sign in again. Ask an administrator to confirm the account is active if the problem continues.
 
-### Live pricing is unavailable
+### A buying rate needs to change
 
-Keep the current rates unchanged, verify the network connection, and try **Refresh & apply now** again. An administrator can enter today's PHP base manually. Independently verify rates before making a payout.
+Enter the new rate in **Daily Rate Setup** or **Edit today's PHP base**. Saved prices do not change from internet updates. To change only the public website's price list, use **Edit public website rates**.
 
 ### “The database changed in another session”
 
@@ -513,5 +513,5 @@ Copy `.env.example` to `.env.local` and set values appropriate for the environme
 - Replace both initial passwords before the first production start.
 - Keep `.env.local`, database tokens, passwords, and database files out of source control.
 - Confirm `/api/health` reports the expected database mode and persistence status.
-- Test sign-in, rate refresh, one sample purchase, and CSV export before live use.
+- Test sign-in, manual rate editing, one sample purchase, and CSV export before live use.
 - Establish a regular database backup and reconciliation process.

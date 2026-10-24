@@ -22,7 +22,6 @@ const usesUpstream = Boolean(upstreamApiUrl);
 const usesTurso = !usesUpstream && Boolean(tursoDatabaseUrl);
 const host = '127.0.0.1';
 const port = Number(process.env.ZPP_PORT ?? 4177);
-const gramsPerTroyOunce = 31.1034768;
 
 interface LedgerRecord { id: string; [key: string]: unknown }
 interface PricingSettings { [key: string]: unknown }
@@ -61,8 +60,6 @@ interface CashflowAdjustment {
   createdBy: string;
 }
 interface CashflowSettings { days: Record<string, CashflowDaySetting> }
-interface GoldApiResponse { price: number }
-interface ExchangeApiResponse { rates?: { PHP?: number } }
 type UserRole = 'admin' | 'staff';
 interface AuthUser { id: string; username: string; displayName: string; role: UserRole }
 
@@ -873,95 +870,6 @@ function staffEditablePricing(currentPricing: PricingSettings, candidatePricing:
   return next as PricingSettings;
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, { headers: { 'User-Agent': 'ZPP-Gold-Trading/1.0' } });
-  if (!response.ok) throw new Error(`Market provider returned HTTP ${response.status}`);
-  return response.json() as Promise<T>;
-}
-
-async function fetchPhilippineGoldPhpPerGram(): Promise<number | null> {
-  try {
-    const response = await fetch('https://www.livepriceofgold.com/philippines-gold-price-per-gram.html', {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ZPP-Gold-Trading/1.0)' },
-      signal: AbortSignal.timeout(8000)
-    });
-    if (!response.ok) return null;
-    const html = await response.text();
-    const match = html.match(/Philippines Gold Price per Gram:\s*([\d,]+(?:\.\d+)?)\s+Philippine pesos/i);
-    const value = match ? Number(match[1].replace(/,/g, '')) : 0;
-    return Number.isFinite(value) && value > 0 ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-async function createMarketProposal() {
-  const [gold, silver, platinum, exchange, philippineGold] = await Promise.all([
-    fetchJson<GoldApiResponse>('https://api.gold-api.com/price/XAU'),
-    fetchJson<GoldApiResponse>('https://api.gold-api.com/price/XAG'),
-    fetchJson<GoldApiResponse>('https://api.gold-api.com/price/XPT'),
-    fetchJson<ExchangeApiResponse>('https://open.er-api.com/v6/latest/USD'),
-    fetchPhilippineGoldPhpPerGram()
-  ]);
-  const usdPhp = Number(exchange.rates?.PHP);
-  const spotUsd = { Gold: Number(gold.price), Silver: Number(silver.price), Platinum: Number(platinum.price) };
-  if (!usdPhp || Object.values(spotUsd).some(value => !value)) throw new Error('Incomplete market response');
-  const convertedPhp = (price: number) => +(price * usdPhp / gramsPerTroyOunce).toFixed(2);
-  const marketPhp = {
-    Gold: philippineGold ?? convertedPhp(spotUsd.Gold),
-    Silver: convertedPhp(spotUsd.Silver),
-    Platinum: convertedPhp(spotUsd.Platinum)
-  };
-  const now = new Date();
-  const effectiveDate = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit'
-  }).format(now);
-  return {
-    effectiveDate, fetchedAt: now.toISOString(), marketPhp,
-    goldSource: philippineGold ? 'LivePriceOfGold Philippines' : 'Converted international spot fallback',
-    draft: { effectiveDate, gold: marketPhp.Gold, silver: marketPhp.Silver, platinum: marketPhp.Platinum }
-  };
-}
-
-async function applyMarketProposal(proposal: Awaited<ReturnType<typeof createMarketProposal>>): Promise<void> {
-  const state = await loadState();
-  if (!state.pricing) return;
-  const pricing = state.pricing as Record<string, any>;
-  pricing.gold.base = proposal.draft.gold;
-  pricing.silver.base = proposal.draft.silver;
-  pricing.platinum.base = proposal.draft.platinum;
-  pricing.effectiveDate = proposal.effectiveDate;
-  pricing.dailyFormula = { effectiveDate: proposal.effectiveDate, baseRates: {
-    Gold: proposal.draft.gold, Silver: proposal.draft.silver, Platinum: proposal.draft.platinum
-  } };
-  pricing.auto = { ...(pricing.auto ?? {}), enabled: false, lastFetchDate: proposal.effectiveDate, lastAppliedDate: proposal.effectiveDate,
-    lastFetchedAt: proposal.fetchedAt, marketPhp: proposal.marketPhp, goldSource: proposal.goldSource, draft: null };
-  await dbRun("UPDATE settings SET value = ? WHERE key = 'pricing'", [JSON.stringify(pricing)]);
-}
-
-async function marketProposalForClient(proposal: Awaited<ReturnType<typeof createMarketProposal>>) {
-  const state = await loadState();
-  const pricing = state.pricing as Record<string, any> | null;
-  const dailyFormula = pricing?.dailyFormula;
-  // A manually configured base stays active until an administrator changes it.
-  // A new calendar day must never substitute a fresh market quote.
-  if (!dailyFormula) return proposal;
-  const baseRates = dailyFormula.baseRates ?? {};
-  const activeBase = (metal: 'Gold' | 'Silver' | 'Platinum', marketValue: number) => {
-    const configured = Number(baseRates[metal]);
-    return Number.isFinite(configured) && configured > 0 ? configured : marketValue;
-  };
-  return {
-    ...proposal,
-    draft: {
-      ...proposal.draft,
-      gold: activeBase('Gold', proposal.draft.gold),
-      silver: activeBase('Silver', proposal.draft.silver),
-      platinum: activeBase('Platinum', proposal.draft.platinum)
-    }
-  };
-}
-
 function serveFile(response: ServerResponse, filename: string, contentType: string): void {
   const filepath = path.join(publicDirectory, filename);
   if (!fs.existsSync(filepath)) return sendJson(response, 404, { error: 'File not found' });
@@ -1009,6 +917,7 @@ async function proxyApiRequest(request: IncomingMessage,response: ServerResponse
 export async function requestHandler(request: IncomingMessage, response: ServerResponse): Promise<void> {
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? `${host}:${port}`}`);
   try {
+    if (url.pathname === '/api/market') return sendJson(response, 410, { error: 'Internet pricing is disabled. Enter buying rates manually in Daily Rate Setup.' });
     if(usesUpstream&&url.pathname.startsWith('/api/')) return await proxyApiRequest(request,response,url);
     await databaseReady;
     if (request.method === 'GET' && url.pathname === '/api/health') {
@@ -1193,16 +1102,6 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
         catch (error) { return sendJson(response, 403, { error: error instanceof Error ? error.message : 'Staff action is not permitted' }); }
       }
       return sendJson(response, 200, { ok: true, revision: await currentLedgerRevision() });
-    }
-    if (request.method === 'POST' && url.pathname === '/api/market') {
-      if (user!.role !== 'admin') return sendJson(response, 403, { error: 'Administrator access required' });
-      const proposal = await createMarketProposal();
-      await applyMarketProposal(proposal);
-      return sendJson(response, 200, proposal);
-    }
-    if (request.method === 'GET' && url.pathname === '/api/market') {
-      const proposal = await createMarketProposal();
-      return sendJson(response, 200, await marketProposalForClient(proposal));
     }
     if (request.method === 'GET' && url.pathname === '/api/users') {
       if (user!.role !== 'admin') return sendJson(response, 403, { error: 'Administrator access required' });

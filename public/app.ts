@@ -404,6 +404,8 @@ function activeRate(metal, karat){
 async function setBase(metal, value){
   const v = roundPeso(parseFloat(value));
   if(!Number.isFinite(v)||v<=0){ toast('Enter a valid PHP base rate'); render(); return; }
+  // Freeze the existing 925 basis before changing the independent 999 rate.
+  if(metal==='Silver') db.pricing.dailyFormula.baseRates.Silver925=configuredSilver925Rate();
   db.pricing.dailyFormula.effectiveDate=todayStr();
   db.pricing.dailyFormula.baseRates[metal]=v;
   if(await savePricingDB()){ render(); toast(`${metal} PHP base rate updated for today`); }
@@ -487,70 +489,7 @@ async function setFeatured(metal, key, low, high, remarks=''){
   await savePricingDB(); render();
 }
 async function clearFeatured(){ db.pricing.featured = null; featuredRemarksDraft=''; await savePricingDB(); render(); }
-let pricingFetchBusy=false;
 const overrideEditors=new Set();
-const TROY_OUNCE_GRAMS=31.1034768;
-async function fetchJson(url,options={}){
-  const response=await fetch(url,{cache:'no-store',...options});
-  const payload=await response.json().catch(()=>null);
-  if(!response.ok){
-    if(response.status===401&&String(url).startsWith('/api/')) showLogin();
-    throw new Error(payload?.error||('Price service returned HTTP '+response.status));
-  }
-  return payload;
-}
-async function refreshPhilippineRates(){
-  if(pricingFetchBusy) return;
-  pricingFetchBusy=true;
-  render();
-  try{
-    let proposal;
-    if(location.protocol==='http:'||location.protocol==='https:'){
-      // This endpoint only applies a rate after this explicit button action.
-      // There is no timer or background market update in the application.
-      proposal=await fetchJson('/api/market',{method:'POST'});
-    }else{
-      const [gold,silver,platinum,fx]=await Promise.all([
-        fetchJson('https://api.gold-api.com/price/XAU'),fetchJson('https://api.gold-api.com/price/XAG'),
-        fetchJson('https://api.gold-api.com/price/XPT'),fetchJson('https://open.er-api.com/v6/latest/USD')
-      ]);
-      const usdPhp=Number(fx.rates&&fx.rates.PHP), spotUsd={Gold:Number(gold.price),Silver:Number(silver.price),Platinum:Number(platinum.price)};
-      if(!usdPhp||Object.values(spotUsd).some(v=>!v)) throw new Error('Incomplete market data');
-      const marketPhp={Gold:+(spotUsd.Gold*usdPhp/TROY_OUNCE_GRAMS).toFixed(2),Silver:+(spotUsd.Silver*usdPhp/TROY_OUNCE_GRAMS).toFixed(2),Platinum:+(spotUsd.Platinum*usdPhp/TROY_OUNCE_GRAMS).toFixed(2)};
-      proposal={effectiveDate:todayStr(),fetchedAt:new Date().toISOString(),marketPhp,goldSource:'Converted international spot fallback',draft:{effectiveDate:todayStr(),gold:marketPhp.Gold,silver:marketPhp.Silver,platinum:marketPhp.Platinum}};
-    }
-    db.pricing.auto.lastFetchDate=proposal.effectiveDate;
-    db.pricing.auto.lastFetchedAt=proposal.fetchedAt;
-    db.pricing.auto.marketPhp=proposal.marketPhp||{};
-    db.pricing.auto.goldSource=proposal.goldSource||'';
-    activateMarketRates(proposal.draft, 'Manual internet refresh');
-    if(isAdmin()) await saveDB();
-    toast('Live internet prices refreshed and activated');
-  }catch(e){
-    console.error('Manual pricing refresh failed',e);
-    toast(`Live pricing unavailable — ${e.message||'current rates are unchanged'}`);
-  }finally{
-    pricingFetchBusy=false;
-    render();
-  }
-}
-function activateMarketRates(d, enteredBy, recordHistory=true){
-  db.pricing.gold.base=d.gold; db.pricing.silver.base=d.silver; db.pricing.platinum.base=d.platinum;
-  db.pricing.effectiveDate=d.effectiveDate;
-  db.pricing.dailyFormula={effectiveDate:d.effectiveDate,baseRates:{Gold:d.gold,Silver:d.silver,Platinum:d.platinum}};
-  db.pricing.auto.enabled=false;
-  db.pricing.auto.lastAppliedDate=d.effectiveDate;
-  db.pricing.auto.draft=null;
-  const duplicate=db.pricingHistory.some(h=>
-    h.effectiveDate===d.effectiveDate && h.enteredBy===enteredBy &&
-    Number(h.snapshot?.gold?.base)===Number(d.gold) &&
-    Number(h.snapshot?.silver?.base)===Number(d.silver) &&
-    Number(h.snapshot?.platinum?.base)===Number(d.platinum)
-  );
-  if(recordHistory&&!duplicate){
-    db.pricingHistory.push({id:uid('rate'),ts:Date.now(),effectiveDate:d.effectiveDate,enteredBy,snapshot:JSON.parse(JSON.stringify(db.pricing))});
-  }
-}
 
 function visiblePricingHistory(){
   const seen=new Set();
@@ -869,20 +808,16 @@ function renderRates(){
   if(!canEditDailyRates()) return renderStaffRates();
   const admin=isAdmin(),staffUnlocked=staffRateEditingUnlocked();
   const goldGrid = GOLD_GRADES.filter(g=>g.key!=='24K');
-  const auto=db.pricing.auto;
-  const fetched=auto.lastFetchedAt?new Date(auto.lastFetchedAt).toLocaleString('en-PH',{dateStyle:'medium',timeStyle:'medium'}):'Not fetched yet';
   return `
   <section class="auto-panel">
     <div class="auto-panel-head">
       <div>
-        <h3>${admin?'Philippine internet pricing':'Daily buying rates'}</h3>
-        <div class="metal-section-desc" style="margin:0;">${admin?'Rates stay unchanged until an administrator manually refreshes or edits them. You can set today\'s exact PHP base rate for each metal.':'An administrator has temporarily unlocked daily buying-rate editing for staff. Changes apply immediately to new purchases.'}</div>
-        <div class="auto-status">${pricingFetchBusy?'<span class="spinner"></span>Updating Philippine market data…':`Last checked: ${esc(fetched)}${auto.goldSource?` · Gold source: ${esc(auto.goldSource)}`:''}`}</div>
+        <h3>Manual daily buying rates</h3>
+        <div class="metal-section-desc" style="margin:0;">${admin?'Enter the PHP buying rates manually. Saved rates stay unchanged until you edit them.':'An administrator has temporarily unlocked daily buying-rate editing for staff. Changes apply immediately to new purchases.'}</div>
       </div>
       <div class="auto-controls">
         ${admin?`<button class="btn secondary small" onclick="toggleStaffRateEditing()" ${staffRateEditingToggleBusy?'disabled aria-busy="true"':''}>${staffRateEditingToggleBusy?`<span class="spinner"></span>${staffUnlocked?'Unlocking…':'Locking…'}`:staffUnlocked?'Lock staff rate editing':'Unlock staff rate editing'}</button>`:''}
         ${admin?`
-        <button class="btn small" onclick="refreshPhilippineRates()" ${pricingFetchBusy?'disabled':''}>Refresh &amp; apply now</button>
         <button class="btn secondary small" onclick="openDailyBaseEditor('Gold')">Edit today's PHP base</button>
         <button class="btn secondary small" onclick="openPublicDailyRatesEditor()">Edit public website rates</button>
         <button class="btn secondary small" onclick="openGoldMultiplierEditor()">Edit Gold karat multipliers</button>
@@ -890,14 +825,14 @@ function renderRates(){
       </div>
     </div>
     <div class="stat-row" style="margin-top:16px">
-      <div class="stat"><div class="label">Gold 24K buying rate</div><div class="value">${fmtMoney(configuredBaseRate('Gold'))}/g</div><div class="sub">Market: ${fmtMoney(auto.marketPhp?.Gold)}/g</div></div>
-      <div class="stat"><div class="label">Silver 999 buying rate</div><div class="value">${fmtMoney(configuredBaseRate('Silver'))}/g</div><div class="sub">Market: ${fmtMoney(auto.marketPhp?.Silver)}/g</div></div>
-      <div class="stat"><div class="label">Platinum 999 buying rate</div><div class="value">${fmtMoney(configuredBaseRate('Platinum'))}/g</div><div class="sub">Market: ${fmtMoney(auto.marketPhp?.Platinum)}/g</div></div>
+      <div class="stat"><div class="label">Gold 24K buying rate</div><div class="value">${fmtMoney(configuredBaseRate('Gold'))}/g</div></div>
+      <div class="stat"><div class="label">Silver 999 buying rate</div><div class="value">${fmtMoney(configuredBaseRate('Silver'))}/g</div></div>
+      <div class="stat"><div class="label">Platinum 999 buying rate</div><div class="value">${fmtMoney(configuredBaseRate('Platinum'))}/g</div></div>
     </div>
-    <p class="source-note">The internet price supplies the PHP base rate. Gold grades use the saved karat multipliers. Gold uses <a href="https://www.livepriceofgold.com/philippines-gold-price-per-gram.html" target="_blank" rel="noopener">LivePriceOfGold Philippines</a> when available, with an automatic fallback. Verify high-value payouts independently.</p>
+    <p class="source-note">Gold grades use the saved karat multipliers. Silver 999 is independent; the 925 basis calculates 900, 800, 75%, and 60%. Public website rates are edited separately.</p>
   </section>
   <section class="block">
-    <div class="batch-head"><div><h2 class="block-title">How manual rate refresh works</h2><p class="metal-section-desc">Rates only change when an administrator presses <strong>Refresh &amp; apply now</strong> or edits today’s PHP base. Gold grades recalculate using the saved karat multipliers. Use <strong>Override PHP rate</strong> only when one specific grade needs a different exact rate.</p></div></div>
+    <div class="batch-head"><div><h2 class="block-title">How manual rates work</h2><p class="metal-section-desc">Edit the PHP base rate to recalculate the related grades. Use <strong>Override PHP rate</strong> when one specific grade needs a different exact rate.</p></div></div>
   </section>
 
   <section class="metal-section">
@@ -943,15 +878,14 @@ function renderRates(){
     <div class="form-grid">
       <div class="field"><label>Effective date <span class="hint">(automatic · Manila)</span></label><input id="px_date" type="date" value="${todayStr()}" readonly aria-readonly="true"></div>
     </div>
-    <p class="form-note">Rates above apply to new purchases immediately when they are refreshed or edited.</p>
+    <p class="form-note">Rates above apply to new purchases immediately when they are edited.</p>
   </section>`:''}
   `;
 }
 function renderStaffRates(){
-  const fetched=db.pricing.auto.lastFetchedAt?new Date(db.pricing.auto.lastFetchedAt).toLocaleString('en-PH',{dateStyle:'medium',timeStyle:'medium'}):'Not fetched yet';
   return `
   <section class="auto-panel">
-    <div class="auto-panel-head"><div><h3>Active buying rates</h3><div class="metal-section-desc" style="margin:0;">Rates are locked by an administrator. Ask an administrator to unlock daily buying-rate editing when a staff update is needed.</div><div class="auto-status">Effective date: ${fmtDate(db.pricing.effectiveDate)} · Last checked: ${esc(fetched)}</div></div></div>
+    <div class="auto-panel-head"><div><h3>Active buying rates</h3><div class="metal-section-desc" style="margin:0;">Rates are locked by an administrator. Ask an administrator to unlock daily buying-rate editing when a staff update is needed.</div><div class="auto-status">Effective date: ${fmtDate(db.pricing.effectiveDate)}</div></div></div>
   </section>
   <section class="metal-section">
     <div class="rate-section-title-row"><div class="metal-section-head"><span class="metal-dot gold"></span><h3>Gold</h3><span class="count">${GOLD_GRADES.length} grades</span></div>${renderRateDownloadButton()}</div>
@@ -1208,20 +1142,18 @@ function openDailyBaseEditor(metal){
   if(!GRADES[metal]) return;
   formulaEditTarget={metal};
   document.getElementById('formula_edit_modal')?.remove();
-  const liveBase=Number(bucketFor(metal).base)||0,base=configuredBaseRate(metal),silver925=configuredSilver925Rate(base);
-  const customized=Math.abs(base-liveBase)>=0.005;
+  const base=configuredBaseRate(metal),silver925=configuredSilver925Rate();
   const modal=document.createElement('div'); modal.id='formula_edit_modal'; modal.className='modal-backdrop';
   modal.innerHTML=`<form class="summary-modal" onsubmit="saveGradeFormula(event)" role="dialog" aria-modal="true" aria-labelledby="formula_edit_title">
     <div class="summary-modal-head"><div><div class="eyebrow">Daily rate setup</div><h2 id="formula_edit_title">Today's PHP base rate</h2></div><button type="button" class="modal-close" onclick="closeGradeFormulaEditor()" aria-label="Close">×</button></div>
     <p class="form-note" style="margin:16px 0;">${metal==='Silver'?'Set the independent 999 rate and the 925 basis used to calculate 900, 800, 75%, and 60%.':'This exact PHP base rate applies to all '+esc(metal)+' grades.'} Rates are rounded to whole pesos with no centavos.</p>
     <div class="form-grid">
       <div class="field"><label>Metal</label><select id="formula_metal" onchange="changeFormulaEditorMetal(this.value)">${Object.keys(GRADES).map(name=>`<option value="${name}" ${name===metal?'selected':''}>${name}</option>`).join('')}</select></div>
-      <div class="field"><label>Live PHP base rate</label><input value="${roundPeso(liveBase)}" readonly></div>
       <div class="field"><label>Today's ${metal==='Silver'?'999':'PHP base'} rate</label><input id="formula_base_rate" type="number" min="1" step="1" value="${roundPeso(base)}" oninput="updateGradeFormulaPreview()" required></div>
       ${metal==='Silver'?`<div class="field"><label>Today's 925 basis rate</label><input id="formula_silver_925_rate" type="number" min="1" step="1" value="${silver925}" oninput="updateGradeFormulaPreview()" required><span class="hint">900, 800, 75%, and 60% calculate from this rate.</span></div>`:''}
     </div>
     <div class="stat" style="margin-top:14px"><div class="label">Active rate${metal==='Silver'?'s':''} for today</div><div class="value" id="formula_preview">${metal==='Silver'?`999: ${fmtMoney(base)}/g · 925: ${fmtMoney(silver925)}/g`:fmtMoney(base)+'/g'}</div></div>
-    <div class="form-actions">${customized?'<button type="button" class="btn secondary" onclick="resetGradeFormula()">Use live PHP base</button>':''}<button type="button" class="btn secondary" onclick="closeGradeFormulaEditor()">Cancel</button><button type="submit" class="btn">Save today's base rate</button></div>
+    <div class="form-actions"><button type="button" class="btn secondary" onclick="closeGradeFormulaEditor()">Cancel</button><button type="submit" class="btn">Save today's base rate</button></div>
   </form>`;
   modal.addEventListener('click',event=>{if(event.target===modal)closeGradeFormulaEditor();});
   document.body.appendChild(modal); document.getElementById('formula_base_rate')?.focus();
@@ -1248,13 +1180,6 @@ async function saveGradeFormula(event){
     delete db.pricing.silver.overrides['925'];
   }
   closeGradeFormulaEditor(); if(await savePricingDB()){ render(); toast(`${metal} PHP base rate updated for today`); }
-}
-async function resetGradeFormula(){
-  if(!formulaEditTarget||!canEditDailyRates()) return;
-  const {metal}=formulaEditTarget;
-  if(db.pricing.dailyFormula?.baseRates) delete db.pricing.dailyFormula.baseRates[metal];
-  if(metal==='Silver'&&db.pricing.dailyFormula?.baseRates) delete db.pricing.dailyFormula.baseRates.Silver925;
-  closeGradeFormulaEditor(); if(await savePricingDB()){ render(); toast(`${metal} PHP base reset to the live rate`); }
 }
 let featuredRemarksDraft='';
 function closeFeaturedRemarksEditor(){ document.getElementById('featured_remarks_modal')?.remove(); }

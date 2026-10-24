@@ -46,7 +46,7 @@ Replace the default passwords before production use. Administrators can create a
 
 ## Source structure
 
-- `src/server.ts` — typed HTTP API, authentication, persistence, and live market-price integration.
+- `src/server.ts` — typed HTTP API, authentication, persistence, and manual rate management.
 - `public/app.ts` — browser application source in TypeScript.
 - `public/app.js` — compiled browser JavaScript.
 - `public/index.html` — interface markup and styles.

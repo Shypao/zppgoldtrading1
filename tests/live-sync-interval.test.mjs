@@ -1,19 +1,16 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import vm from 'node:vm';
 
-test('pricing updates only through the manual refresh action', async () => {
-  const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
-
-  assert.doesNotMatch(source, /LIVE_SYNC_INTERVAL_MS/);
-  assert.doesNotMatch(source, /startAutomaticPricing/);
-  assert.doesNotMatch(source, /Update automatically every hour/);
-  assert.doesNotMatch(source, /refreshPhilippineRates\(true\)/);
-  assert.doesNotMatch(source, /Automatic 5-minute internet update/);
-  assert.match(source, /Refresh &amp; apply now/);
-  assert.match(source, /async function refreshPhilippineRates\(\)/);
-  assert.match(source, /const configured = Number\(daily\?\.baseRates\?\.\[metal\]\);/);
-  assert.doesNotMatch(source, /Automatic 5-second internet update/);
+test('daily rate setup offers manual pricing without internet refresh controls', async () => {
+  const source = (await readFile(new URL('../public/app.js', import.meta.url), 'utf8')).replace(/initializeAuth\(\);\s*$/, '');
+  const context = vm.createContext({ console });
+  vm.runInContext(`${source}\nseedEmptyLedger(); ensureShape(); currentUser={role:'admin'}; globalThis.ratesPage=renderRates;`, context);
+  const html = context.ratesPage();
+  assert.doesNotMatch(html, /Refresh &amp; apply now|Philippine internet pricing|Last checked:|Market:/);
+  assert.match(html, /Edit today's PHP base/);
+  assert.match(html, /Edit public website rates/);
 });
 
 test('daily rate setup has no separate rate-sheet save action', async () => {
