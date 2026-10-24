@@ -7,6 +7,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import test from 'node:test';
 import vm from 'node:vm';
+import { createPublicRatesBrowser } from './helpers/public-rates-browser.mjs';
 
 test('internal buying rates ignore published public rates for all metals and custom purity', async () => {
   const source = (await readFile(new URL('../public/app.js', import.meta.url), 'utf8')).replace(/initializeAuth\(\);\s*$/, '');
@@ -91,6 +92,8 @@ test('pricing API saves public and internal rates independently, including stale
   const { publicDailyRates: ignoredPublic, ...afterPublicInternal } = afterPublic.pricing;
   assert.deepEqual(afterPublicInternal, originalInternal, 'publishing public rates must preserve every internal setting');
   assert.deepEqual(afterPublic.pricing.publicDailyRates, publicSheet);
+  const publicBrowser = await createPublicRatesBrowser(() => fetch(base + '/api/public-pricing'));
+  assert.deepEqual(publicBrowser.table('Gold'), ['24K ₱9,000']);
 
   const internalCandidate = structuredClone(original.pricing);
   internalCandidate.dailyFormula.baseRates.Gold = 8000;
@@ -103,4 +106,12 @@ test('pricing API saves public and internal rates independently, including stale
   afterInternal.pricing.publicDailyRates = null;
   await api('/api/state', afterInternal);
   assert.deepEqual((await api('/api/state')).pricing.publicDailyRates, publicSheet, 'saving a ledger must not overwrite public rates');
+  await publicBrowser.refresh();
+  assert.deepEqual(publicBrowser.table('Gold'), ['24K ₱9,000'], 'public site remains fixed after internal rate and ledger saves');
+
+  publicCandidate.publicDailyRates.rates.Gold['24K'] = 9100;
+  await api('/api/pricing', { scope: 'public', pricing: publicCandidate });
+  await publicBrowser.refresh();
+  assert.deepEqual(publicBrowser.table('Gold'), ['24K ₱9,100'], 'explicit public-editor save reaches the actual public renderer');
+  assert.equal((await api('/api/state')).pricing.dailyFormula.baseRates.Gold, 8000, 'publishing does not change buying rates');
 });
