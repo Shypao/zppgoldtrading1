@@ -2719,10 +2719,10 @@ async function commitPurchaseBatch(printAfter = false) {
         }
         purchaseBatch = [];
         closePurchaseSummary();
-        render();
-        // The ledger save above is the critical operation. Cleanup and the
-        // cashflow card refresh do not need to block the next screen or receipt.
+        // Reset the form synchronously before rebuilding metal/grade controls.
+        // The draft DELETE continues in the background without delaying the UI.
         void clearBuyingDraft();
+        render();
         void syncCashflow();
         if (printAfter)
             openPurchaseReceipt(batchId);

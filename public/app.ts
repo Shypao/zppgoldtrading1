@@ -2116,10 +2116,11 @@ async function commitPurchaseBatch(printAfter=false){
     const count=purchaseBatch.length,total=roundMoney(purchaseBatch.reduce((sum,item)=>sum+Number(item.payout),0));
     const saved=await saveDB();
     if(!saved){ db.customers.splice(previousCustomerCount); db.stock.splice(previousStockCount); toast('The purchase was not recorded. Your payout draft is still saved.'); return; }
-    purchaseBatch=[]; closePurchaseSummary(); render();
-    // The ledger save above is the critical operation. Cleanup and the
-    // cashflow card refresh do not need to block the next screen or receipt.
+    purchaseBatch=[]; closePurchaseSummary();
+    // Reset the form synchronously before rebuilding metal/grade controls.
+    // The draft DELETE continues in the background without delaying the UI.
     void clearBuyingDraft();
+    render();
     void syncCashflow();
     if(printAfter) openPurchaseReceipt(batchId);
     toast(`${count} items recorded · ${fmtMoney(total)}`);
