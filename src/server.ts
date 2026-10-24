@@ -99,6 +99,14 @@ export function publicPricingPayload(pricing: PricingSettings | null): { effecti
   return { effectiveDate: sheet.effectiveDate, unit: 'PHP per gram', rates };
 }
 
+function isolatedPricingUpdate(current: PricingSettings | null, candidate: PricingSettings, scope: 'internal' | 'public'): PricingSettings {
+  if (scope === 'public') return { ...current, publicDailyRates: candidate.publicDailyRates };
+  const next = { ...candidate };
+  if (current && Object.prototype.hasOwnProperty.call(current, 'publicDailyRates')) next.publicDailyRates = current.publicDailyRates;
+  else delete next.publicDailyRates;
+  return next;
+}
+
 if (!usesTurso && !usesUpstream) fs.mkdirSync(dataDirectory, { recursive: true });
 const localDatabase = usesTurso || usesUpstream ? null : new DatabaseSync(databaseFile);
 const tursoClient: Client | null = usesTurso ? createClient({ url: tursoDatabaseUrl, authToken: tursoAuthToken }) : null;
@@ -350,7 +358,7 @@ async function saveStaffAdditions(candidate: LedgerState, user: AuthUser): Promi
   const current = await loadState();
   removeInventoryLocationFields(candidate.stock);
   if (!candidate.pricing || !current.pricing) throw new Error('Pricing settings are unavailable');
-  const candidatePricing = JSON.parse(JSON.stringify(candidate.pricing)) as Record<string, any>;
+  const candidatePricing = JSON.parse(JSON.stringify(isolatedPricingUpdate(current.pricing, candidate.pricing, 'internal'))) as Record<string, any>;
   const currentPricing = JSON.parse(JSON.stringify(current.pricing)) as Record<string, any>;
   candidatePricing.gradeMultipliers = candidatePricing.gradeMultipliers ?? {};
   currentPricing.gradeMultipliers = currentPricing.gradeMultipliers ?? {};
@@ -786,6 +794,8 @@ async function saveState(state: LedgerState): Promise<void> {
     throw new LedgerRevisionConflict('The ledger changed in another session. Refresh and try again.');
   }
   const nextRevision=currentRevision+1;
+  const currentPricingRow = await dbGet<{ value: string }>("SELECT value FROM settings WHERE key = 'pricing'");
+  if (state.pricing) state.pricing = isolatedPricingUpdate(currentPricingRow ? JSON.parse(currentPricingRow.value) : null, state.pricing, 'internal');
   const statements: SqlStatement[] = [];
   for (const [key, table] of Object.entries(tableMap) as Array<[keyof typeof tableMap, string]>) {
     statements.push({ sql: `DELETE FROM ${table}` });
@@ -1117,17 +1127,17 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
       }
       if (user!.role !== 'admin' && pricingHistory !== undefined) return sendJson(response, 403, { error: 'Only administrators can save rate-sheet history' });
       const current = await loadState();
-      const candidatePublicRates = (pricing as Record<string, any>).publicDailyRates;
-      const currentPublicRates = (current.pricing as Record<string, any> | null)?.publicDailyRates;
-      if (user!.role !== 'admin' && JSON.stringify(candidatePublicRates) !== JSON.stringify(currentPublicRates)) {
-        return sendJson(response, 403, { error: 'Only administrators can edit public daily rates' });
+      const scope = body.scope ?? 'internal';
+      if (scope !== 'internal' && scope !== 'public') return sendJson(response, 400, { error: 'Invalid pricing scope' });
+      if (scope === 'public') {
+        if (user!.role !== 'admin') return sendJson(response, 403, { error: 'Only administrators can edit public daily rates' });
+        if (!validatePublicDailyRates((pricing as PricingSettings).publicDailyRates)) return sendJson(response, 400, { error: 'Invalid public daily rates' });
+        if (pricingHistory !== undefined) return sendJson(response, 400, { error: 'Public rates cannot change internal rate history' });
       }
-      if (candidatePublicRates !== undefined && !validatePublicDailyRates(candidatePublicRates)) {
-        return sendJson(response, 400, { error: 'Invalid public daily rates' });
-      }
+      const candidatePricing = isolatedPricingUpdate(current.pricing, pricing as PricingSettings, scope);
       const nextPricing = user!.role === 'admin'
-        ? pricing as PricingSettings
-        : staffEditablePricing(current.pricing as PricingSettings, pricing as PricingSettings);
+        ? candidatePricing
+        : staffEditablePricing(current.pricing as PricingSettings, candidatePricing);
       const revision = await savePricingState(nextPricing, user!.role === 'admin' ? pricingHistory as LedgerRecord[] | undefined : undefined);
       return sendJson(response, 200, { ok: true, revision });
     }

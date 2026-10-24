@@ -152,11 +152,11 @@ async function saveDB(){
   catch(e){ console.error('Save failed', e); toast('Could not save — changes may not persist'); return false; }
 }
 
-async function savePricingDB(includeHistory=false){
+async function savePricingDB(includeHistory=false,scope='internal'){
   if(!(location.protocol==='http:'||location.protocol==='https:')) return saveDB();
   try{
     ensureShape();
-    const body={pricing:db.pricing};
+    const body={pricing:db.pricing,scope};
     if(includeHistory) body.pricingHistory=db.pricingHistory;
     const response=await fetch('/api/pricing',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(response.status===401){ showLogin(); throw new Error('Session expired'); }
@@ -397,6 +397,7 @@ function distinctKarats(metal){ return GRADES[metal] || []; }
 function activeRate(metal, karat){
   const isCustomPurity=customPurityFromKey(karat)!==null;
   if((!GRADES[metal] || !GRADES[metal].includes(karat))&&!isCustomPurity) return null;
+  // Public website rates are published separately from internal buying rates.
   return { rate: metalRate(metal, karat), effectiveDate: db.pricing.effectiveDate };
 }
 
@@ -440,7 +441,7 @@ async function savePublicDailyRates(){
     }
   }
   db.pricing.publicDailyRates={effectiveDate:todayStr(),rates};
-  if(await savePricingDB()){ closePublicDailyRatesEditor(); render(); toast('Public daily buying rates updated'); }
+  if(await savePricingDB(false,'public')){ closePublicDailyRatesEditor(); render(); toast('Public daily buying rates updated'); }
 }
 function openPublicDailyRatesEditor(){
   if(!adminEditGuard()) return;
