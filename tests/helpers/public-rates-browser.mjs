@@ -8,7 +8,9 @@ export async function createPublicRatesBrowser(fetchImpl) {
     listeners = {};
     value = '';
     textContent = '';
+    attributes = {};
     constructor(tag = 'div') { this.tag = tag; }
+    setAttribute(name, value) { this.attributes[name] = value; }
     replaceChildren(...children) {
       this.children = children;
       if (this.tag === 'select') this.value = (children.find(child => child.selected) || children[0])?.value || '';
@@ -17,7 +19,7 @@ export async function createPublicRatesBrowser(fetchImpl) {
     addEventListener(type, callback) { (this.listeners[type] ||= []).push(callback); }
     async emit(type) { await Promise.all((this.listeners[type] || []).map(callback => callback())); }
   }
-  const elements = Object.fromEntries(['estimate-metal', 'estimate-purity', 'estimate-grams', 'estimate-total', 'estimate-breakdown', 'rates-status']
+  const elements = Object.fromEntries(['estimate-metal', 'estimate-purity', 'estimate-grams', 'estimate-total', 'estimate-breakdown', 'estimate-error', 'rates-status', 'rates-age-note']
     .map(id => [`#${id}`, new Element(id === 'estimate-purity' ? 'select' : 'div')]));
   elements['#estimate-metal'].value = 'Gold';
   for (const metal of ['Gold', 'Silver', 'Platinum']) elements[`[data-rate-table="${metal}"]`] = new Element();
@@ -38,10 +40,10 @@ export async function createPublicRatesBrowser(fetchImpl) {
   vm.runInContext(pricingSource, context);
   const settle = () => new Promise(resolve => setImmediate(resolve));
   await context.publicRatesReady;
+  const content = element => element.children.length ? element.children.map(content).join(' ') : element.textContent;
   return {
     elements, document, window, requests, intervals, timeouts, settle,
     refresh: () => context.loadPublicRates(),
-    table: metal => elements[`[data-rate-table="${metal}"]`].children.map(row => row.children.length
-      ? row.children.map(child => child.textContent).join(' ') : row.textContent)
+    table: metal => elements[`[data-rate-table="${metal}"]`].children.filter(row => row.className !== 'rate-group').map(content)
   };
 }

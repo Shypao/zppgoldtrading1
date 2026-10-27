@@ -16,36 +16,72 @@ const PRICING_ENDPOINT = document.body.dataset.ratesApi || 'https://zppgoldtradi
 const rateFormatter = new Intl.NumberFormat('en-PH', { maximumFractionDigits: 0 });
 let currentPublicRates = null;
 let publicRatesLoading = false;
+function orderedPublicGrades(metal, data = currentPublicRates) {
+  const grades = Array.isArray(data?.rates?.[metal]) ? data.rates[metal] : [];
+  const kind = grade => String(grade.label || grade.key || '').includes('%') ? 1 : 0;
+  return [...grades].sort((a, b) => kind(a) - kind(b)
+    || parseFloat(b.label || b.key) - parseFloat(a.label || a.key)
+    || String(a.label || a.key).localeCompare(String(b.label || b.key)));
+}
+function publicRatesDateLabel(data) {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(data.effectiveDate || '')
+    ? new Date(`${data.effectiveDate}T00:00:00+08:00`) : null;
+  if (!date || Number.isNaN(date.getTime())) return 'Publication date not recorded';
+  const label = date.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'Asia/Manila' });
+  return `Rates as of ${label} · Save time not recorded`;
+}
+function updateRatesAgeNote(data) {
+  const note = $('#rates-age-note');
+  if (!note) return;
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const dated = /^\d{4}-\d{2}-\d{2}$/.test(data.effectiveDate || '');
+  note.hidden = dated && data.effectiveDate >= today;
+  note.textContent = 'Please confirm today’s rate with us before visiting. The published prices stay unchanged until the shop saves a new public rate sheet.';
+}
 function renderPublicRates(data) {
   currentPublicRates = data;
   ['Gold', 'Silver', 'Platinum'].forEach(metal => {
     const target = $(`[data-rate-table="${metal}"]`);
-    const rates = Array.isArray(data.rates?.[metal]) ? data.rates[metal] : [];
+    const rates = orderedPublicGrades(metal, data);
     if (!target) return;
+    const table = target.tagName === 'TBODY';
     if (!rates.length) {
-      const message = document.createElement('p');
+      const row = document.createElement(table ? 'tr' : 'div');
+      const message = document.createElement(table ? 'td' : 'p');
+      if (table) message.colSpan = 2;
       message.textContent = 'No public rates published yet. Please contact us.';
-      target.replaceChildren(message);
+      row.append(message);
+      target.replaceChildren(row);
       return;
     }
-    target.replaceChildren(...rates.map(item => {
-      const row = document.createElement('div'); row.className = 'rate-row';
-      const label = document.createElement('span'); label.textContent = item.label || item.key || '';
-      const value = document.createElement('strong');
+    let lastGroup = '';
+    const rows = [];
+    rates.forEach(item => {
+      const percentage = String(item.label || item.key || '').includes('%');
+      const group = percentage ? 'Percentage purity' : metal === 'Gold' ? 'Karat grades' : 'Fineness grades';
+      if (table && group !== lastGroup) {
+        const groupRow = document.createElement('tr'); groupRow.className = 'rate-group';
+        const heading = document.createElement('th'); heading.colSpan = 2; heading.scope = 'colgroup'; heading.textContent = group;
+        groupRow.append(heading); rows.push(groupRow); lastGroup = group;
+      }
+      const row = document.createElement(table ? 'tr' : 'div'); row.className = 'rate-row';
+      const label = document.createElement(table ? 'th' : 'span'); label.textContent = item.label || item.key || '';
+      if (table) label.scope = 'row';
+      const value = document.createElement(table ? 'td' : 'strong');
       value.textContent = Number(item.rate) > 0 ? `₱${rateFormatter.format(Number(item.rate))}` : 'Ask us';
-      row.append(label, value); return row;
-    }));
+      row.append(label, value); rows.push(row);
+    });
+    target.replaceChildren(...rows);
   });
-  const date = data.effectiveDate ? new Date(`${data.effectiveDate}T00:00:00+08:00`) : null;
-  const label = date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'Asia/Manila' }) : 'today';
   $('#rates-status').textContent = Object.values(data.rates).some(rates => rates.length)
-    ? `Published rates · Last saved ${label}` : 'No public rates published yet. Please contact us.';
+    ? publicRatesDateLabel(data) : 'No public rates published yet. Please contact us.';
+  updateRatesAgeNote(data);
 }
 function setupEstimateCalculator() {
   const metalInput = $('#estimate-metal'), purityInput = $('#estimate-purity'), gramsInput = $('#estimate-grams');
   const total = $('#estimate-total'), breakdown = $('#estimate-breakdown');
   if (!metalInput || !purityInput || !gramsInput || !total || !breakdown) return;
-  const gradesFor = metal => Array.isArray(currentPublicRates?.rates?.[metal]) ? currentPublicRates.rates[metal] : [];
+  const gradesFor = metal => orderedPublicGrades(metal);
   const renderPurities = () => {
     const grades = gradesFor(metalInput.value);
     const selected = purityInput.value;
@@ -63,9 +99,19 @@ function setupEstimateCalculator() {
     const grade = gradesFor(metalInput.value).find(item => (item.label || item.key) === purityInput.value);
     const grams = Number(gramsInput.value);
     const rate = Number(grade?.rate) || 0;
+    const invalid = !!gramsInput.validity?.badInput || (gramsInput.value !== '' && (!Number.isFinite(grams) || grams <= 0 || !Number.isFinite(grams * rate)));
+    const error = $('#estimate-error');
+    gramsInput.setAttribute('aria-invalid', String(invalid));
+    if (error) error.textContent = invalid ? 'Enter a valid weight greater than zero, for example 2.5 g.' : '';
+    if (invalid) {
+      total.textContent = '—';
+      breakdown.textContent = 'Check the weight to calculate an estimate.';
+      return;
+    }
     const value = grams > 0 && rate > 0 ? grams * rate : 0;
     total.textContent = value > 0 ? `₱${rateFormatter.format(Math.round(value))}` : '₱0';
-    breakdown.textContent = value > 0 ? `${grams.toLocaleString('en-PH', { maximumFractionDigits: 2 })} g × ₱${rateFormatter.format(rate)}/g` : 'Enter a weight to calculate.';
+    breakdown.textContent = value > 0 ? `${grams.toLocaleString('en-PH', { maximumFractionDigits: 20 })} g × ₱${rateFormatter.format(rate)}/g`
+      : rate > 0 ? `₱${rateFormatter.format(rate)}/g · Enter a weight to calculate.` : 'A published rate is needed to calculate an estimate.';
   };
   metalInput.addEventListener('change', renderPurities);
   purityInput.addEventListener('change', calculate);
@@ -94,12 +140,17 @@ async function loadPublicRates() {
   } catch (_) {
     // An outage must not replace saved rates with fabricated or internal prices.
     if (currentPublicRates) {
-      $('#rates-status').textContent = 'Showing the last loaded public rates. Unable to check for new saves; retrying shortly.';
+      $('#rates-status').textContent = `${publicRatesDateLabel(currentPublicRates)} · Showing the last loaded public rates. Connection unavailable; retrying shortly.`;
+      updateRatesAgeNote(currentPublicRates);
     } else {
       ['Gold', 'Silver', 'Platinum'].forEach(metal => {
-        const message = document.createElement('p');
+        const target = $(`[data-rate-table="${metal}"]`);
+        const table = target?.tagName === 'TBODY';
+        const row = document.createElement(table ? 'tr' : 'div');
+        const message = document.createElement(table ? 'td' : 'p');
+        if (table) message.colSpan = 2;
         message.textContent = 'Rates temporarily unavailable. Please contact us.';
-        $(`[data-rate-table="${metal}"]`)?.replaceChildren(message);
+        row.append(message); target?.replaceChildren(row);
       });
       $('#rates-status').textContent = 'Unable to load published rates. Retrying shortly.';
     }

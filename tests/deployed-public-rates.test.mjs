@@ -21,7 +21,7 @@ test('deployed public site fetches only the saved production public sheet, witho
   assert.deepEqual(browser.table('Gold'), ['24K ₱7,800', '18K ₱5,850']);
   assert.deepEqual(browser.table('Silver'), ['999 ₱90']);
   assert.deepEqual(browser.table('Platinum'), ['999 ₱2,600']);
-  assert.match(browser.elements['#rates-status'].textContent, /Published rates · Last saved/);
+  assert.match(browser.elements['#rates-status'].textContent, /Rates as of .*Save time not recorded/);
   assert.equal(browser.timeouts.size, 0);
 });
 
@@ -99,4 +99,48 @@ test('preserved production design assets exist and source contains no localhost 
   for (const match of html.matchAll(/(?:src|href)="([^"#]+)"/g)) {
     if (!/^[a-z]+:/i.test(match[1])) await access(new URL(match[1].split('?')[0], root));
   }
+});
+
+test('presentation groups and sorts grades without mutating saved prices or the API order', async () => {
+  const published = sheet();
+  published.rates.Gold = [{ key: '73%', label: '73%', rate: 6161 }, { key: '5K', label: '5K', rate: 195 },
+    { key: '18K-BUO', label: '18K-Buo', rate: 5850 }, { key: '24K', label: '24K', rate: 7800 },
+    { key: '98%', label: '98%', rate: 8272 }, { key: '18K', label: '18K', rate: 5850 }];
+  const original = structuredClone(published);
+  const browser = await createPublicRatesBrowser(() => response(published));
+  assert.deepEqual(browser.table('Gold'), ['24K ₱7,800', '18K ₱5,850', '18K-Buo ₱5,850', '5K ₱195', '98% ₱8,272', '73% ₱6,161']);
+  assert.deepEqual(published, original);
+});
+
+test('calculator accepts decimals and rejects invalid, negative, zero and overflowing input without changing rounding', async () => {
+  const browser = await createPublicRatesBrowser(() => response(sheet()));
+  const input = browser.elements['#estimate-grams'];
+  input.value = '1.234';
+  await input.emit('input');
+  assert.equal(browser.elements['#estimate-total'].textContent, '₱9,625');
+  assert.equal(browser.elements['#estimate-breakdown'].textContent, '1.234 g × ₱7,800/g');
+  for (const value of ['-1', '0', 'not a number', 'Infinity', '1e308']) {
+    input.value = value;
+    await input.emit('input');
+    assert.equal(browser.elements['#estimate-total'].textContent, '—');
+    assert.equal(input.attributes['aria-invalid'], 'true');
+    assert.match(browser.elements['#estimate-error'].textContent, /valid weight/);
+  }
+  input.value = '';
+  await input.emit('input');
+  assert.equal(browser.elements['#estimate-total'].textContent, '₱0');
+  assert.equal(browser.elements['#estimate-error'].textContent, '');
+});
+
+test('old public sheets carry a confirmation note, including when the connection fails', async () => {
+  let online = true;
+  const old = sheet(); old.effectiveDate = '2020-01-01';
+  const browser = await createPublicRatesBrowser(() => { if (!online) throw new Error('Offline'); return response(old); });
+  assert.equal(browser.elements['#rates-age-note'].hidden, false);
+  assert.match(browser.elements['#rates-age-note'].textContent, /confirm today/);
+  assert.match(browser.elements['#rates-status'].textContent, /Jan 1, 2020/);
+  online = false;
+  await browser.refresh();
+  assert.match(browser.elements['#rates-status'].textContent, /Jan 1, 2020/);
+  assert.equal(browser.elements['#rates-age-note'].hidden, false);
 });
