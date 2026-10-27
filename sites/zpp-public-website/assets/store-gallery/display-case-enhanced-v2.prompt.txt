@@ -1,0 +1,9 @@
+Mode: built-in image_gen edit (not CLI)
+Source: assets/store-gallery/display-case.jpg (unchanged)
+Website asset: assets/store-gallery/display-case-enhanced-v2.jpg
+
+Use case: lighting-weather (photo enhancement).
+Asset type: real local-business website hero photograph.
+Input image 1 is the EDIT TARGET: the original ZP Gold Trading glass display-case photograph. Enhance this actual photograph, do not invent a new shop or a staged product collection.
+Primary request: make the same photo more presentable for a warm, cream/charcoal local trading website. Correct the cool/green color cast, gently balance exposure and contrast, recover natural metal detail, reduce glass haze and distracting glare, and add restrained clarity without oversharpening. Crop away the large blank lower cabinet and some empty upper framing to produce a landscape close view of the actual display contents, suitable for a 4:3 website photo.
+Invariants: keep the same trays, jewelry, coins, bowls, gold-tone cup, utensils, glass enclosure, and their relative placement and real material colors. Do not add jewelry, bars, logos, signage, people, props, labels, or text. No rearranging or replacing the inventory. Preserve natural wear and realistic surfaces. Do not turn silver items gold, do not create a luxury showroom look, and do not make any claims of purity. Remove no real inventory. Avoid artificial sparkle, cinematic effects, heavy blur, glossy CGI, watermarks, or advertising text. The result must look like a modest, carefully edited documentary photo of this exact shop display.

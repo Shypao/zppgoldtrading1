@@ -101,3 +101,39 @@ test('small-text theme combinations meet AA contrast, including gold on the warm
     assert.ok(contrast >= 4.5, `${fg} on ${bg}: ${contrast}`);
   }
 });
+
+test('gallery displays whole portrait and landscape photos instead of cropping them', () => {
+  const imageRule = css.match(/\.gallery-slide img\s*\{([^}]+)\}/)[1];
+  assert.match(imageRule, /object-fit:\s*contain/);
+  assert.match(imageRule, /object-position:\s*center/);
+  assert.match(imageRule, /height:\s*100%/);
+  assert.doesNotMatch(css, /\.gallery-slide img\s*\{[^}]*object-fit:\s*cover/);
+  assert.match(css, /\.gallery-slide button\s*\{[^}]*height:\s*clamp\(/);
+});
+
+test('sections 02 and 03 share column alignment, have clear detail labels, and a full-width divider', () => {
+  const accepted = css.match(/\.accepted\s*\{([^}]+)\}/)[1];
+  const selling = css.match(/\.selling\s*\{([^}]+)\}/)[1];
+  const columns = rule => rule.match(/grid-template-columns:\s*([^;]+)/)[1];
+  assert.equal(columns(accepted), columns(selling));
+  assert.match(accepted, /align-items:\s*start/);
+  assert.match(selling, /align-items:\s*start/);
+  assert.match(selling, /border-top:\s*1px solid var\(--line\)/);
+  assert.match(html, /<h3>Items we accept<\/h3>/);
+  assert.match(html, /<h3>How selling works<\/h3>/);
+  assert.equal((html.match(/class="section-detail"/g) || []).length, 2);
+  const numbers = css.match(/\.selling-steps li::before\s*\{([^}]+)\}/)[1];
+  assert.match(numbers, /grid-column:\s*1/);
+  assert.doesNotMatch(numbers, /position:\s*absolute/);
+});
+
+test('enhanced hero photo is a labelled, versioned asset and original shop photos remain available', async () => {
+  const hero = html.match(/<figure class="hero-photo">([\s\S]*?)<\/figure>/)[1];
+  assert.match(hero, /display-case-enhanced-v2\.jpg/);
+  assert.match(hero, /width="960" height="720"/);
+  assert.match(hero, /From our shop/);
+  assert.match(hero, /enhanced for clarity/);
+  assert.ok((await stat(new URL('assets/store-gallery/display-case-enhanced-v2.jpg', root))).size < 300000);
+  assert.ok((await stat(new URL('assets/store-gallery/display-case.jpg', root))).size > 0);
+  assert.ok((await stat(new URL('assets/store-gallery/storefront-800.jpg', root))).size > 0);
+});
