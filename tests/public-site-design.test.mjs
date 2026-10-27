@@ -107,6 +107,21 @@ test('optional map is blocked until acceptance and uses our own accurate privacy
   assert.doesNotMatch(html.match(/<textarea id="inquiry-message"[^>]*>/)[0], /placeholder=/);
 });
 
+test('map link, official embed, and business metadata use the owner-supplied shop pin', () => {
+  const listing = 'https://www.google.com/maps?q=ZP+Gold+and+Silver,+Barcelona+St,+Zamboanga+City,+7000+Zamboanga+del+Sur&ftid=0x325041c7ca6ca377:0xd44ae94991b61a0a';
+  const mapLink = html.match(/href="(https:\/\/www\.google\.com\/maps[^\"]+)"[^>]*>Directions/)[1].replaceAll('&amp;', '&');
+  assert.equal(mapLink, listing);
+  const data = JSON.parse(html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1]);
+  assert.equal(data.hasMap, listing);
+  const frame = html.match(/<iframe[^>]+>/)[0];
+  assert.match(frame, /title="Map of ZP Gold and Silver,/);
+  const embed = new URL(frame.match(/data-src="([^\"]+)"/)[1]);
+  assert.equal(embed.pathname, '/maps/embed');
+  assert.match(embed.searchParams.get('pb'), /0x325041c7ca6ca377:0xd44ae94991b61a0a/);
+  assert.match(embed.searchParams.get('pb'), /ZP Gold and Silver/);
+  assert.doesNotMatch(mapLink, /g_ep=|skid=|lucs=|entry=gps/);
+});
+
 test('short contact form prepares text without sending data or opening an unapproved destination', () => {
   const form = html.match(/<form id="inquiry"[\s\S]*?<\/form>/)[0];
   assert.equal((form.match(/name="/g) || []).length, 3);

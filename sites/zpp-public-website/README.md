@@ -32,6 +32,7 @@ Deploy a clean copy of this directory from a committed `main` revision with the 
 - XRF section, image placeholder, and links to the removed section were removed at the owner's request. No generated device image is used.
 - Needed: shop phone number (currently `[PHONE]`) and confirmation of accepted grades beyond the flyer. Review 5K at PHP 195 versus 8K at PHP 1,950 and the equal 18K/18K-Buo prices. No rate was corrected automatically.
 - Hero alternative: **Selling gold or silver in Zamboanga?** / **Check the published rates, enter your item’s weight, or message the shop before bringing it in.**
-- Further suggestions: supply an exact shop map pin; confirm pawn-ticket requirements; review the Facebook link preview after release.
+- The owner supplied the exact Google Maps shop listing on October 27, 2026: `0x325041c7ca6ca377:0xd44ae94991b61a0a` (ZP Gold and Silver, Barcelona St, Zamboanga City). Directions and business metadata use that listing without share-tracking parameters. The consent-gated map uses Google's official Share → Embed a map URL for the same pin, not a generic street search.
+- Further suggestions: confirm pawn-ticket requirements; review the Facebook link preview after release.
 
 Local checks: five widths (360, 390, 768, 1024, 1440), decimal/invalid calculator input, local message drafting, native FAQ keyboard behavior, and gallery controls. Lighthouse mobile baseline: performance **99**, accessibility **100**, best practices **100**, SEO **100**; results are local measurements, not a production guarantee. Theme text contrast has regression tests. No third-party fonts or new runtime dependencies were added.
