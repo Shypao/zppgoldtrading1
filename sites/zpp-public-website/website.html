@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ZP Gold Trading | Buying Rates in Zamboanga City</title>
-  <meta name="description" content="Check ZP Gold Trading’s published gold and silver buying rates, estimate your item’s value, and visit Barcelona St, Zone II, Zamboanga City. XRF testing available.">
+  <meta name="description" content="Check ZP Gold Trading’s published gold and silver buying rates, estimate your item’s value, and visit Barcelona St, Zone II, Zamboanga City.">
   <meta name="theme-color" content="#f6f2e8">
   <link rel="canonical" href="https://zpp-public-website.vercel.app/website.html">
   <meta property="og:type" content="website">
@@ -26,8 +26,7 @@
     "address": { "@type": "PostalAddress", "streetAddress": "Barcelona St, Zone II", "addressLocality": "Zamboanga City", "addressCountry": "PH" },
     "openingHoursSpecification": [{ "@type": "OpeningHoursSpecification", "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], "opens": "10:30", "closes": "18:00" }],
     "hasOfferCatalog": { "@type": "OfferCatalog", "name": "Shop services", "itemListElement": [
-      { "@type": "Offer", "itemOffered": { "@type": "Service", "name": "Gold and silver buying and selling" } },
-      { "@type": "Offer", "itemOffered": { "@type": "Service", "name": "XRF testing" } }
+      { "@type": "Offer", "itemOffered": { "@type": "Service", "name": "Gold and silver buying and selling" } }
     ] }
   }
   </script>
@@ -118,47 +117,61 @@
 
     <section id="gallery" class="gallery shell" aria-labelledby="gallery-title">
       <div class="gallery-intro"><h2 id="gallery-title">A look inside the shop</h2><p>Our storefront, counter, and display cases. Select a photo to enlarge it.</p></div>
-      <div class="gallery-layout">
-        <div>
-          <div class="gallery-carousel" aria-roledescription="carousel" aria-label="Shop photos">
+      <div class="gallery-card" role="region" aria-roledescription="carousel" aria-label="Shop photos">
+          <div class="gallery-viewer">
+          <div class="gallery-carousel">
             <figure class="gallery-slide is-active"><button type="button" data-gallery-src="assets/store-gallery/storefront-800.jpg" data-gallery-alt="The ZP Gold Trading storefront and service counter"><img src="assets/store-gallery/storefront-800.jpg" alt="The ZP Gold Trading storefront and service counter" width="599" height="800" loading="lazy" decoding="async"></button><figcaption>Our storefront and counter · Barcelona St, Zone II</figcaption></figure>
-            <figure class="gallery-slide" hidden><button type="button" data-gallery-src="assets/store-gallery/display-case-640.jpg" data-gallery-alt="Gold and silver pieces in the glass display case"><img src="assets/store-gallery/display-case-640.jpg" alt="Gold and silver pieces in the glass display case" width="480" height="640" loading="lazy" decoding="async"></button><figcaption>Gold and silver pieces in the display case</figcaption></figure>
+            <figure class="gallery-slide" hidden><button type="button" data-gallery-src="assets/store-gallery/display-case-enhanced-v2.jpg" data-gallery-alt="Enhanced view of jewelry, coins, and metalware in the shop display case"><img src="assets/store-gallery/display-case-enhanced-v2.jpg" alt="Enhanced view of jewelry, coins, and metalware in the shop display case" width="960" height="720" loading="lazy" decoding="async"></button><figcaption>Gold and silver pieces · Photo enhanced for clarity</figcaption></figure>
             <figure class="gallery-slide" hidden><button type="button" data-gallery-src="assets/store-gallery/silver-collection-960.jpg" data-gallery-alt="Silver bowls, coins, and jewelry in a display case"><img src="assets/store-gallery/silver-collection-960.jpg" alt="Silver bowls, coins, and jewelry in a display case" width="960" height="720" loading="lazy" decoding="async"></button><figcaption>Silver bowls, coins, and jewelry</figcaption></figure>
           </div>
-          <div class="gallery-controls" aria-label="Photo controls"><button type="button" data-gallery-prev aria-label="Previous photo">←</button><span class="numeric" aria-live="polite"><span data-gallery-current>1</span> / <span data-gallery-total>3</span></span><button type="button" data-gallery-next aria-label="Next photo">→</button><button type="button" data-gallery-toggle aria-pressed="false">Play slideshow</button></div>
-        </div>
-        <div class="photo-request"><span class="section-index">Photo to add</span><h3>The weighing counter</h3><p>Photo needed: the shop’s scale and weighing area, with no customer details visible.</p><span>Real shop photo, not a stock image.</span></div>
+          <button class="gallery-arrow gallery-prev" type="button" data-gallery-prev aria-label="Previous photo">←</button>
+          <button class="gallery-arrow gallery-next" type="button" data-gallery-next aria-label="Next photo">→</button>
+          </div>
+        <div class="gallery-controls"><span id="gallery-playback-status" class="gallery-playback-status">Automatic slideshow · Every 4 seconds</span></div>
       </div>
     </section>
 
-    <section id="xrf" class="xrf" aria-labelledby="xrf-title"><div class="shell xrf-layout">
-      <div><p class="section-index">04 / Checking the metal</p><h2 id="xrf-title">What XRF tells us.</h2><p>XRF stands for X-ray fluorescence. The analyzer reads the elements present in the area being tested.</p><p>We explain the reading alongside the item’s weight and condition. A surface reading is not a guarantee of the composition of the whole item.</p><a href="https://web.facebook.com/profile.php?id=61593068612385" target="_blank" rel="noopener noreferrer">Ask about XRF testing ↗</a></div>
-      <div class="photo-request"><span class="section-index">Photo to add</span><h3>Our XRF testing area</h3><p>Photo needed: the shop’s XRF machine and testing area.</p><span>Please confirm testing requirements with the shop.</span></div>
-    </div></section>
-
     <section id="location" class="visit shell" aria-labelledby="visit-title">
-      <div class="visit-heading"><p class="section-index">05 / Visit or message us</p><h2 id="visit-title">Barcelona St, Zone II.<br>We’re here daily.</h2></div>
+      <div class="visit-heading"><p class="section-index">04 / Visit or message us</p><h2 id="visit-title">Barcelona St, Zone II.<br>We’re here daily.</h2></div>
       <div class="visit-layout">
         <div class="visit-details"><address>ZP Gold Trading<br>Barcelona St, Zone II<br>Zamboanga City</address><p class="hours"><strong>Open daily</strong><span class="numeric">10:30 AM–6:00 PM</span></p><div id="store-hours"></div><p class="contact-pending">Phone: <span>[PHONE]</span><small>Number to be supplied. Please use Facebook for now.</small></p><div class="visit-actions"><a class="button primary" href="https://web.facebook.com/profile.php?id=61593068612385" target="_blank" rel="noopener noreferrer">Message on Facebook ↗</a><a class="button secondary" href="https://www.google.com/maps/dir/?api=1&amp;destination=Barcelona+St%2C+Zone+II%2C+Zamboanga+City" target="_blank" rel="noopener noreferrer">Directions ↗</a></div></div>
-        <div class="map-wrap"><iframe title="Map of Barcelona St, Zone II, Zamboanga City" src="https://www.google.com/maps?q=Barcelona+St%2C+Zone+II%2C+Zamboanga+City&amp;output=embed" loading="lazy" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe></div>
+        <div class="map-wrap">
+          <div id="map-consent" class="map-consent"><span class="section-index">Optional Google map</span><h3>Find your way to the shop.</h3><p>Google Maps may use cookies and receive information about your visit. Accept to load the map, or leave it off and use the address above.</p><a href="#cookie-policy">Read our cookie &amp; privacy notice</a><button id="map-accept" class="button secondary" type="button">Accept &amp; load map</button><noscript><p>Use the Directions link to open Google Maps separately.</p></noscript></div>
+          <iframe id="shop-map" title="Map of Barcelona St, Zone II, Zamboanga City" data-src="https://www.google.com/maps?q=Barcelona+St%2C+Zone+II%2C+Zamboanga+City&amp;output=embed" loading="lazy" referrerpolicy="no-referrer" allowfullscreen hidden></iframe>
+          <button id="map-revoke" type="button" class="map-revoke" hidden>Turn off embedded map</button>
+        </div>
       </div>
       <div id="start" class="contact-form-layout">
         <div><h3>Not sure what to bring?</h3><p>Prepare a short message, then copy it into Facebook. Nothing is sent from this form.</p></div>
         <form id="inquiry" novalidate>
           <div class="contact-fields"><label for="inquiry-name">Name <span>(optional)</span><input id="inquiry-name" name="name" autocomplete="name" maxlength="100"></label><label for="inquiry-contact">Contact number or email <span>(optional)</span><input id="inquiry-contact" name="contact" autocomplete="off" aria-describedby="contact-error" maxlength="160"><small id="contact-error" class="field-error"></small></label></div>
-          <label for="inquiry-message">Your item or question<textarea id="inquiry-message" name="message" rows="3" required maxlength="2000" aria-describedby="message-error" placeholder="e.g. I have a broken 18K ring. What should I bring?"></textarea><small id="message-error" class="field-error"></small></label>
+          <label for="inquiry-message">Your item or question<textarea id="inquiry-message" name="message" rows="3" required maxlength="2000" aria-describedby="message-error"></textarea><small id="message-error" class="field-error"></small></label>
           <button class="button secondary" type="submit">Prepare Facebook message</button>
           <p id="form-status" role="status"></p>
           <div id="message-draft" hidden><label for="prepared-message">Your message<textarea id="prepared-message" rows="5" readonly></textarea></label><div class="draft-actions"><button type="button" id="copy-message" class="button secondary">Copy message</button><a class="button primary" href="https://web.facebook.com/profile.php?id=61593068612385" target="_blank" rel="noopener noreferrer">Open Facebook ↗</a></div><p class="fine">Paste your message and press Send on Facebook. Preparing or copying it here does not send it.</p></div>
         </form>
       </div>
-      <div id="faq" class="faq" aria-labelledby="faq-title"><h3 id="faq-title">Before you come in</h3><details><summary>Does the estimate guarantee an offer?</summary><p>No. The calculator uses the published rate and the weight you enter. The shop checks your item’s actual purity, net weight, and condition before making an offer.</p></details><details><summary>My grade isn’t listed on the flyer. Can I bring it?</summary><p>The flyer lists 10K, 14K, 18K, 21K, 22K, and 24K. Message the shop to confirm other grades and the requirements for papel de ahensya.</p></details><details><summary>Can I ask about testing before I visit?</summary><p>Yes. Read the <a href="#xrf">XRF explanation</a> and message the shop about your item and testing requirements.</p></details></div>
+      <div id="faq" class="faq" aria-labelledby="faq-title"><h3 id="faq-title">Before you come in</h3><details><summary>Does the estimate guarantee an offer?</summary><p>No. The calculator uses the published rate and the weight you enter. The shop checks your item’s actual purity, net weight, and condition before making an offer.</p></details><details><summary>My grade isn’t listed on the flyer. Can I bring it?</summary><p>The flyer lists 10K, 14K, 18K, 21K, 22K, and 24K. Message the shop to confirm other grades and the requirements for papel de ahensya.</p></details><details><summary>Can I ask about testing before I visit?</summary><p>Yes. Message the shop about your item and testing requirements before visiting.</p></details></div>
     </section>
   </main>
 
-  <footer class="site-footer shell"><div><strong>ZP Gold Trading</strong><span>Barcelona St, Zone II · Zamboanga City</span></div><div><span class="numeric">Daily · 10:30 AM–6:00 PM</span><a href="https://web.facebook.com/profile.php?id=61593068612385" target="_blank" rel="noopener noreferrer">Facebook ↗</a><small>© <span id="year">2026</span> ZP Gold Trading</small></div></footer>
+  <footer class="site-footer shell"><div><strong>ZP Gold Trading</strong><span>Barcelona St, Zone II · Zamboanga City</span></div><div><span class="numeric">Daily · 10:30 AM–6:00 PM</span><a href="https://web.facebook.com/profile.php?id=61593068612385" target="_blank" rel="noopener noreferrer">Facebook ↗</a><a href="#cookie-policy">Cookie &amp; privacy notice</a><small>© <span id="year">2026</span> ZP Gold Trading</small></div></footer>
+  <div class="privacy-notice shell"><details id="cookie-policy"><summary>Cookies &amp; privacy on this website</summary>
+    <p>This public website does not add analytics or advertising trackers. It saves only your cookie choice in this browser’s local storage so the pop-up does not repeat. It reads the shop’s published rates. The message form prepares text on your device; it does not send your details to the shop.</p>
+    <p>The optional Google map stays off until you choose “Accept” in the privacy pop-up or “Accept &amp; load map” by the address. Loading it connects your browser to Google, which may use cookies and process information under its <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a> and <a href="https://policies.google.com/technologies/cookies" target="_blank" rel="noopener noreferrer">cookie information</a>. You can change your choice below or turn off the embed below the map; this does not delete cookies Google has already set. Manage existing cookies in your browser settings. Clearing site storage, using a different browser, or blocking storage may show the pop-up again.</p>
+    <p>Directions and Facebook links open external services with their own privacy practices. The website host and public-rates service may process technical request information to deliver the site.</p>
+    <button id="cookie-settings" type="button" class="button secondary">Cookie settings</button>
+  </details></div>
   <a class="contact-float" href="https://web.facebook.com/profile.php?id=61593068612385" target="_blank" rel="noopener noreferrer">Message on Facebook <span aria-hidden="true">↗</span></a>
   <dialog id="gallery-lightbox" aria-labelledby="gallery-lightbox-caption"><button class="lightbox-close" type="button" aria-label="Close photo viewer">×</button><img id="gallery-lightbox-image" alt="" width="960" height="1280"><p id="gallery-lightbox-caption"></p></dialog>
+  <dialog id="cookie-dialog" aria-labelledby="cookie-dialog-title" aria-describedby="cookie-dialog-description">
+    <span class="section-index">ZP Gold Trading · Your privacy</span>
+    <h2 id="cookie-dialog-title">A quick note about cookies.</h2>
+    <p id="cookie-dialog-description">Our site does not add analytics or advertising trackers. The optional Google map may use cookies and share information about your visit with Google. Choose Accept to enable it, or continue without optional cookies. Rates and the calculator work either way.</p>
+    <a href="#cookie-policy">Read our cookie &amp; privacy notice</a>
+    <div class="cookie-actions"><button id="cookie-decline" type="button" class="button secondary" autofocus>Continue without optional cookies</button><button id="cookie-accept" type="button" class="button primary">Accept</button></div>
+    <p class="fine">We remember your choice on this browser. Change it anytime under Cookie settings in our privacy notice.</p>
+  </dialog>
   <script src="website.js?v=zp-local-1" defer></script>
 </body>
 </html>

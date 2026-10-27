@@ -160,18 +160,27 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) load
 // Scroll reveal is deliberately omitted: content stays visible without animation or JavaScript.
 $('#estimate-form').addEventListener('submit', event => event.preventDefault());
 
-// Shop photos: paused by default. Play is explicit; focus, navigation, or reduced motion stops it.
+// Shop photos: automatically advance while visible; manual navigation preserves playback intent.
 const gallerySlides = $$('.gallery-slide');
-const galleryToggle = $('[data-gallery-toggle]');
 const galleryDialog = $('#gallery-lightbox');
+const galleryCarousel = $('.gallery-carousel');
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 let galleryIndex = 0;
 let galleryTimer = null;
+let galleryInView = !('IntersectionObserver' in window);
 function stopGallery() {
   if (galleryTimer !== null) clearInterval(galleryTimer);
   galleryTimer = null;
-  galleryToggle.textContent = 'Play slideshow';
-  galleryToggle.setAttribute('aria-pressed', 'false');
+}
+function syncGallery() {
+  stopGallery();
+  const imageFocused = galleryCarousel.contains(document.activeElement);
+  const canPlay = !reducedMotion.matches && !document.hidden
+    && !galleryDialog.open && !$('#cookie-dialog')?.open && galleryInView && !imageFocused;
+  if (canPlay) galleryTimer = setInterval(() => showGallery(galleryIndex + 1), 4000);
+  $('#gallery-playback-status').textContent = reducedMotion.matches ? 'Use arrows · Reduced motion enabled'
+    : imageFocused || galleryDialog.open ? 'Auto-play resumes when you leave the photo viewer'
+    : 'Automatic slideshow · Every 4 seconds';
 }
 function showGallery(index) {
   galleryIndex = (index + gallerySlides.length) % gallerySlides.length;
@@ -179,44 +188,87 @@ function showGallery(index) {
     slide.hidden = i !== galleryIndex;
     slide.classList.toggle('is-active', i === galleryIndex);
   });
-  $('[data-gallery-current]').textContent = String(galleryIndex + 1);
 }
-$('[data-gallery-total]').textContent = String(gallerySlides.length);
-galleryToggle.addEventListener('click', () => {
-  if (galleryTimer !== null) { stopGallery(); return; }
-  if (reducedMotion.matches) {
-    galleryToggle.textContent = 'Use arrows · reduced motion';
-    return;
-  }
-  galleryTimer = setInterval(() => showGallery(galleryIndex + 1), 6000);
-  galleryToggle.textContent = 'Pause slideshow';
-  galleryToggle.setAttribute('aria-pressed', 'true');
-});
-$('[data-gallery-prev]').addEventListener('click', () => { stopGallery(); showGallery(galleryIndex - 1); });
-$('[data-gallery-next]').addEventListener('click', () => { stopGallery(); showGallery(galleryIndex + 1); });
-$('.gallery-carousel').addEventListener('focusin', stopGallery);
-$('.gallery-carousel').addEventListener('keydown', event => {
+function navigateGallery(index) { showGallery(index); syncGallery(); }
+$('[data-gallery-prev]').addEventListener('click', () => navigateGallery(galleryIndex - 1));
+$('[data-gallery-next]').addEventListener('click', () => navigateGallery(galleryIndex + 1));
+galleryCarousel.addEventListener('focusin', syncGallery);
+galleryCarousel.addEventListener('focusout', () => queueMicrotask(syncGallery));
+$('.gallery-viewer').addEventListener('keydown', event => {
   if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
-  event.preventDefault(); stopGallery();
-  showGallery(galleryIndex + (event.key === 'ArrowRight' ? 1 : -1));
-  gallerySlides[galleryIndex].querySelector('button').focus();
+  event.preventDefault();
+  const forward = event.key === 'ArrowRight';
+  $(forward ? '[data-gallery-next]' : '[data-gallery-prev]').focus();
+  navigateGallery(galleryIndex + (forward ? 1 : -1));
 });
-reducedMotion.addEventListener('change', stopGallery);
-document.addEventListener('visibilitychange', () => { if (document.hidden) stopGallery(); });
+reducedMotion.addEventListener('change', syncGallery);
+document.addEventListener('visibilitychange', syncGallery);
+if ('IntersectionObserver' in window) {
+  const galleryObserver = new IntersectionObserver(entries => {
+    galleryInView = entries.some(entry => entry.isIntersecting);
+    syncGallery();
+  }, { threshold: 0.15 });
+  galleryObserver.observe($('.gallery-card'));
+}
 $$('[data-gallery-src]').forEach(button => button.addEventListener('click', () => {
-  stopGallery();
   const image = $('#gallery-lightbox-image');
   image.src = button.dataset.gallerySrc;
   image.alt = button.dataset.galleryAlt;
   $('#gallery-lightbox-caption').textContent = button.dataset.galleryAlt;
   galleryDialog.showModal();
+  syncGallery();
 }));
 $('.lightbox-close').addEventListener('click', () => galleryDialog.close());
+galleryDialog.addEventListener('close', syncGallery);
 galleryDialog.addEventListener('click', event => {
   if (event.target !== galleryDialog) return;
   const bounds = galleryDialog.getBoundingClientRect();
   if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) galleryDialog.close();
 });
+syncGallery();
+
+// Optional third-party map: no Google embed request until the visitor explicitly accepts.
+$$('a[href="#cookie-policy"]').forEach(link => link.addEventListener('click', () => {
+  if ($('#cookie-dialog').open) $('#cookie-dialog').close();
+  $('#cookie-policy').open = true;
+}));
+if (window.location?.hash === '#cookie-policy') $('#cookie-policy').open = true;
+const mapFrame = $('#shop-map');
+const mapConsent = $('#map-consent');
+const mapRevoke = $('#map-revoke');
+const COOKIE_CHOICE_KEY = 'zp-cookie-consent-v1';
+function savedCookieChoice() {
+  try {
+    const choice = localStorage.getItem(COOKIE_CHOICE_KEY);
+    return ['accepted', 'declined'].includes(choice) ? choice : null;
+  } catch { return null; }
+}
+function setMapConsent(accepted) {
+  if (accepted) mapFrame.src = mapFrame.dataset.src;
+  else mapFrame.removeAttribute('src');
+  mapFrame.hidden = !accepted;
+  mapConsent.hidden = accepted;
+  mapRevoke.hidden = !accepted;
+  try { localStorage.setItem(COOKIE_CHOICE_KEY, accepted ? 'accepted' : 'declined'); } catch { /* Browsers may block storage. */ }
+}
+$('#map-accept').addEventListener('click', () => {
+  setMapConsent(true);
+  mapRevoke.focus();
+});
+mapRevoke.addEventListener('click', () => {
+  setMapConsent(false);
+  $('#map-accept').focus();
+});
+const cookieDialog = $('#cookie-dialog');
+$('#cookie-accept').addEventListener('click', () => { setMapConsent(true); cookieDialog.close(); });
+$('#cookie-decline').addEventListener('click', () => { setMapConsent(false); cookieDialog.close(); });
+cookieDialog.addEventListener('cancel', () => setMapConsent(false));
+cookieDialog.addEventListener('close', syncGallery);
+$('#cookie-settings').addEventListener('click', () => { cookieDialog.showModal(); syncGallery(); });
+const cookieChoice = savedCookieChoice();
+if (cookieChoice) setMapConsent(cookieChoice === 'accepted');
+else cookieDialog.showModal();
+syncGallery();
 
 // This form only prepares text. It never submits customer data or claims delivery.
 const inquiry = $('#inquiry');

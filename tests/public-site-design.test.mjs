@@ -18,7 +18,8 @@ test('approved ZP brand and supplied Facebook account are used throughout the pu
 
 test('rates are first after the hero and estimator and tables share one pricing section', () => {
   const ids = [...html.matchAll(/<section[^>]*\bid="([^"]+)"/g)].map(match => match[1]);
-  assert.deepEqual(ids, ['rates', 'services', 'process', 'gallery', 'xrf', 'location']);
+  assert.deepEqual(ids, ['rates', 'services', 'process', 'gallery', 'location']);
+  assert.doesNotMatch(html, /XRF|id="xrf"|href="#xrf"|Photo to add/);
   assert.equal((html.match(/<tbody data-rate-table=/g) || []).length, 3);
   assert.equal((html.match(/<caption /g) || []).length, 3);
   assert.ok(html.indexOf('id="estimate"') < html.indexOf('id="services"'));
@@ -73,13 +74,37 @@ test('SEO uses confirmed business facts without inventing a phone or exact save 
   assert.match(js, /Save time not recorded/);
 });
 
-test('gallery is paused by default and respects reduced motion, focus, and visibility', () => {
-  assert.match(html, /data-gallery-toggle aria-pressed="false">Play slideshow/);
+test('gallery autoplays with in-frame navigation and respects reduced motion, focus, and visibility', () => {
+  assert.doesNotMatch(html, /data-gallery-toggle|data-gallery-current|data-gallery-total/);
   assert.match(js, /reducedMotion\.matches/);
-  assert.match(js, /reducedMotion\.addEventListener\('change', stopGallery\)/);
-  assert.match(js, /addEventListener\('focusin', stopGallery\)/);
+  assert.match(js, /reducedMotion\.addEventListener\('change', syncGallery\)/);
+  assert.match(js, /addEventListener\('focusin', syncGallery\)/);
   assert.match(js, /ArrowLeft.*ArrowRight/);
-  assert.match(js, /document\.hidden\) stopGallery/);
+  assert.match(js, /!document\.hidden/);
+  assert.match(js, /showGallery\(galleryIndex \+ 1\), 4000/);
+  const gallery = html.match(/<section id="gallery"[\s\S]*?<\/section>/)[0];
+  assert.doesNotMatch(gallery, /weighing counter|photo-request/i);
+  assert.match(gallery, /class="gallery-viewer">[\s\S]*?data-gallery-prev[\s\S]*?data-gallery-next/);
+  assert.doesNotMatch(gallery, /data-gallery-index|gallery-previews/);
+  assert.match(css, /\.gallery-arrow\s*\{[^}]*position:\s*absolute/);
+});
+
+test('optional map is blocked until acceptance and uses our own accurate privacy notice', () => {
+  const frame = html.match(/<iframe[^>]+>/)[0];
+  assert.doesNotMatch(frame, /\ssrc=/);
+  assert.match(frame, /data-src="https:\/\/www\.google\.com\/maps/);
+  assert.match(frame, /\shidden/);
+  assert.match(html, /Accept &amp; load map/);
+  assert.match(html, /id="cookie-policy"/);
+  assert.match(html, /<dialog id="cookie-dialog"[^>]*aria-labelledby="cookie-dialog-title"/);
+  assert.match(html, /Continue without optional cookies/);
+  assert.match(js, /cookieDialog\.showModal\(\)/);
+  assert.doesNotMatch(html, /rsjewellers|consent to these cookies being used/);
+  assert.doesNotMatch(js, /document\.cookie|sessionStorage|gtag\(|fbq\(/);
+  assert.match(js, /const COOKIE_CHOICE_KEY = 'zp-cookie-consent-v1'/);
+  assert.match(js, /if \(cookieChoice\) setMapConsent/);
+  assert.match(js, /mapFrame\.removeAttribute\('src'\)/);
+  assert.doesNotMatch(html.match(/<textarea id="inquiry-message"[^>]*>/)[0], /placeholder=/);
 });
 
 test('short contact form prepares text without sending data or opening an unapproved destination', () => {
@@ -107,9 +132,9 @@ test('gallery displays whole portrait and landscape photos instead of cropping t
   const imageRule = css.match(/\.gallery-slide img\s*\{([^}]+)\}/)[1];
   assert.match(imageRule, /object-fit:\s*contain/);
   assert.match(imageRule, /object-position:\s*center/);
-  assert.match(imageRule, /height:\s*100%/);
   assert.doesNotMatch(css, /\.gallery-slide img\s*\{[^}]*object-fit:\s*cover/);
-  assert.match(css, /\.gallery-slide button\s*\{[^}]*height:\s*clamp\(/);
+  assert.match(css, /\.gallery-slide button\s*\{[^}]*height:\s*auto/);
+  assert.match(imageRule, /height:\s*auto/);
 });
 
 test('sections 02 and 03 share column alignment, have clear detail labels, and a full-width divider', () => {
