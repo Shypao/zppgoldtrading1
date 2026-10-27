@@ -122,6 +122,12 @@ test('map link, official embed, and business metadata use the owner-supplied sho
   assert.doesNotMatch(mapLink, /g_ep=|skid=|lucs=|entry=gps/);
 });
 
+test('embedded map leaves room for its opt-out control instead of clipping it', () => {
+  assert.match(css, /\.map-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column/);
+  assert.match(css, /\.map-wrap iframe\s*\{[^}]*flex:\s*1;[^}]*height:\s*auto/);
+  assert.match(css, /\.map-revoke\s*\{[^}]*align-self:\s*flex-start/);
+});
+
 test('short contact form prepares text without sending data or opening an unapproved destination', () => {
   const form = html.match(/<form id="inquiry"[\s\S]*?<\/form>/)[0];
   assert.equal((form.match(/name="/g) || []).length, 3);

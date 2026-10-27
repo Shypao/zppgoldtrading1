@@ -185,12 +185,12 @@ address { font-style: normal; font-size: 1.125rem; }
 .contact-pending { font-size: .875rem; color: var(--muted); margin-top: var(--space-3); }
 .contact-pending small { display: block; font-size: .75rem; margin-top: .2rem; }
 .visit-actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: var(--space-3); }
-.map-wrap { min-height: 310px; background: var(--warm); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
-.map-wrap iframe { display: block; width: 100%; height: 100%; min-height: 310px; border: 0; }
+.map-wrap { display: flex; flex-direction: column; min-height: 310px; background: var(--warm); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.map-wrap iframe { display: block; flex: 1; width: 100%; height: auto; min-height: 310px; border: 0; }
 .map-consent { display: flex; flex-direction: column; align-items: flex-start; gap: 1rem; padding: var(--space-4); }
 .map-consent p, .map-consent > a { font-size: .875rem; }
 .map-consent > a { text-decoration: underline; }
-.map-revoke { margin: .75rem; padding: .6rem .9rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); font-size: .8125rem; }
+.map-revoke { align-self: flex-start; margin: .75rem; padding: .6rem .9rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); font-size: .8125rem; }
 .privacy-notice { padding-bottom: var(--space-5); font-size: .8125rem; color: var(--muted); }
 .privacy-notice summary { min-height: 44px; cursor: pointer; padding-block: .75rem; }
 .privacy-notice p { max-width: 65rem; margin-bottom: .75rem; }
