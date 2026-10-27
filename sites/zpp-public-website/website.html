@@ -1,207 +1,142 @@
 <!doctype html>
-<html lang="en">
+<html lang="en-PH">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="ZPP Gold Trading buys and trades gold and silver in Zamboanga City, with XRF testing to help you understand your sample.">
-  <title>ZPP Gold Trading | Gold &amp; Silver Trading</title>
-  <link rel="icon" type="image/png" href="zpp-logo.png">
-  <link rel="stylesheet" href="website.css">
+  <title>ZP Gold Trading | Buying Rates in Zamboanga City</title>
+  <meta name="description" content="Check ZP Gold Trading’s published gold and silver buying rates, estimate your item’s value, and visit Barcelona St, Zone II, Zamboanga City. XRF testing available.">
+  <meta name="theme-color" content="#f6f2e8">
+  <link rel="canonical" href="https://zpp-public-website.vercel.app/website.html">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="en_PH">
+  <meta property="og:site_name" content="ZP Gold Trading">
+  <meta property="og:title" content="ZP Gold Trading — check the rate before you visit">
+  <meta property="og:description" content="Published buying rates, a weight-based estimate, and our shop on Barcelona St, Zone II, Zamboanga City.">
+  <meta property="og:url" content="https://zpp-public-website.vercel.app/website.html">
+  <meta property="og:image" content="https://zpp-public-website.vercel.app/assets/store-gallery/storefront-800.jpg">
+  <meta property="og:image:alt" content="The ZP Gold Trading storefront and service counter">
+  <link rel="icon" type="image/png" href="assets/zp-mark.png">
+  <link rel="stylesheet" href="website.css?v=zp-local-1">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org", "@type": "LocalBusiness", "name": "ZP Gold Trading",
+    "url": "https://zpp-public-website.vercel.app/website.html",
+    "image": "https://zpp-public-website.vercel.app/assets/store-gallery/storefront-800.jpg",
+    "sameAs": ["https://web.facebook.com/profile.php?id=61593068612385"],
+    "address": { "@type": "PostalAddress", "streetAddress": "Barcelona St, Zone II", "addressLocality": "Zamboanga City", "addressCountry": "PH" },
+    "openingHoursSpecification": [{ "@type": "OpeningHoursSpecification", "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], "opens": "10:30", "closes": "18:00" }],
+    "hasOfferCatalog": { "@type": "OfferCatalog", "name": "Shop services", "itemListElement": [
+      { "@type": "Offer", "itemOffered": { "@type": "Service", "name": "Gold and silver buying and selling" } },
+      { "@type": "Offer", "itemOffered": { "@type": "Service", "name": "XRF testing" } }
+    ] }
+  }
+  </script>
 </head>
 <body id="public-site" data-rates-api="https://zppgoldtrading.vercel.app/api/public-pricing">
-  <header class="site-header">
-    <a class="brand" href="#top" aria-label="ZPP Gold Trading home">
-      <span class="brand-mark"><img src="zpp-logo.png" alt="ZPP Gold Trading logo"></span>
-      <span><strong>ZPP</strong> Gold Trading</span>
-    </a>
-    <nav class="site-nav" aria-label="Main navigation">
-      <a href="#services">What we do</a>
-      <a href="#process">How it works</a>
-      <a href="#gallery">Gallery</a>
-      <a href="#rates">Buy rates</a>
-      <a href="#estimate">Estimate</a>
-      <a href="#xrf">XRF testing</a>
-      <a href="#faq">FAQ</a>
-      <a href="#location">Visit us</a>
-      <a class="nav-cta" href="#start">Get started</a>
-    </nav>
+  <a class="skip-link" href="#rates">Skip to buying rates</a>
+  <header class="site-header shell">
+    <a class="brand" href="#top"><img src="assets/zp-mark.png" alt="" width="44" height="44"><span><strong>ZP Gold Trading</strong><small>Zamboanga City</small></span></a>
+    <nav aria-label="Main navigation"><a href="#rates">Rates</a><a href="#services">What we buy</a><a href="#location">Visit us</a></nav>
+    <a class="header-contact" href="https://web.facebook.com/profile.php?id=61593068612385" target="_blank" rel="noopener noreferrer">Facebook ↗</a>
   </header>
-
   <main id="top">
-    <section class="hero section-shell">
+    <section class="hero shell" aria-labelledby="hero-title">
       <div class="hero-copy">
-        <p class="eyebrow">ZPP precious metals dealer</p>
-        <h1>We buy<br><em>gold &amp; silver.</em></h1>
-        <p class="hero-text">We buy gold jewelry, silver items, bars, coins, and other precious metals. Bring your item in for XRF testing and a clear, fair quote.</p>
-        <p class="hero-karats">We buy 10K, 14K, 18K, 21K, 22K &amp; 24K gold</p>
-        <div class="hero-actions">
-          <a class="button button-primary" href="#start">Get a clear quote <span>↗</span></a>
-          <a class="button button-quiet" href="#rates">See today’s rates</a>
-          <button class="button button-quiet" type="button" data-open-help>Talk to us</button>
+        <p class="shop-line">Barcelona St, Zone II · Zamboanga City</p>
+        <h1 id="hero-title">Check the rate<br>before <em>you visit.</em></h1>
+        <p class="hero-text">Selling gold or silver? See our published buying rates and estimate your item’s value before bringing it to the counter.</p>
+        <div class="hero-actions"><a class="button primary" href="#rates">View buying rates ↓</a><a class="button secondary" href="#estimate">Estimate my item</a></div>
+        <p class="shop-hours">Open daily <span class="numeric">10:30 AM–6:00 PM</span> <a href="#location">Directions ↗</a></p>
+      </div>
+      <figure class="hero-photo">
+        <img src="assets/store-gallery/display-case-640.jpg" width="480" height="640" fetchpriority="high" decoding="async" alt="Gold and silver pieces in the shop’s glass display case">
+        <figcaption>Gold, silver, bars &amp; coins.<span>Bring your item. We’ll weigh it and test it.</span></figcaption>
+      </figure>
+    </section>
+
+    <section id="rates" class="rates shell" aria-labelledby="rates-title">
+      <div class="rates-heading"><div><p class="section-index">01 / The numbers</p><h2 id="rates-title">Published buying rates</h2></div><p>Philippine pesos per gram. <br>Set by the shop, not a live market feed.</p></div>
+      <p id="rates-status" class="rates-status" role="status">Loading the shop’s saved public rates…</p>
+      <p id="rates-age-note" class="rates-age-note" hidden></p>
+      <div class="pricing-layout">
+        <div class="rate-board">
+          <details class="metal-sheet" open><summary><span>Gold</span><small>PHP / gram</small><span class="disclosure-mark" aria-hidden="true">+</span></summary>
+            <table><caption class="sr-only">Gold published buying rates in Philippine pesos per gram</caption><thead><tr><th scope="col">Karat / purity</th><th scope="col">Buying rate</th></tr></thead><tbody data-rate-table="Gold"><tr><td colspan="2">Loading…</td></tr></tbody></table>
+          </details>
+          <details class="metal-sheet"><summary><span>Silver</span><small>PHP / gram</small><span class="disclosure-mark" aria-hidden="true">+</span></summary>
+            <table><caption class="sr-only">Silver published buying rates in Philippine pesos per gram</caption><thead><tr><th scope="col">Fineness / purity</th><th scope="col">Buying rate</th></tr></thead><tbody data-rate-table="Silver"><tr><td colspan="2">Loading…</td></tr></tbody></table>
+          </details>
+          <details class="metal-sheet"><summary><span>Platinum</span><small>PHP / gram</small><span class="disclosure-mark" aria-hidden="true">+</span></summary>
+            <table><caption class="sr-only">Platinum published buying rates in Philippine pesos per gram</caption><thead><tr><th scope="col">Fineness / purity</th><th scope="col">Buying rate</th></tr></thead><tbody data-rate-table="Platinum"><tr><td colspan="2">Loading…</td></tr></tbody></table>
+          </details>
+          <p class="rate-footnote">The grade list is a published price reference. Message us to confirm whether we can accept your specific item.</p>
         </div>
-        <p class="hero-note"><span class="status-dot"></span> XRF testing available · Open daily · 10:30 AM–6:00 PM</p>
+        <aside id="estimate" class="estimate" aria-labelledby="estimate-title">
+          <h3 id="estimate-title">What could your item be worth?</h3><p>Use the same published rates shown in the table.</p>
+          <form id="estimate-form">
+            <div class="estimate-selects"><label for="estimate-metal">Metal<select id="estimate-metal"><option>Gold</option><option>Silver</option><option>Platinum</option></select></label><label for="estimate-purity">Karat / purity<select id="estimate-purity"></select></label></div>
+            <label for="estimate-grams">Weight in grams<input id="estimate-grams" type="number" min="0" step="any" inputmode="decimal" placeholder="e.g. 2.5" aria-describedby="estimate-error estimate-disclaimer"></label>
+            <p id="estimate-error" class="field-error" aria-live="polite"></p>
+            <div class="estimate-result"><span>Estimated value</span><output id="estimate-total" for="estimate-metal estimate-purity estimate-grams" aria-live="polite">₱0</output><small id="estimate-breakdown">Enter a weight to calculate.</small><p id="estimate-disclaimer">Estimate only. The final offer depends on the tested purity, net weight, and condition of your item.</p></div>
+          </form>
+          <a class="estimate-contact" href="https://web.facebook.com/profile.php?id=61593068612385" target="_blank" rel="noopener noreferrer">Ask about your item on Facebook ↗</a>
+        </aside>
       </div>
-      <div class="hero-art hero-photo" aria-label="Gold and silver items at the ZPP counter">
-        <img src="assets/store-gallery/display-case.jpg" alt="Gold and silver items displayed at the ZPP counter">
-        <div class="hero-photo-shade"></div>
-        <div class="hero-photo-label"><span>WE BUY</span><strong>GOLD<br>&amp; SILVER</strong></div>
-        <div class="hero-photo-badge"><span>10K</span><span>14K</span><span>18K</span><span>21K</span><span>22K</span><span>24K</span></div>
+      <noscript><p>JavaScript is needed to load saved rates and calculate estimates. Please contact the shop on Facebook to confirm prices.</p></noscript>
+    </section>
+
+    <section id="services" class="accepted shell" aria-labelledby="accepted-title">
+      <div><p class="section-index">02 / Bring it to the counter</p><h2 id="accepted-title">Buo or sira.<br>Let us check it.</h2><p>We buy and sell gold, silver, bars, and coins. These are the items listed on our shop flyer.</p><p class="accepted-karats">Gold grades on the flyer<br><strong class="numeric">10K · 14K · 18K · 21K · 22K · 24K</strong></p><p class="fine">For other grades or items, message us before visiting.</p></div>
+      <ul class="accepted-list"><li><strong>Gold jewelry</strong><span>Buo / sira, including Saudi and Japan gold.</span></li><li><strong>Silver</strong><span>Bring your silver item for checking.</span></li><li><strong>Bars &amp; coins</strong><span>Gold bars and gold coins.</span></li><li><strong>Papel de ahensya</strong><span>Message us first about your pawn ticket and its requirements.</span></li></ul>
+    </section>
+    <section id="process" class="selling shell" aria-labelledby="process-title">
+      <div><p class="section-index">03 / At the shop</p><h2 id="process-title">From the scale<br>to the offer.</h2><p>You can ask about the weight, test reading, and rate used before deciding.</p></div>
+      <ol class="selling-steps"><li><h3>Weigh and test</h3><p>We weigh your item and check its purity.</p></li><li><h3>See the rate used</h3><p>We explain the grade, net weight, and buying rate behind the offer.</p></li><li><h3>Decide, then get paid</h3><p>If you accept the offer, we complete the purchase and payment.</p></li></ol>
+    </section>
+
+    <section id="gallery" class="gallery shell" aria-labelledby="gallery-title">
+      <div class="gallery-intro"><h2 id="gallery-title">A look inside the shop</h2><p>Our storefront, counter, and display cases. Select a photo to enlarge it.</p></div>
+      <div class="gallery-layout">
+        <div>
+          <div class="gallery-carousel" aria-roledescription="carousel" aria-label="Shop photos">
+            <figure class="gallery-slide is-active"><button type="button" data-gallery-src="assets/store-gallery/storefront-800.jpg" data-gallery-alt="The ZP Gold Trading storefront and service counter"><img src="assets/store-gallery/storefront-800.jpg" alt="The ZP Gold Trading storefront and service counter" width="599" height="800" loading="lazy" decoding="async"></button><figcaption>Our storefront and counter · Barcelona St, Zone II</figcaption></figure>
+            <figure class="gallery-slide" hidden><button type="button" data-gallery-src="assets/store-gallery/display-case-640.jpg" data-gallery-alt="Gold and silver pieces in the glass display case"><img src="assets/store-gallery/display-case-640.jpg" alt="Gold and silver pieces in the glass display case" width="480" height="640" loading="lazy" decoding="async"></button><figcaption>Gold and silver pieces in the display case</figcaption></figure>
+            <figure class="gallery-slide" hidden><button type="button" data-gallery-src="assets/store-gallery/silver-collection-960.jpg" data-gallery-alt="Silver bowls, coins, and jewelry in a display case"><img src="assets/store-gallery/silver-collection-960.jpg" alt="Silver bowls, coins, and jewelry in a display case" width="960" height="720" loading="lazy" decoding="async"></button><figcaption>Silver bowls, coins, and jewelry</figcaption></figure>
+          </div>
+          <div class="gallery-controls" aria-label="Photo controls"><button type="button" data-gallery-prev aria-label="Previous photo">←</button><span class="numeric" aria-live="polite"><span data-gallery-current>1</span> / <span data-gallery-total>3</span></span><button type="button" data-gallery-next aria-label="Next photo">→</button><button type="button" data-gallery-toggle aria-pressed="false">Play slideshow</button></div>
+        </div>
+        <div class="photo-request"><span class="section-index">Photo to add</span><h3>The weighing counter</h3><p>Photo needed: the shop’s scale and weighing area, with no customer details visible.</p><span>Real shop photo, not a stock image.</span></div>
       </div>
     </section>
 
-    <section id="services" class="services section-shell">
-      <div class="section-heading"><p class="eyebrow">How we can help</p><h2>Simple, personal,<br><em>straightforward.</em></h2></div>
-      <div class="service-grid">
-        <article class="service-card reveal"><span class="svc-icon" aria-hidden="true">◈</span><h3>We Buy Gold &amp; Silver</h3><p>Bring your gold or silver jewelry, bars, coins, and other precious metals for a clear, fair quote.</p><div class="card-actions"><button type="button" class="mini" data-service="trading">Learn more</button><button type="button" class="mini solid" data-request="We Buy Gold &amp; Silver">Request this service</button></div></article>
-        <article class="service-card featured reveal"><span class="svc-icon" aria-hidden="true">◎</span><h3>Get a clear quote</h3><p>Bring your item to our store for a friendly conversation and a straightforward quote.</p><div class="card-actions"><button type="button" class="mini" data-service="quote">Learn more</button><button type="button" class="mini solid" data-request="Get a quote">Request this service</button></div></article>
-        <article class="service-card reveal"><span class="svc-icon" aria-hidden="true">✦</span><h3>XRF testing</h3><p>See how X-ray fluorescence helps show which metals are in your sample.</p><div class="card-actions"><button type="button" class="mini" data-service="xrf">Learn more</button><button type="button" class="mini solid" data-request="XRF testing">Request this service</button></div></article>
-      </div>
-    </section>
+    <section id="xrf" class="xrf" aria-labelledby="xrf-title"><div class="shell xrf-layout">
+      <div><p class="section-index">04 / Checking the metal</p><h2 id="xrf-title">What XRF tells us.</h2><p>XRF stands for X-ray fluorescence. The analyzer reads the elements present in the area being tested.</p><p>We explain the reading alongside the item’s weight and condition. A surface reading is not a guarantee of the composition of the whole item.</p><a href="https://web.facebook.com/profile.php?id=61593068612385" target="_blank" rel="noopener noreferrer">Ask about XRF testing ↗</a></div>
+      <div class="photo-request"><span class="section-index">Photo to add</span><h3>Our XRF testing area</h3><p>Photo needed: the shop’s XRF machine and testing area.</p><span>Please confirm testing requirements with the shop.</span></div>
+    </div></section>
 
-    <section id="process" class="buying-process section-shell" aria-labelledby="process-title">
-      <div class="section-heading">
-        <div><p class="eyebrow">A clear way to sell</p><h2 id="process-title">Sell your gold<br><em>in three easy steps.</em></h2></div>
-        <p class="process-intro">A friendly, transparent process from testing to payment. Bring your item in and we’ll explain every step.</p>
+    <section id="location" class="visit shell" aria-labelledby="visit-title">
+      <div class="visit-heading"><p class="section-index">05 / Visit or message us</p><h2 id="visit-title">Barcelona St, Zone II.<br>We’re here daily.</h2></div>
+      <div class="visit-layout">
+        <div class="visit-details"><address>ZP Gold Trading<br>Barcelona St, Zone II<br>Zamboanga City</address><p class="hours"><strong>Open daily</strong><span class="numeric">10:30 AM–6:00 PM</span></p><div id="store-hours"></div><p class="contact-pending">Phone: <span>[PHONE]</span><small>Number to be supplied. Please use Facebook for now.</small></p><div class="visit-actions"><a class="button primary" href="https://web.facebook.com/profile.php?id=61593068612385" target="_blank" rel="noopener noreferrer">Message on Facebook ↗</a><a class="button secondary" href="https://www.google.com/maps/dir/?api=1&amp;destination=Barcelona+St%2C+Zone+II%2C+Zamboanga+City" target="_blank" rel="noopener noreferrer">Directions ↗</a></div></div>
+        <div class="map-wrap"><iframe title="Map of Barcelona St, Zone II, Zamboanga City" src="https://www.google.com/maps?q=Barcelona+St%2C+Zone+II%2C+Zamboanga+City&amp;output=embed" loading="lazy" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe></div>
       </div>
-      <div class="process-grid">
-        <article class="process-card"><span>01</span><h3>Free valuation</h3><p>We inspect, weigh, and test your item so you understand what it is worth.</p></article>
-        <article class="process-card process-card-dark"><span>02</span><h3>Clear quote</h3><p>We use today’s published buying rates and explain the quote with no hidden costs.</p></article>
-        <article class="process-card"><span>03</span><h3>Safe payment</h3><p>Once you approve the offer, we complete the transaction clearly and securely.</p></article>
+      <div id="start" class="contact-form-layout">
+        <div><h3>Not sure what to bring?</h3><p>Prepare a short message, then copy it into Facebook. Nothing is sent from this form.</p></div>
+        <form id="inquiry" novalidate>
+          <div class="contact-fields"><label for="inquiry-name">Name <span>(optional)</span><input id="inquiry-name" name="name" autocomplete="name" maxlength="100"></label><label for="inquiry-contact">Contact number or email <span>(optional)</span><input id="inquiry-contact" name="contact" autocomplete="off" aria-describedby="contact-error" maxlength="160"><small id="contact-error" class="field-error"></small></label></div>
+          <label for="inquiry-message">Your item or question<textarea id="inquiry-message" name="message" rows="3" required maxlength="2000" aria-describedby="message-error" placeholder="e.g. I have a broken 18K ring. What should I bring?"></textarea><small id="message-error" class="field-error"></small></label>
+          <button class="button secondary" type="submit">Prepare Facebook message</button>
+          <p id="form-status" role="status"></p>
+          <div id="message-draft" hidden><label for="prepared-message">Your message<textarea id="prepared-message" rows="5" readonly></textarea></label><div class="draft-actions"><button type="button" id="copy-message" class="button secondary">Copy message</button><a class="button primary" href="https://web.facebook.com/profile.php?id=61593068612385" target="_blank" rel="noopener noreferrer">Open Facebook ↗</a></div><p class="fine">Paste your message and press Send on Facebook. Preparing or copying it here does not send it.</p></div>
+        </form>
       </div>
-    </section>
-
-    <section id="gallery" class="gallery section-shell" aria-labelledby="gallery-title">
-      <div class="section-heading gallery-heading">
-        <div><p class="eyebrow">A closer look</p><h2 id="gallery-title">Inside our<br><em>gold &amp; silver world.</em></h2></div>
-        <p class="gallery-intro">See our shop, display cases, and the items we handle every day. Tap any photo to view it full size.</p>
-      </div>
-      <div class="gallery-grid gallery-carousel" aria-roledescription="carousel" aria-label="ZPP store photos">
-        <button class="gallery-tile gallery-tile-large reveal" type="button" data-gallery-src="assets/store-gallery/storefront.jpg" data-gallery-alt="ZPP Gold and Silver storefront and service counter">
-          <img src="assets/store-gallery/storefront.jpg" alt="ZPP Gold and Silver storefront and service counter" loading="lazy">
-          <span class="gallery-caption"><strong>Visit our counter</strong><small>Barcelona St, Zone II</small></span>
-        </button>
-        <button class="gallery-tile reveal" type="button" data-gallery-src="assets/store-gallery/display-case.jpg" data-gallery-alt="Gold and silver items in the display case">
-          <img src="assets/store-gallery/display-case.jpg" alt="Gold and silver items in the display case" loading="lazy">
-          <span class="gallery-caption"><strong>Gold &amp; silver pieces</strong><small>Handled with care</small></span>
-        </button>
-        <button class="gallery-tile reveal" type="button" data-gallery-src="assets/store-gallery/silver-collection.jpg" data-gallery-alt="Silver bowls, coins, and jewelry in a display case">
-          <img src="assets/store-gallery/silver-collection.jpg" alt="Silver bowls, coins, and jewelry in a display case" loading="lazy">
-          <span class="gallery-caption"><strong>Silver collection</strong><small>Ask us about your items</small></span>
-        </button>
-        <button class="gallery-tile gallery-tile-promo reveal" type="button" data-gallery-src="assets/store-gallery/we-buy-sell-square.png" data-gallery-alt="ZPP Gold and Silver we buy and sell poster">
-          <img src="assets/store-gallery/we-buy-sell-square.png" alt="ZPP Gold and Silver we buy and sell poster" loading="lazy">
-          <span class="gallery-caption"><strong>We buy and sell</strong><small>Gold, silver, bars, and coins</small></span>
-        </button>
-      </div>
-      <div class="gallery-controls" aria-label="Gallery controls">
-        <button class="gallery-control" type="button" data-gallery-prev aria-label="Previous photo">←</button>
-        <span class="gallery-counter" aria-live="polite"><strong data-gallery-current>1</strong> / <span data-gallery-total>6</span></span>
-        <button class="gallery-control" type="button" data-gallery-next aria-label="Next photo">→</button>
-        <button class="gallery-play" type="button" data-gallery-toggle aria-pressed="true">Pause slideshow</button>
-      </div>
-    </section>
-
-    <section id="rates" class="rates section-shell">
-      <div class="section-heading"><div><p class="eyebrow">Today’s buying guide</p><h2>Daily buy<br><em>rates.</em></h2></div><p class="rates-intro">Current buying rates by purity, shown in Philippine pesos per gram. The public list is updated from our internal rate editor.</p></div>
-      <div class="rate-grid" aria-live="polite">
-        <article class="rate-card"><span>Gold</span><div class="rate-list" data-rate-table="Gold"><p>Loading…</p></div><small>PHP per gram</small></article>
-        <article class="rate-card rate-card-featured"><span>Silver</span><div class="rate-list" data-rate-table="Silver"><p>Loading…</p></div><small>PHP per gram</small></article>
-        <article class="rate-card"><span>Platinum</span><div class="rate-list" data-rate-table="Platinum"><p>Loading…</p></div><small>PHP per gram</small></article>
-      </div>
-      <p id="rates-status" class="rates-status">Rates are loading from the internal pricing system.</p>
-      <p class="rates-note">Final quotes may vary by purity, weight, item type, and condition. Please message us or visit the store for a confirmed quote.</p>
-    </section>
-
-    <section id="estimate" class="estimate section-shell" aria-labelledby="estimate-title">
-      <div class="estimate-copy">
-        <p class="eyebrow">Quick estimate</p>
-        <h2 id="estimate-title">Know your item’s<br><em>estimated value.</em></h2>
-        <p>Choose the metal, select its karat or purity, and enter the weight. We’ll calculate an estimate using today’s published buying rate.</p>
-        <p class="estimate-disclaimer">Estimate only. Final quotes depend on actual testing, weight, condition, and item type.</p>
-      </div>
-      <form class="estimate-card" id="estimate-form" onsubmit="return false">
-        <label>Metal<select id="estimate-metal"><option value="Gold">Gold</option><option value="Silver">Silver</option><option value="Platinum">Platinum</option></select></label>
-        <label>Karat / purity<select id="estimate-purity"></select></label>
-        <label>Weight in grams<input id="estimate-grams" type="number" min="0" step="0.01" inputmode="decimal" placeholder="e.g. 5"></label>
-        <div class="estimate-result" aria-live="polite"><span>Estimated value</span><strong id="estimate-total">₱0</strong><small id="estimate-breakdown">Enter a weight to calculate.</small></div>
-        <a class="button button-primary estimate-action" href="#start">Get a confirmed quote <span>↗</span></a>
-      </form>
-    </section>
-
-    <section id="xrf" class="xrf section-shell">
-      <div class="section-heading"><div><p class="eyebrow">Plain-language guide</p><h2>How does XRF<br><em>testing work?</em></h2></div></div>
-      <p class="xrf-intro">XRF stands for X-ray fluorescence. It’s a technique that helps identify which elements are in a sample. We’ll help you understand what it measures for your item.</p>
-      <div class="steps" role="tablist" aria-label="XRF steps">
-        <button role="tab" aria-selected="true" aria-controls="step-body" data-step="0"><b>1</b> Bring or send your sample</button>
-        <button role="tab" aria-selected="false" aria-controls="step-body" data-step="1"><b>2</b> XRF analysis</button>
-        <button role="tab" aria-selected="false" aria-controls="step-body" data-step="2"><b>3</b> Understand your results</button>
-      </div>
-      <div id="step-body" class="step-body" role="tabpanel" aria-live="polite"></div>
-      <p class="fine">XRF measures the elements it can detect in the area that is tested. It doesn’t tell us everything about an item, so ask us what it can and can’t show for yours.</p>
-      <button type="button" class="button button-primary" data-open-help data-topic="question">Have questions about XRF? Ask us!</button>
-    </section>
-
-    <section id="start" class="start section-shell">
-      <div class="start-copy"><p class="eyebrow">Say hello</p><h2>Let’s help you<br><em>get started!</em></h2><p>Tell us a little about what you need, and our team can help with the next steps. Only the first three fields are required.</p></div>
-      <form id="inquiry" novalidate>
-        <label>Full name<input name="name" autocomplete="name" required><small class="err" data-for="name"></small></label>
-        <label>How should we reach you?<select name="method" required><option value="">Choose one</option><option>Messenger</option><option>Text message</option><option>Phone call</option><option>Email</option></select><small class="err" data-for="method"></small></label>
-        <label>Contact number or email<input name="contact" autocomplete="off" required placeholder="09XX XXX XXXX or you@email.com"><small class="err" data-for="contact"></small></label>
-        <label>Service interested in<select name="service"><option value="">Not sure yet</option><option>We Buy Gold &amp; Silver</option><option>Get a quote</option><option>XRF testing</option></select></label>
-        <label>Type of item<select name="sample"><option value="">Not sure</option><option>Gold jewelry</option><option>Silver jewelry</option><option>Gold bar or coin</option><option>Other</option></select></label>
-        <label class="wide">Message or question<textarea name="message" rows="3"></textarea></label>
-        <button class="button button-primary wide" type="submit"><span class="lbl">Send my inquiry</span></button>
-        <p id="form-status" class="wide" role="status" aria-live="polite"></p>
-      </form>
-    </section>
-
-    <section id="faq" class="faq section-shell">
-      <div class="section-heading"><h2>Got questions?<br><em>We’ve got answers.</em></h2></div>
-      <details><summary>What is XRF testing?</summary><p>A way to identify which elements are in a sample using X-rays. It’s non-destructive and gives a measured composition for the tested area.</p></details>
-      <details><summary>What types of samples do you accept?</summary><p>We work with gold and silver items. If you have something else, message us first and we’ll tell you if we can help.</p></details>
-      <details><summary>How does the process work?</summary><p>Contact us or visit the store, show us your item, and we’ll walk you through the next steps.</p></details>
-      <details><summary>What information will I receive?</summary><p>We’ll explain what the XRF reading shows for your item and what it can’t tell us. Ask us for details before you visit.</p></details>
-      <details><summary>How do I request your services?</summary><p>Use the form above, message us on Facebook, or visit the store.</p></details>
-      <details><summary>Where are you located, and when are you open?</summary><p>Barcelona St, Zone II, Zamboanga City, near Puericulture Center and JW Gadgets. Open daily, 10:30 AM–6:00 PM.</p></details>
-      <details><summary>How can I contact your team?</summary><p>Message us on Facebook Messenger or use the inquiry form. The “Talk to us” button shows every contact option we’ve set up.</p></details>
-      <p class="still">Still have questions? <button type="button" class="button button-quiet" data-open-help data-topic="question">Ask us directly</button></p>
-    </section>
-
-    <section id="location" class="location section-shell">
-      <div class="location-visual">
-        <div class="map-wrap"><iframe title="Google Maps location of ZPP Gold Trading" src="https://www.google.com/maps?q=6.9070538%2C122.0758178&output=embed" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe></div>
-      </div>
-      <div class="location-copy">
-        <p class="eyebrow">Come see us</p>
-        <h2>We’d be happy<br><em>to welcome you!</em></h2>
-        <div class="address"><span class="pin">●</span><p>Barcelona St, Zone II,<br><strong>Zamboanga City</strong></p></div>
-        <p class="landmark">Landmarks: Puericulture Center / JW Gadgets. Can’t find us? Message us and we’ll help.</p>
-        <a class="text-link" href="https://www.google.com/maps/dir/?api=1&destination=6.9070538%2C122.0758178" target="_blank" rel="noreferrer">Get directions <span>↗</span></a>
-      </div>
-    </section>
-
-    <section id="store-hours" class="visit-banner section-shell">
-      <div><p class="eyebrow">Plan your visit</p><h2>We’re here<br><em>every day.</em></h2></div>
-      <div class="hours"><strong>10:30 AM – 6:00 PM</strong><span>Open daily</span></div>
-      <a class="button button-primary" href="#start">Get a quote <span>↗</span></a>
+      <div id="faq" class="faq" aria-labelledby="faq-title"><h3 id="faq-title">Before you come in</h3><details><summary>Does the estimate guarantee an offer?</summary><p>No. The calculator uses the published rate and the weight you enter. The shop checks your item’s actual purity, net weight, and condition before making an offer.</p></details><details><summary>My grade isn’t listed on the flyer. Can I bring it?</summary><p>The flyer lists 10K, 14K, 18K, 21K, 22K, and 24K. Message the shop to confirm other grades and the requirements for papel de ahensya.</p></details><details><summary>Can I ask about testing before I visit?</summary><p>Yes. Read the <a href="#xrf">XRF explanation</a> and message the shop about your item and testing requirements.</p></details></div>
     </section>
   </main>
 
-  <footer class="site-footer section-shell"><span>© <span id="year">2026</span> ZPP Gold Trading</span><span>Barcelona St, Zone II · Zamboanga City</span><a href="https://www.facebook.com/parengzp" target="_blank" rel="noreferrer">Facebook ↗</a></footer>
-
-  <button id="help-fab" class="help-fab" type="button" aria-expanded="false" aria-controls="help-panel">Need help?</button>
-  <section id="help-panel" class="help-panel" hidden aria-label="How can we help you?">
-    <div class="help-head"><strong>How can we help you?</strong><button type="button" id="help-close" aria-label="Close">×</button></div>
-    <div id="help-body" class="help-body" aria-live="polite"></div>
-  </section>
-
-  <dialog id="gallery-lightbox" class="gallery-lightbox" aria-label="Photo viewer">
-    <button class="lightbox-close" type="button" aria-label="Close photo viewer">×</button>
-    <img id="gallery-lightbox-image" alt="">
-    <p id="gallery-lightbox-caption"></p>
-  </dialog>
-
-  <dialog id="svc-dialog"><h3 id="svc-title"></h3><p id="svc-text"></p><div class="card-actions"><button type="button" class="mini solid" id="svc-req">Request this service</button><button type="button" class="mini" id="svc-close">Close</button></div></dialog>
-  <script src="website.js?v=public-saved-rates-1" defer></script>
+  <footer class="site-footer shell"><div><strong>ZP Gold Trading</strong><span>Barcelona St, Zone II · Zamboanga City</span></div><div><span class="numeric">Daily · 10:30 AM–6:00 PM</span><a href="https://web.facebook.com/profile.php?id=61593068612385" target="_blank" rel="noopener noreferrer">Facebook ↗</a><small>© <span id="year">2026</span> ZP Gold Trading</small></div></footer>
+  <a class="contact-float" href="https://web.facebook.com/profile.php?id=61593068612385" target="_blank" rel="noopener noreferrer">Message on Facebook <span aria-hidden="true">↗</span></a>
+  <dialog id="gallery-lightbox" aria-labelledby="gallery-lightbox-caption"><button class="lightbox-close" type="button" aria-label="Close photo viewer">×</button><img id="gallery-lightbox-image" alt="" width="960" height="1280"><p id="gallery-lightbox-caption"></p></dialog>
+  <script src="website.js?v=zp-local-1" defer></script>
 </body>
 </html>

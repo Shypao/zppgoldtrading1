@@ -9,7 +9,7 @@ export async function createPublicRatesBrowser(fetchImpl) {
     value = '';
     textContent = '';
     attributes = {};
-    constructor(tag = 'div') { this.tag = tag; }
+    constructor(tag = 'div') { this.tag = tag; this.tagName = tag.toUpperCase(); }
     setAttribute(name, value) { this.attributes[name] = value; }
     replaceChildren(...children) {
       this.children = children;
@@ -22,7 +22,7 @@ export async function createPublicRatesBrowser(fetchImpl) {
   const elements = Object.fromEntries(['estimate-metal', 'estimate-purity', 'estimate-grams', 'estimate-total', 'estimate-breakdown', 'estimate-error', 'rates-status', 'rates-age-note']
     .map(id => [`#${id}`, new Element(id === 'estimate-purity' ? 'select' : 'div')]));
   elements['#estimate-metal'].value = 'Gold';
-  for (const metal of ['Gold', 'Silver', 'Platinum']) elements[`[data-rate-table="${metal}"]`] = new Element();
+  for (const metal of ['Gold', 'Silver', 'Platinum']) elements[`[data-rate-table="${metal}"]`] = new Element('tbody');
   const document = Object.assign(new Element(), { body: { dataset: {} }, hidden: false, createElement: tag => new Element(tag) });
   const window = new Element();
   const intervals = [], timeouts = new Set(), requests = [];

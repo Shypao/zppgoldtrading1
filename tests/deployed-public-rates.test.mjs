@@ -144,3 +144,10 @@ test('old public sheets carry a confirmation note, including when the connection
   assert.match(browser.elements['#rates-status'].textContent, /Jan 1, 2020/);
   assert.equal(browser.elements['#rates-age-note'].hidden, false);
 });
+
+test('a sheet dated today in Manila does not show a stale-date warning', async () => {
+  const today = sheet();
+  today.effectiveDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const browser = await createPublicRatesBrowser(() => response(today));
+  assert.equal(browser.elements['#rates-age-note'].hidden, true);
+});
