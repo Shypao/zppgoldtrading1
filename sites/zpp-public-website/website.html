@@ -48,10 +48,21 @@
         <div class="hero-actions"><a class="button primary" href="#rates">View buying rates ↓</a><a class="button secondary" href="#estimate">Estimate my item</a></div>
         <p class="shop-hours">Open daily <span class="numeric">10:30 AM–6:00 PM</span> <a href="#location">Directions ↗</a></p>
       </div>
-      <figure class="hero-photo">
-        <img src="assets/store-gallery/display-case-enhanced-v2.jpg" width="960" height="720" fetchpriority="high" decoding="async" alt="Enhanced view of the shop’s display case, with jewelry, coins, bowls, and a gold-tone cup">
-        <figcaption><span class="photo-label">From our shop</span><strong>Gold, silver &amp; coins.</strong><span>Original shop photo, enhanced for clarity.</span></figcaption>
-      </figure>
+      <aside class="karat-panel is-animating" aria-labelledby="karat-panel-title">
+        <div class="karat-panel-heading"><div><p class="section-index">From our shop</p><h2 id="karat-panel-title">Gold by karat.</h2></div></div>
+        <p class="karat-intro">A quick guide to gold content.</p>
+        <div class="karat-network">
+        <svg class="karat-connections" viewBox="0 0 360 350" aria-hidden="true" focusable="false"><path d="M180 63 L300 157.5 L250 283.5 L110 283.5 L60 157.5 Z"/><path class="karat-crosslink" d="M60 157.5 H300"/></svg>
+        <ul class="karat-rings" aria-label="Nominal gold purity by karat">
+          <li class="karat-ring" data-karat="24" data-purity="100" style="--purity:100;--ring-delay:0ms;--node-x:50%;--node-y:18%;--float-delay:-1s"><svg viewBox="0 0 120 120" aria-hidden="true" focusable="false"><circle class="karat-face" cx="60" cy="60" r="56"/><circle class="karat-track" cx="60" cy="60" r="50"/><circle class="karat-value" cx="60" cy="60" r="50" pathLength="100" stroke-dasharray="100 100" transform="rotate(-90 60 60)"/></svg><div class="karat-label"><strong>24K</strong><span>Pure gold*</span></div></li>
+          <li class="karat-ring" data-karat="22" data-purity="91.7" style="--purity:91.7;--ring-delay:100ms;--node-x:16.6667%;--node-y:45%;--float-delay:-2.4s"><svg viewBox="0 0 120 120" aria-hidden="true" focusable="false"><circle class="karat-face" cx="60" cy="60" r="56"/><circle class="karat-track" cx="60" cy="60" r="50"/><circle class="karat-value" cx="60" cy="60" r="50" pathLength="100" stroke-dasharray="91.7 100" transform="rotate(-90 60 60)"/></svg><div class="karat-label"><strong>22K</strong><span>91.7% gold</span></div></li>
+          <li class="karat-ring" data-karat="21" data-purity="87.5" style="--purity:87.5;--ring-delay:200ms;--node-x:83.3333%;--node-y:45%;--float-delay:-3.6s"><svg viewBox="0 0 120 120" aria-hidden="true" focusable="false"><circle class="karat-face" cx="60" cy="60" r="56"/><circle class="karat-track" cx="60" cy="60" r="50"/><circle class="karat-value" cx="60" cy="60" r="50" pathLength="100" stroke-dasharray="87.5 100" transform="rotate(-90 60 60)"/></svg><div class="karat-label"><strong>21K</strong><span>87.5% gold</span></div></li>
+          <li class="karat-ring" data-karat="18" data-purity="75" style="--purity:75;--ring-delay:300ms;--node-x:30.5556%;--node-y:81%;--float-delay:-.5s"><svg viewBox="0 0 120 120" aria-hidden="true" focusable="false"><circle class="karat-face" cx="60" cy="60" r="56"/><circle class="karat-track" cx="60" cy="60" r="50"/><circle class="karat-value" cx="60" cy="60" r="50" pathLength="100" stroke-dasharray="75 100" transform="rotate(-90 60 60)"/></svg><div class="karat-label"><strong>18K</strong><span>75.0% gold</span></div></li>
+          <li class="karat-ring" data-karat="14" data-purity="58.3" style="--purity:58.3;--ring-delay:400ms;--node-x:69.4444%;--node-y:81%;--float-delay:-1.8s"><svg viewBox="0 0 120 120" aria-hidden="true" focusable="false"><circle class="karat-face" cx="60" cy="60" r="56"/><circle class="karat-track" cx="60" cy="60" r="50"/><circle class="karat-value" cx="60" cy="60" r="50" pathLength="100" stroke-dasharray="58.3 100" transform="rotate(-90 60 60)"/></svg><div class="karat-label"><strong>14K</strong><span>58.3% gold</span></div></li>
+        </ul>
+        </div>
+        <p class="karat-note">*Nominal karat guide, not a test result. Actual purity needs testing. Our flyer also lists 10K.</p>
+      </aside>
     </section>
 
     <section id="rates" class="rates shell" aria-labelledby="rates-title">

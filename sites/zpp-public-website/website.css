@@ -61,7 +61,7 @@ button, .button { min-height: 44px; }
 .site-header nav { display: flex; gap: var(--space-3); }
 .site-header nav a, .header-contact { display: inline-flex; align-items: center; min-height: 44px; font-size: .875rem; text-decoration: none; }
 .header-contact { color: var(--gold); font-weight: 650; gap: .5rem; }
-.hero { display: grid; grid-template-columns: 1.3fr .7fr; gap: var(--space-6); align-items: center; padding-block: var(--space-5); }
+.hero { display: grid; grid-template-columns: 1.1fr .9fr; gap: var(--space-5); align-items: center; padding-block: var(--space-5); }
 .shop-line { margin-bottom: var(--space-3); color: var(--gold); font-size: var(--text-sm); font-weight: 650; }
 .hero h1 { font-family: var(--font-serif); font-size: clamp(2.5rem, 4.7vw, 4rem); font-weight: 400; letter-spacing: -.025em; line-height: 1.08; }
 .hero h1 em { color: var(--gold); font-weight: 400; }
@@ -69,12 +69,31 @@ button, .button { min-height: 44px; }
 .hero-actions { display: flex; gap: .65rem; flex-wrap: wrap; margin-top: var(--space-3); }
 .shop-hours { display: flex; gap: .35rem .7rem; flex-wrap: wrap; margin-top: var(--space-3); font-size: var(--text-sm); }
 .shop-hours a { color: var(--gold); }
-.hero-photo { border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); overflow: hidden; }
-.hero-photo img { width: 100%; height: auto; aspect-ratio: 4 / 3; object-fit: contain; object-position: center; }
-.hero-photo figcaption { padding: .8rem 1rem; font-weight: 650; font-size: .875rem; }
-.hero-photo figcaption span { display: block; color: var(--muted); font-size: .75rem; font-weight: 400; margin-top: .15rem; }
-.hero-photo figcaption strong { display: block; font-size: 1rem; font-weight: 650; }
-.hero-photo figcaption .photo-label { margin: 0 0 .35rem; color: var(--gold); font-size: .6875rem; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
+/* Inline SVG rings: a presentation-only guide, never a source of buying rates. */
+.karat-panel { min-width: 0; padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
+.karat-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.karat-panel-heading .section-index { margin-bottom: .4rem; font-size: .75rem; }
+.karat-panel h2 { font-family: var(--font-sans); font-size: 1.3rem; font-weight: 650; letter-spacing: 0; }
+.karat-intro { margin-top: .6rem; color: var(--muted); font-size: .8125rem; }
+.karat-network { position: relative; width: 100%; max-width: 420px; aspect-ratio: 360 / 350; margin: var(--space-2) auto; isolation: isolate; }
+.karat-connections { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.karat-connections path { fill: none; stroke: var(--gold); stroke-width: 1.2; stroke-dasharray: 3 8; opacity: .5; vector-effect: non-scaling-stroke; animation: karat-flow 4.5s linear infinite; }
+.karat-connections .karat-crosslink { opacity: .25; }
+.karat-rings { position: absolute; inset: 0; padding: 0; margin: 0; list-style: none; }
+.karat-ring { position: absolute; left: var(--node-x); top: var(--node-y); width: 27%; min-width: 0; aspect-ratio: 1; transform: translate(-50%, -50%); font-variant-numeric: lining-nums tabular-nums; animation: karat-float 5.5s ease-in-out var(--float-delay) infinite; }
+.karat-ring svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.karat-face { fill: var(--paper); stroke: #d5c6a4; stroke-width: 1; filter: drop-shadow(0 3px 3px #76571616); }
+.karat-track, .karat-value { fill: none; stroke-width: 10; }
+.karat-track { stroke: #e5dcc5; }
+.karat-value { stroke: #a07b29; stroke-linecap: butt; }
+.karat-panel.is-animating .karat-value { animation: karat-fill 1.4s cubic-bezier(.2,.65,.3,1) var(--ring-delay) both; }
+.karat-label { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .15rem; text-align: center; }
+.karat-label strong { font-size: clamp(1.125rem, 2vw, 1.5rem); font-weight: 600; line-height: 1.15; }
+.karat-label span { font-size: .625rem; color: var(--muted); white-space: nowrap; }
+.karat-note { padding-top: var(--space-2); border-top: 1px solid var(--line); color: var(--muted); font-size: .75rem; line-height: 1.5; }
+@keyframes karat-fill { from { stroke-dasharray: 0 100; } to { stroke-dasharray: var(--purity) 100; } }
+@keyframes karat-float { 0%, 100% { transform: translate(-50%, -50%) translateY(-5px); } 50% { transform: translate(-50%, -50%) translateY(5px); } }
+@keyframes karat-flow { to { stroke-dashoffset: -22; } }
 
 /* Real tables. The estimator appears first on phones, alongside rates on desktop. */
 .rates { padding-top: var(--space-4); padding-bottom: var(--space-6); border-top: 2px solid var(--ink); }
@@ -225,7 +244,9 @@ dialog p { padding: .6rem .5rem; font-size: .875rem; }
   .shop-line { font-size: .75rem; margin-bottom: var(--space-2); }
   .hero h1 { font-size: clamp(2.25rem, 9vw, 3rem); letter-spacing: -.02em; }
   .hero-text { font-size: 1rem; margin-top: var(--space-2); }
-  .hero-photo { display: none; }
+  .karat-panel { margin-top: var(--space-3); padding: var(--space-2); }
+  .karat-network { max-width: 340px; }
+  .karat-label strong { font-size: 1.25rem; }
   .hero-actions { gap: .5rem; margin-top: var(--space-2); }
   .hero-actions .button { padding: .65rem .75rem; font-size: .8125rem; gap: .5rem; }
   .shop-hours { margin-top: var(--space-2); font-size: .75rem; }

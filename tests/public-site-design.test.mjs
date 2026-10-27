@@ -54,7 +54,8 @@ test('all images reserve dimensions and the map and gallery are lazy loaded', as
   }
   assert.match(html, /<iframe[^>]*title="[^"]+"[^>]*loading="lazy"/);
   assert.doesNotMatch(html, /we-buy-sell-square/);
-  assert.doesNotMatch(css, /@import|fonts\.googleapis|@keyframes|infinite/);
+  assert.doesNotMatch(css, /@import|fonts\.googleapis/);
+  assert.deepEqual([...css.matchAll(/@keyframes\s+([\w-]+)/g)].map(match => match[1]), ['karat-fill', 'karat-float', 'karat-flow']);
   assert.ok((await stat(new URL('assets/zp-mark.png', root))).size < 20000);
 });
 
@@ -127,13 +128,33 @@ test('sections 02 and 03 share column alignment, have clear detail labels, and a
   assert.doesNotMatch(numbers, /position:\s*absolute/);
 });
 
-test('enhanced hero photo is a labelled, versioned asset and original shop photos remain available', async () => {
-  const hero = html.match(/<figure class="hero-photo">([\s\S]*?)<\/figure>/)[1];
-  assert.match(hero, /display-case-enhanced-v2\.jpg/);
-  assert.match(hero, /width="960" height="720"/);
-  assert.match(hero, /From our shop/);
-  assert.match(hero, /enhanced for clarity/);
+test('hero photo assets remain available after replacing the picture with a karat guide', async () => {
+  assert.doesNotMatch(html, /class="hero-photo"/);
   assert.ok((await stat(new URL('assets/store-gallery/display-case-enhanced-v2.jpg', root))).size < 300000);
   assert.ok((await stat(new URL('assets/store-gallery/display-case.jpg', root))).size > 0);
   assert.ok((await stat(new URL('assets/store-gallery/storefront-800.jpg', root))).size > 0);
+});
+
+test('animated karat rings match nominal purity and do not replace the saved rates source', () => {
+  const panel = html.match(/<aside class="karat-panel[\s\S]*?<\/aside>/)[0];
+  assert.match(panel, /From our shop/);
+  assert.match(panel, /Nominal karat guide, not a test result/);
+  const rings = [...panel.matchAll(/data-karat="([\d.]+)" data-purity="([\d.]+)"/g)];
+  assert.deepEqual(rings.map(match => Number(match[1])), [24, 22, 21, 18, 14]);
+  for (const ring of rings) assert.equal(Number(ring[2]), Math.round(Number(ring[1]) / 24 * 1000) / 10);
+  assert.equal((panel.match(/aria-hidden="true" focusable="false"/g) || []).length, 6);
+  assert.doesNotMatch(panel, /<img|canvas|iframe/);
+  assert.doesNotMatch(js, /karatReplay|karatMotionToggle|syncKaratMotion/);
+  assert.match(css, /prefers-reduced-motion: reduce/);
+  assert.match(css, /animation: none !important/);
+});
+
+test('floating connected rings animate continuously without buttons and respect system reduced motion', () => {
+  assert.match(html, /class="karat-connections" viewBox="0 0 360 350"/);
+  const panel = html.match(/<aside class="karat-panel[\s\S]*?<\/aside>/)[0];
+  assert.doesNotMatch(panel, /<button|karat-motion-toggle|karat-replay/);
+  assert.match(css, /animation: karat-float[^;]+infinite/);
+  assert.match(css, /animation: karat-flow[^;]+infinite/);
+  assert.match(css, /prefers-reduced-motion: reduce/);
+  assert.doesNotMatch(js, /karatMotion|karatReplay|syncKaratMotion/);
 });
