@@ -133,8 +133,19 @@ test('gallery displays whole portrait and landscape photos instead of cropping t
   assert.match(imageRule, /object-fit:\s*contain/);
   assert.match(imageRule, /object-position:\s*center/);
   assert.doesNotMatch(css, /\.gallery-slide img\s*\{[^}]*object-fit:\s*cover/);
-  assert.match(css, /\.gallery-slide button\s*\{[^}]*height:\s*auto/);
-  assert.match(imageRule, /height:\s*auto/);
+  assert.match(css, /\.gallery-slide button\s*\{[^}]*height:\s*var\(--gallery-photo-height\)/);
+  assert.match(imageRule, /height:\s*100%/);
+});
+
+test('laptop gallery has a compact stable frame and centered in-image navigation', () => {
+  const gallery = css.match(/\.gallery\s*\{([^}]+)\}/)[1];
+  const card = css.match(/\.gallery-card\s*\{([^}]+)\}/)[1];
+  const arrow = css.match(/\.gallery-arrow\s*\{([^}]+)\}/)[1];
+  assert.match(gallery, /max-width:\s*720px/);
+  assert.match(card, /--gallery-photo-height:\s*clamp\(220px, 48vh, 380px\)/);
+  assert.match(arrow, /top:\s*calc\(var\(--gallery-photo-height\) \/ 2\)/);
+  assert.match(arrow, /width:\s*44px/);
+  assert.match(css, /\.gallery-slide figcaption\s*\{[^}]*min-height:\s*3\.5rem/);
 });
 
 test('sections 02 and 03 share column alignment, have clear detail labels, and a full-width divider', () => {
