@@ -11,6 +11,7 @@ async function loadInventoryApi() {
     body: { appendChild(element) { appended.push(element); } },
     createElement() {
       return {
+        dataset: {},
         addEventListener() {},
         querySelector() { return { focus() {} }; },
         remove() {}
@@ -151,6 +152,11 @@ async function loadInventoryApi() {
     openPoolEdit(id) {
       appended.length = 0;
       openInventoryPoolEdit(id);
+      return appended.at(-1)?.innerHTML || '';
+    },
+    openPoolSplit(id) {
+      appended.length = 0;
+      openInventoryPoolSplitModal(id);
       return appended.at(-1)?.innerHTML || '';
     },
     setPoolClassification(id, status) {
@@ -1479,6 +1485,21 @@ test('splitting inventory allows manual costs for both resulting records', async
   assert.equal(split.cost, 5000);
   assert.equal(split.payout, 5000);
   assert.equal(api.splitInventoryWithCosts('manual-cost-source', 1, 6000, 6000).split, null);
+});
+
+test('split pool cost fields auto-fill the opposite cost', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'pool-cost-a', date: '2026-09-17', customerName: 'Seller A', metal: 'Gold', karat: '18K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-COST', netWeight: 10, currentWeight: 10, cost: 50000 }
+  ];
+  state.inventoryPools = [{ id: 'POOL-COST', name: 'Gold pool', metal: 'Gold', karat: '18K', itemIds: ['pool-cost-a'], originalWeight: 10, originalCost: 50000, onHold: false }];
+  api.setState(state);
+
+  const modal = api.openPoolSplit('POOL-COST');
+
+  assert.equal((modal.match(/oninput="updateSplitCostPair\(this\)"/g) || []).length, 2);
+  assert.match(modal, /Edit either cost and the other one will auto-fill/);
 });
 
 test('a same-metal pool with several purities keeps Mixed selected when edited', async () => {
