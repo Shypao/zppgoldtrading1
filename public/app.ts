@@ -2521,7 +2521,8 @@ function inventoryPoolReviewRow(pool){
 function inventoryPoolStatus(pool,snapshot=inventoryPoolSnapshot(pool)){
   if(snapshot.weight<=0) return 'FULLY LIQUIDATED';
   if(pool.onHold) return 'ON HOLD';
-  if(snapshot.weight<Number(pool.originalWeight||snapshot.weight)-0.005) return 'PARTIALLY LIQUIDATED';
+  const effectiveOriginal=Number(pool.originalWeight||snapshot.weight)+Number(pool.weightAdjustment||0);
+  if(snapshot.weight<effectiveOriginal-0.005) return 'PARTIALLY LIQUIDATED';
   return 'ACTIVE';
 }
 function poolInventoryClassification(pool,snapshot=inventoryPoolSnapshot(pool)){
@@ -2638,6 +2639,7 @@ function mergeInventoryPoolRecords(pools,name=''){
     const recorded=Number(pool.originalWeight);
     return sum+(Number.isFinite(recorded)&&recorded>0?recorded:(pool.originalItems||[]).reduce((total,item)=>total+Number(item.originalWeight||0),0)||inventoryPoolSnapshot(pool).weight);
   },0));
+  const weightAdjustment=roundWeight(selected.reduce((sum,pool)=>sum+Number(pool.weightAdjustment||0),0));
   const originalCost=roundMoney(selected.reduce((sum,pool)=>{
     const recorded=Number(pool.originalCost);
     return sum+(Number.isFinite(recorded)&&recorded>=0?recorded:(pool.originalItems||[]).reduce((total,item)=>total+Number(item.originalCost||0),0)||inventoryPoolSnapshot(pool).cost);
@@ -2649,7 +2651,7 @@ function mergeInventoryPoolRecords(pools,name=''){
   ]);
   target.name=String(name||'').trim()||target.name||`${composition.label} pool`;
   target.metal=composition.metal;target.karat=composition.karat;target.itemIds=items.map(item=>item.id);target.originalItems=originalItems;
-  target.originalWeight=originalWeight;target.originalCost=originalCost;target.mergedFromPoolIds=mergedFromPoolIds;target.mergedPoolHistory=mergedPoolHistory;target.onHold=false;target.updatedAt=new Date().toISOString();
+  target.originalWeight=originalWeight;target.weightAdjustment=weightAdjustment;target.originalCost=originalCost;target.mergedFromPoolIds=mergedFromPoolIds;target.mergedPoolHistory=mergedPoolHistory;target.onHold=false;target.updatedAt=new Date().toISOString();
   items.forEach(item=>{item.inventoryPoolId=target.id;if(Number(item.currentWeight||0)>0)item.status='Available';});
   remapMergedPoolReferences(selectedIds,target.id);
   db.inventoryPools=db.inventoryPools.filter(pool=>!selectedIdSet.has(pool.id)||pool.id===target.id);
@@ -3269,7 +3271,7 @@ function openInventoryPoolEdit(id){
     <div class="field"><label>Classification</label><select id="edit_pool_status">${['Available','For Refining','On Hold'].map(status=>`<option ${poolInventoryClassification(pool,snapshot)===status?'selected':''}>${status}</option>`).join('')}</select></div>
     <div class="field"><label for="edit_pool_karat">Karat / purity</label><select id="edit_pool_karat" onchange="togglePoolEditCustomPurity()" ${composition.metal==='Mixed'?'disabled':''}>${composition.metal==='Mixed'?'<option value="Mixed" selected>Mixed metals / purities</option>':`${mixedPurities?'<option value="Mixed" selected>Mixed purities</option>':''}${gradeKeys.filter(key=>(GRADES[composition.metal]||[]).includes(key)||customPurityFromKey(key)===null).map(key=>`<option value="${esc(key)}" ${!customSelected&&key===composition.karat?'selected':''}>${esc(gradeLabel(composition.metal,key))}</option>`).join('')}<option value="__custom__" ${customSelected?'selected':''}>Custom purity (%)</option>`}</select></div>
     ${composition.metal==='Mixed'?'':`<div class="field ${customSelected?'':'is-hidden'}" id="edit_pool_custom_purity_field"><label for="edit_pool_custom_purity">Custom ${esc(composition.metal)} purity (%)</label><div class="custom-purity-input"><input id="edit_pool_custom_purity" type="number" min="0.01" max="100" step="0.01" value="${customSelected?esc(customPurityFromKey(composition.karat)):''}" placeholder="Example: 38.5"><span>%</span></div><span class="form-note">Applies to the current purity of all items in this pool.</span></div>`}
-    <div class="field"><label>Current weight (g)</label><input id="edit_pool_weight" type="number" min="0.01" max="${roundWeight(snapshot.items.reduce((sum,item)=>sum+Number(item.netWeight||0),0))}" step="0.01" value="${snapshot.weight}"></div>
+    <div class="field"><label>Current weight (g)</label><input id="edit_pool_weight" type="number" min="0.01" step="0.01" value="${snapshot.weight}"><span class="hint">May be corrected upward or downward. Original purchase weights and costs stay unchanged.</span></div>
     <div class="field"><label>Remaining cost (PHP)</label><input id="edit_pool_cost" type="number" min="0" step="0.01" value="${snapshot.cost}"></div>
     <div class="field"><label>Payment method</label><input id="edit_pool_payment" value="${esc(sharedPoolItemValue(snapshot.items,'paymentMethod'))}"></div>
     <div class="field"><label>Staff member</label><input id="edit_pool_staff" value="${esc(sharedPoolItemValue(snapshot.items,'staff')||currentUser?.displayName||'')}"></div>
@@ -3328,10 +3330,10 @@ function distributePoolWeight(items,targetWeight){
     positive.forEach((item,index)=>{item.currentWeight=index===positive.length-1?roundWeight(targetWeight-assigned):roundWeight(targetWeight*(Number(item.currentWeight)/currentTotal));assigned=roundWeight(assigned+item.currentWeight);});
     items.filter(item=>!positive.includes(item)).forEach(item=>{item.currentWeight=0;});return;
   }
-  let increase=roundWeight(targetWeight-currentTotal),assigned=0;
-  const available=items.filter(item=>Number(item.netWeight||0)>Number(item.currentWeight||0));
-  const capacity=available.reduce((sum,item)=>sum+Math.max(0,Number(item.netWeight||0)-Number(item.currentWeight||0)),0);
-  available.forEach((item,index)=>{const room=Math.max(0,Number(item.netWeight||0)-Number(item.currentWeight||0));const addition=index===available.length-1?roundWeight(increase-assigned):roundWeight(increase*(room/capacity));item.currentWeight=roundWeight(Number(item.currentWeight||0)+addition);assigned=roundWeight(assigned+addition);});
+  const increase=roundWeight(targetWeight-currentTotal),eligible=items.filter(item=>Number(item.currentWeight||0)>0);
+  const recipients=eligible.length?eligible:items;
+  let assigned=0;
+  recipients.forEach((item,index)=>{const basis=eligible.length?Number(item.currentWeight||0):Number(item.netWeight||0);const totalBasis=recipients.reduce((sum,entry)=>sum+(eligible.length?Number(entry.currentWeight||0):Number(entry.netWeight||0)),0);const addition=index===recipients.length-1?roundWeight(increase-assigned):roundWeight(totalBasis?increase*(basis/totalBasis):increase/recipients.length);item.currentWeight=roundWeight(Number(item.currentWeight||0)+addition);assigned=roundWeight(assigned+addition);});
 }
 function distributePoolCost(items,targetCost){
   const positive=items.filter(item=>Number(item.currentWeight||0)>0),currentCost=positive.reduce((sum,item)=>sum+Number(item.cost||0),0),weight=positive.reduce((sum,item)=>sum+Number(item.currentWeight||0),0);
@@ -3347,9 +3349,8 @@ async function saveInventoryPoolEdit(){
   if(!adminEditGuard())return;
   const pool=db.inventoryPools.find(item=>item.id===editingInventoryPoolId);if(!pool)return;
   const items=inventoryPoolItems(pool),targetWeight=Number(val('edit_pool_weight')),targetCost=Number(val('edit_pool_cost'));
-  const maximumWeight=roundWeight(items.reduce((sum,item)=>sum+Number(item.netWeight||0),0));
   if(!val('edit_pool_date')){toast('Date is required');return;}
-  if(!Number.isFinite(targetWeight)||targetWeight<=0||targetWeight>maximumWeight){toast(`Current weight must be between 0.01 g and ${maximumWeight.toFixed(2)} g`);return;}
+  if(!Number.isFinite(targetWeight)||targetWeight<=0){toast('Enter a valid positive current weight');return;}
   if(!Number.isFinite(targetCost)||targetCost<0){toast('Enter a valid remaining cost');return;}
   const currentComposition=inventoryPoolComposition(items),selectedKarat=val('edit_pool_karat');
   const customPercentage=Number(val('edit_pool_custom_purity'));
@@ -3359,7 +3360,10 @@ async function saveInventoryPoolEdit(){
   const validKarat=karat==='Mixed'?currentComposition.karat==='Mixed':(GRADES[currentComposition.metal]||[]).includes(karat)||customPurityFromKey(karat)!==null||items.some(item=>item.karat===karat);
   if(!karat||!validKarat){toast('Choose a valid karat or custom purity');return;}
   const beforeState=JSON.parse(JSON.stringify(db)),status=val('edit_pool_status'),itemType=val('edit_pool_type');
-  distributePoolWeight(items,roundWeight(targetWeight));applyInventoryPoolCostEdit(pool,targetCost);
+  distributePoolWeight(items,roundWeight(targetWeight));
+  pool.weightAdjustment=Math.max(Number(pool.weightAdjustment||0),roundWeight(Math.max(0,targetWeight-Number(pool.originalWeight||0))));
+  items.forEach(item=>{item.inventoryWeightAdjustment=Math.max(Number(item.inventoryWeightAdjustment||0),roundWeight(Math.max(0,Number(item.currentWeight||0)-Number(item.netWeight||0))));});
+  applyInventoryPoolCostEdit(pool,targetCost);
   items.forEach(item=>{item.date=val('edit_pool_date');item.paymentMethod=val('edit_pool_payment').trim();item.staff=val('edit_pool_staff').trim();if(itemType!=='Mixed')item.itemType=itemType;if(karat&&karat!=='Mixed')item.karat=karat;});
   if(!setInventoryPoolClassification(pool,status)){toast('Choose a valid classification');return;}
   pool.notes=val('edit_pool_remarks').trim();pool.updatedAt=new Date().toISOString();
@@ -3401,12 +3405,14 @@ function splitInventoryPool(pool,splitWeight,customSplitCost,customRemainderCost
     if(portion<=0)return;
     const itemCost=index===positive.length-1?roundMoney(splitCost-assignedCost):roundMoney(sourceCost>0?splitCost*(Number(item.cost||0)/sourceCost):splitCost*(portion/current));
     assignedWeight=roundWeight(assignedWeight+portion);assignedCost=roundMoney(assignedCost+itemCost);
-    item.currentWeight=roundWeight(itemWeight-portion);item.cost=roundMoney(Number(item.cost||0)-itemCost);
-    splitItems.push({...item,id:uid('stk'),netWeight:portion,currentWeight:portion,cost:itemCost,payout:itemCost,inventorySplitFromId:item.id,inventorySplitAt:new Date().toISOString(),inventoryPoolId:newPoolId,remarks:item.remarks?`${item.remarks} · Split pool`:'Split pool'});
+    const sourceAdjustment=Number(item.inventoryWeightAdjustment||0),splitAdjustment=itemWeight>0?roundWeight(sourceAdjustment*(portion/itemWeight)):0;
+    item.currentWeight=roundWeight(itemWeight-portion);item.cost=roundMoney(Number(item.cost||0)-itemCost);item.inventoryWeightAdjustment=roundWeight(Math.max(0,sourceAdjustment-splitAdjustment));
+    splitItems.push({...item,id:uid('stk'),netWeight:portion,currentWeight:portion,inventoryWeightAdjustment:splitAdjustment,cost:itemCost,payout:itemCost,inventorySplitFromId:item.id,inventorySplitAt:new Date().toISOString(),inventoryPoolId:newPoolId,remarks:item.remarks?`${item.remarks} · Split pool`:'Split pool'});
   });
   if(!splitItems.length||assignedWeight!==amount)return null;
   const composition=inventoryPoolComposition(splitItems),poolStatus=poolInventoryClassification(pool,snapshot),createdAt=new Date().toISOString();
-  const newPool={id:newPoolId,name:`${pool.name||composition.label+' pool'} split`,metal:composition.metal,karat:composition.karat,itemIds:splitItems.map(item=>item.id),originalItems:splitItems.map(item=>({itemId:item.id,originalWeight:item.netWeight,originalCost:item.cost,statusAtPooling:item.status})),originalWeight:amount,originalCost:splitCost,remainingWeight:amount,remainingCost:splitCost,onHold:poolStatus==='On Hold',inventoryStatus:poolStatus==='For Refining'?'For Refining':'Available',notes:pool.notes||'',createdAt,createdBy:currentUser?.displayName||''};
+  const splitAdjustment=roundWeight(splitItems.reduce((sum,item)=>sum+Number(item.inventoryWeightAdjustment||0),0));
+  const newPool={id:newPoolId,name:`${pool.name||composition.label+' pool'} split`,metal:composition.metal,karat:composition.karat,itemIds:splitItems.map(item=>item.id),originalItems:splitItems.map(item=>({itemId:item.id,originalWeight:item.netWeight,originalCost:item.cost,statusAtPooling:item.status})),originalWeight:amount,weightAdjustment:splitAdjustment,originalCost:splitCost,remainingWeight:amount,remainingCost:splitCost,onHold:poolStatus==='On Hold',inventoryStatus:poolStatus==='For Refining'?'For Refining':'Available',notes:pool.notes||'',createdAt,createdBy:currentUser?.displayName||''};
   splitItems.forEach(item=>{item.status=poolStatus==='On Hold'?'On Hold':poolStatus==='For Refining'?'For Refining':'Available';});
   db.stock.push(...splitItems);db.inventoryPools.push(newPool);syncInventoryPool(pool);syncInventoryPool(newPool);
   return {pool:newPool,items:splitItems};
@@ -3810,7 +3816,7 @@ async function returnLiquidationBatch(id){
   if(!confirm(`Return every item in “${batch.name}” to Current Inventory?`)) return;
   const beforeState=JSON.parse(JSON.stringify(db));
   const linked=(batch.lines||[]).map(line=>({line,item:db.stock.find(stock=>stock.id===line.itemId)}));
-  if(linked.some(({line,item})=>!item||(line.pooledAllocation?Number(item.currentWeight)+Number(line.weight)>Number(item.netWeight)+0.005:item.status!=='For Liquidation'||item.liquidationBatchId!==batch.id))){toast('One or more batch items changed. Refresh and try again.');return;}
+  if(linked.some(({line,item})=>!item||(line.pooledAllocation?Number(item.currentWeight)+Number(line.weight)>Number(item.netWeight)+Number(item.inventoryWeightAdjustment||0)+0.005:item.status!=='For Liquidation'||item.liquidationBatchId!==batch.id))){toast('One or more batch items changed. Refresh and try again.');return;}
   for(const {line,item} of linked){
     if(line.pooledAllocation) restorePooledLiquidationLine(line);
     else {item.status=line.previousStatus||'Available'; delete item.liquidationBatchId;}
@@ -3874,7 +3880,7 @@ async function submitLiquidationBatch(batchId){
   if(totalSold<=0){toast('Enter the total PHP sold amount for this batch');return;}
   const prepared=(batch.lines||[]).map(line=>({line,item:db.stock.find(stock=>stock.id===line.itemId)}));
   if(!prepared.length||prepared.some(({line,item})=>!item||(line.pooledAllocation
-    ? Number(line.weight)<=0||Number(line.cost)<0||Number(item.currentWeight)+Number(line.weight)>Number(item.netWeight)+0.005
+    ? Number(line.weight)<=0||Number(line.cost)<0||Number(item.currentWeight)+Number(line.weight)>Number(item.netWeight)+Number(item.inventoryWeightAdjustment||0)+0.005
     : item.status!=='For Liquidation'||item.liquidationBatchId!==batch.id||Math.abs(Number(item.currentWeight)-Number(line.weight))>.005||Math.abs(Number(item.cost)-Number(line.cost))>.01))){
     toast('One or more batch items changed. Refresh and try again.');return;
   }
@@ -3953,7 +3959,7 @@ async function deleteLiquidationRecord(){
   if(items.some(entry=>!entry.item)){ toast('Cannot reverse this liquidation because an inventory item is missing'); return; }
   if(items.some(entry=>entry.item.status==='Sold'||db.retailSales.some(sale=>sale.itemId===entry.item.id))){ toast('Delete the later retail sale before reversing this liquidation'); return; }
   if(items.some(entry=>db.refiningBatches.some(batch=>(batch.itemIds||[]).includes(entry.item.id)))){ toast('Delete the later refining batch before reversing this liquidation'); return; }
-  if(items.some(({line,item})=>Number(item.currentWeight)+Number(line.weight||0)>Number(item.netWeight)+0.005)){ toast('Inventory weight has changed and this liquidation cannot be reversed safely'); return; }
+  if(items.some(({line,item})=>Number(item.currentWeight)+Number(line.weight||0)>Number(item.netWeight)+Number(item.inventoryWeightAdjustment||0)+0.005)){ toast('Inventory weight has changed and this liquidation cannot be reversed safely'); return; }
   if(!await confirmDeletion('Delete liquidation?',`Remove this liquidation and restore its released stock to inventory.`,[
     {label:'Buyer',value:record.buyer},{label:'Date',value:fmtDate(record.date)},
     {label:'Weight restored',value:fmtWeight(record.releasedWeight)},{label:'Proceeds removed',value:fmtMoney(record.proceeds)}

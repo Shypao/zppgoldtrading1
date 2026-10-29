@@ -154,11 +154,11 @@ async function loadInventoryApi() {
       openInventoryPoolEdit(id);
       return appended.at(-1)?.innerHTML || '';
     },
-    async savePoolEdit(id, selection, percentage = '', saveSucceeds = true) {
+    async savePoolEdit(id, selection, percentage = '', saveSucceeds = true, weightOverride = null, costOverride = null) {
       const pool = db.inventoryPools.find(record => record.id === id);
       const snapshot = inventoryPoolSnapshot(pool);
       const values = { edit_pool_date: '2026-10-29', edit_pool_status: 'Available', edit_pool_karat: selection,
-        edit_pool_custom_purity: percentage, edit_pool_weight: String(snapshot.weight), edit_pool_cost: String(snapshot.cost),
+        edit_pool_custom_purity: percentage, edit_pool_weight: String(weightOverride ?? snapshot.weight), edit_pool_cost: String(costOverride ?? snapshot.cost),
         edit_pool_payment: 'Cash', edit_pool_staff: 'Admin', edit_pool_type: 'Scrap', edit_pool_remarks: '' };
       const originalGet = document.getElementById, originalSave = saveDB, originalRender = render, originalToast = toast;
       let saves = 0, message = '';
@@ -1562,6 +1562,25 @@ test('pool percentage edits save for each metal without changing weight or purch
     api.setState({ ...state, stock: result.stock, inventoryPools: result.pools });
     assert.match(api.openPoolEdit('POOL-CUSTOM'), /id="edit_pool_custom_purity"[^>]*value="45.5"/);
   }
+});
+
+test('pooled inventory weight can be increased or decreased while cost stays editable', async () => {
+  const api = await loadInventoryApi();
+  const state = customPoolFixture();
+  api.setState(state);
+  const increased = await saveCustomPoolEdit(api, 'POOL-CUSTOM', '38%', '', true, 12, 10000);
+  assert.equal(increased.saves, 1);
+  assert.equal(increased.pools[0].remainingWeight, 12);
+  assert.equal(increased.pools[0].remainingCost, 10000);
+  assert.equal(increased.pools[0].weightAdjustment, 2);
+  assert.equal(increased.stock.reduce((sum, item) => sum + item.currentWeight, 0), 12);
+  assert.equal(increased.stock.reduce((sum, item) => sum + item.cost, 0), 10000);
+
+  api.setState({ ...state, stock: increased.stock, inventoryPools: increased.pools });
+  const decreased = await saveCustomPoolEdit(api, 'POOL-CUSTOM', '38%', '', true, 8, 10000);
+  assert.equal(decreased.pools[0].remainingWeight, 8);
+  assert.equal(decreased.pools[0].remainingCost, 10000);
+  assert.equal(decreased.pools[0].weightAdjustment, 2);
 });
 
 test('invalid pool custom percentages are rejected before saving or changing inventory', async () => {

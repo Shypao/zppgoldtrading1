@@ -676,9 +676,9 @@ export function validateLedgerIntegrity(state: LedgerState): void {
     }
     const remainingWeight=Math.round(items.reduce((sum,item)=>sum+Number(item!.currentWeight||0),0)*100)/100;
     const remainingCost=Math.round(items.reduce((sum,item)=>sum+Number(item!.cost||0),0)*100)/100;
-    const originalWeight=Number(pool.originalWeight||0),originalCost=Number(pool.originalCost||0);
-    if(originalWeight<=0||originalCost<0||remainingWeight>originalWeight+0.005||remainingCost>originalCost+0.01) throw new Error(`Inventory pool ${pool.id} has invalid totals`);
-    const expectedStatus=remainingWeight<=0?'FULLY LIQUIDATED':pool.onHold===true?'ON HOLD':remainingWeight<originalWeight-0.005?'PARTIALLY LIQUIDATED':'ACTIVE';
+    const originalWeight=Number(pool.originalWeight||0),originalCost=Number(pool.originalCost||0),weightAdjustment=Math.max(0,Number(pool.weightAdjustment||0));
+    if(originalWeight<=0||originalCost<0||remainingWeight>originalWeight+weightAdjustment+0.005||remainingCost>originalCost+0.01) throw new Error(`Inventory pool ${pool.id} has invalid totals`);
+    const expectedStatus=remainingWeight<=0?'FULLY LIQUIDATED':pool.onHold===true?'ON HOLD':remainingWeight<originalWeight+weightAdjustment-0.005?'PARTIALLY LIQUIDATED':'ACTIVE';
     if(String(pool.status??'')!==expectedStatus||Math.abs(Number(pool.remainingWeight)-remainingWeight)>.005||Math.abs(Number(pool.remainingCost)-remainingCost)>.01) throw new Error(`Inventory pool ${pool.id} has an invalid status or remaining balance`);
   }
   for(const item of state.stock){
@@ -743,7 +743,8 @@ export function validateLedgerIntegrity(state: LedgerState): void {
   }
   for(const [itemId,soldWeight] of retailAllocatedWeight){
     const item=stockById.get(itemId)!;
-    if(Number(item.currentWeight||0)+soldWeight>Number(item.netWeight||0)+0.005) throw new Error(`Retail allocations for inventory item ${itemId} exceed its original weight`);
+    const effectiveWeight=Number(item.netWeight||0)+Math.max(0,Number(item.inventoryWeightAdjustment||0));
+    if(Number(item.currentWeight||0)+soldWeight>effectiveWeight+0.005) throw new Error(`Retail allocations for inventory item ${itemId} exceed its available weight`);
   }
   const pendingItemIds=new Set<string>();
   for (const batch of state.liquidationBatches) {
@@ -757,7 +758,8 @@ export function validateLedgerIntegrity(state: LedgerState): void {
       if (!item) throw new Error(`Liquidation batch ${batch.id} references a missing inventory item`);
       if (!['Available','For Refining','On Hold'].includes(String(line.previousStatus??''))) throw new Error(`Liquidation batch ${batch.id} has an invalid previous status`);
       if (line.pooledAllocation === true) {
-        if (Number(line.weight)<=0 || Number(line.cost)<0 || Number(item.currentWeight)+Number(line.weight)>Number(item.netWeight)+0.005) {
+        const effectiveWeight=Number(item.netWeight)+Math.max(0,Number(item.inventoryWeightAdjustment||0));
+        if (Number(line.weight)<=0 || Number(line.cost)<0 || Number(item.currentWeight)+Number(line.weight)>effectiveWeight+0.005) {
           throw new Error(`Liquidation batch ${batch.id} has invalid pooled allocation totals`);
         }
       } else {

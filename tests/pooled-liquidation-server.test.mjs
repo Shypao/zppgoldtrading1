@@ -249,3 +249,13 @@ test('server accepts a pool with one remaining member after another item returns
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'ok');
 });
+
+test('server accepts an audited pooled weight increase beyond the purchase weight', () => {
+  const state = emptyState();
+  state.stock.push({ id: 'adjusted', metal: 'Gold', karat: '18K', itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-ADJUSTED', netWeight: 10, currentWeight: 12, inventoryWeightAdjustment: 2, payout: 10000, cost: 10000 });
+  state.inventoryPools.push({ id: 'POOL-ADJUSTED', name: 'Adjusted gold pool', metal: 'Gold', karat: '18K', itemIds: ['adjusted'], originalWeight: 10, weightAdjustment: 2, originalCost: 10000, remainingWeight: 12, remainingCost: 10000, onHold: false, status: 'ACTIVE' });
+
+  const result = validate(state);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'ok');
+});
