@@ -4287,11 +4287,13 @@ function openInventoryPoolEdit(id) {
     const date = dates.at(-1) || String(pool.createdAt || '').slice(0, 10) || todayStr();
     const gradeKeys = composition.metal === 'Mixed' ? [] : Array.from(new Set([...(GRADES[composition.metal] || []), ...snapshot.items.map(item => item.karat).filter(Boolean)]));
     const mixedPurities = composition.metal !== 'Mixed' && composition.karat === 'Mixed';
+    const customSelected = composition.metal !== 'Mixed' && customPurityFromKey(composition.karat) !== null && !(GRADES[composition.metal] || []).includes(composition.karat);
     const itemType = sharedPoolItemValue(snapshot.items, 'itemType') || 'Mixed';
     openAdminEditModal('Edit pooled inventory', `<div class="form-grid">
     <div class="field"><label>Date</label><input id="edit_pool_date" type="date" value="${esc(date)}"></div>
     <div class="field"><label>Classification</label><select id="edit_pool_status">${['Available', 'For Refining', 'On Hold'].map(status => `<option ${poolInventoryClassification(pool, snapshot) === status ? 'selected' : ''}>${status}</option>`).join('')}</select></div>
-    <div class="field"><label>Karat / purity</label><select id="edit_pool_karat" ${composition.metal === 'Mixed' ? 'disabled' : ''}>${composition.metal === 'Mixed' ? '<option value="Mixed" selected>Mixed metals / purities</option>' : `${mixedPurities ? '<option value="Mixed" selected>Mixed purities</option>' : ''}${gradeKeys.map(key => `<option value="${esc(key)}" ${key === composition.karat ? 'selected' : ''}>${esc(gradeLabel(composition.metal, key))}</option>`).join('')}`}</select></div>
+    <div class="field"><label for="edit_pool_karat">Karat / purity</label><select id="edit_pool_karat" onchange="togglePoolEditCustomPurity()" ${composition.metal === 'Mixed' ? 'disabled' : ''}>${composition.metal === 'Mixed' ? '<option value="Mixed" selected>Mixed metals / purities</option>' : `${mixedPurities ? '<option value="Mixed" selected>Mixed purities</option>' : ''}${gradeKeys.filter(key => (GRADES[composition.metal] || []).includes(key) || customPurityFromKey(key) === null).map(key => `<option value="${esc(key)}" ${!customSelected && key === composition.karat ? 'selected' : ''}>${esc(gradeLabel(composition.metal, key))}</option>`).join('')}<option value="__custom__" ${customSelected ? 'selected' : ''}>Custom purity (%)</option>`}</select></div>
+    ${composition.metal === 'Mixed' ? '' : `<div class="field ${customSelected ? '' : 'is-hidden'}" id="edit_pool_custom_purity_field"><label for="edit_pool_custom_purity">Custom ${esc(composition.metal)} purity (%)</label><div class="custom-purity-input"><input id="edit_pool_custom_purity" type="number" min="0.01" max="100" step="0.01" value="${customSelected ? esc(customPurityFromKey(composition.karat)) : ''}" placeholder="Example: 38.5"><span>%</span></div><span class="form-note">Applies to the current purity of all items in this pool.</span></div>`}
     <div class="field"><label>Current weight (g)</label><input id="edit_pool_weight" type="number" min="0.01" max="${roundWeight(snapshot.items.reduce((sum, item) => sum + Number(item.netWeight || 0), 0))}" step="0.01" value="${snapshot.weight}"></div>
     <div class="field"><label>Remaining cost (PHP)</label><input id="edit_pool_cost" type="number" min="0" step="0.01" value="${snapshot.cost}"></div>
     <div class="field"><label>Payment method</label><input id="edit_pool_payment" value="${esc(sharedPoolItemValue(snapshot.items, 'paymentMethod'))}"></div>
@@ -4300,6 +4302,12 @@ function openInventoryPoolEdit(id) {
     <div class="field span-2"><label>Remarks</label><textarea id="edit_pool_remarks">${esc(pool.notes || '')}</textarea></div>
   </div><div class="form-actions" style="justify-content:flex-start;margin-top:10px;"><button type="button" class="btn secondary small" onclick="openInventoryPoolSplitModal('${esc(pool.id)}')">Split pool</button><span class="form-note">Separate part of the pooled balance into a new pool.</span></div><p class="form-note">Changes apply to the pooled balance while every original inventory record remains traceable.</p>
   <section style="margin-top:20px;padding-top:16px;border-top:2px solid var(--line);"><h3>Pool items</h3><p class="form-note">Select records to remove from this pool and return as individual Available inventory. If every record is selected, the empty pool will be deleted.</p><div class="table-wrap"><table><thead><tr><th>Select</th><th>Item</th><th>Customer</th><th class="num-head">Remaining weight</th><th class="num-head">Remaining cost</th></tr></thead><tbody>${snapshot.items.map(item => `<tr><td><input type="checkbox" data-pool-return-item-id="${esc(item.id)}" aria-label="Return ${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))} from pool"></td><td><strong>${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))}</strong><br><span class="form-note">${esc(item.itemType)}</span></td><td>${esc(item.customerName || '—')}</td><td class="num">${fmtWeight(item.currentWeight)}</td><td class="num">${fmtMoney(item.cost)}</td></tr>`).join('')}</tbody></table></div><div class="form-actions"><button class="btn secondary" type="button" onclick="returnSelectedPoolItemsToInventory()">Return selected to Inventory</button></div></section>`, 'saveInventoryPoolEdit');
+}
+function togglePoolEditCustomPurity() {
+    const custom = val('edit_pool_karat') === '__custom__';
+    document.getElementById('edit_pool_custom_purity_field')?.classList.toggle('is-hidden', !custom);
+    if (custom)
+        document.getElementById('edit_pool_custom_purity')?.focus();
 }
 function preserveDissolvedPoolReferences(pool) {
     const poolId = pool.id;
@@ -4423,7 +4431,23 @@ async function saveInventoryPoolEdit() {
         toast('Enter a valid remaining cost');
         return;
     }
-    const beforeState = JSON.parse(JSON.stringify(db)), status = val('edit_pool_status'), karat = val('edit_pool_karat'), itemType = val('edit_pool_type');
+    const currentComposition = inventoryPoolComposition(items), selectedKarat = val('edit_pool_karat');
+    const customPercentage = Number(val('edit_pool_custom_purity'));
+    const karat = selectedKarat === '__custom__' ? customPurityGradeKey(customPercentage) : selectedKarat;
+    if (currentComposition.metal === 'Mixed' && selectedKarat !== 'Mixed') {
+        toast('Edit purity only within a single-metal pool');
+        return;
+    }
+    if (selectedKarat === '__custom__' && (!Number.isFinite(customPercentage) || customPercentage < 0.01 || customPercentage > 100)) {
+        toast('Enter a custom purity between 0.01% and 100%');
+        return;
+    }
+    const validKarat = karat === 'Mixed' ? currentComposition.karat === 'Mixed' : (GRADES[currentComposition.metal] || []).includes(karat) || customPurityFromKey(karat) !== null || items.some(item => item.karat === karat);
+    if (!karat || !validKarat) {
+        toast('Choose a valid karat or custom purity');
+        return;
+    }
+    const beforeState = JSON.parse(JSON.stringify(db)), status = val('edit_pool_status'), itemType = val('edit_pool_type');
     distributePoolWeight(items, roundWeight(targetWeight));
     applyInventoryPoolCostEdit(pool, targetCost);
     items.forEach(item => { item.date = val('edit_pool_date'); item.paymentMethod = val('edit_pool_payment').trim(); item.staff = val('edit_pool_staff').trim(); if (itemType !== 'Mixed')

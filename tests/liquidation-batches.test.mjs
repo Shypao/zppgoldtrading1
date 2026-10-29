@@ -154,6 +154,26 @@ async function loadInventoryApi() {
       openInventoryPoolEdit(id);
       return appended.at(-1)?.innerHTML || '';
     },
+    async savePoolEdit(id, selection, percentage = '', saveSucceeds = true) {
+      const pool = db.inventoryPools.find(record => record.id === id);
+      const snapshot = inventoryPoolSnapshot(pool);
+      const values = { edit_pool_date: '2026-10-29', edit_pool_status: 'Available', edit_pool_karat: selection,
+        edit_pool_custom_purity: percentage, edit_pool_weight: String(snapshot.weight), edit_pool_cost: String(snapshot.cost),
+        edit_pool_payment: 'Cash', edit_pool_staff: 'Admin', edit_pool_type: 'Scrap', edit_pool_remarks: '' };
+      const originalGet = document.getElementById, originalSave = saveDB, originalRender = render, originalToast = toast;
+      let saves = 0, message = '';
+      editingInventoryPoolId = id;
+      document.getElementById = key => key in values ? { value: values[key] } : null;
+      saveDB = async () => { saves++; return saveSucceeds; };
+      render = () => '';
+      toast = value => { message = value; };
+      try {
+        await saveInventoryPoolEdit();
+        return JSON.parse(JSON.stringify({ stock: db.stock, pools: db.inventoryPools, saves, message }));
+      } finally {
+        document.getElementById = originalGet; saveDB = originalSave; render = originalRender; toast = originalToast;
+      }
+    },
     openPoolSplit(id) {
       appended.length = 0;
       openInventoryPoolSplitModal(id);
@@ -1500,6 +1520,85 @@ test('split pool cost fields auto-fill the opposite cost', async () => {
 
   assert.equal((modal.match(/oninput="updateSplitCostPair\(this\)"/g) || []).length, 2);
   assert.match(modal, /Edit either cost and the other one will auto-fill/);
+});
+
+function customPoolFixture(metal = 'Gold', karat = '38%') {
+  const state = stateFixture();
+  state.stock = [
+    { id: 'custom-a', date: '2026-10-28', customerName: 'Seller A', metal, karat, itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-CUSTOM', netWeight: 6, currentWeight: 6, payout: 6000, cost: 6000, rate: 1000 },
+    { id: 'custom-b', date: '2026-10-28', customerName: 'Seller B', metal, karat, itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-CUSTOM', netWeight: 4, currentWeight: 4, payout: 4000, cost: 4000, rate: 1000 }
+  ];
+  state.inventoryPools = [{ id: 'POOL-CUSTOM', name: 'Custom pool', metal, karat, itemIds: ['custom-a', 'custom-b'], originalWeight: 10, originalCost: 10000, onHold: false }];
+  return state;
+}
+
+async function saveCustomPoolEdit(api, ...args) {
+  return JSON.parse(JSON.stringify(await api.savePoolEdit(...args)));
+}
+
+test('pooled custom purity has a prefilled editable percentage input', async () => {
+  const api = await loadInventoryApi();
+  api.setState(customPoolFixture());
+  const modal = api.openPoolEdit('POOL-CUSTOM');
+  assert.match(modal, /<option value="__custom__" selected>Custom purity \(%\)<\/option>/);
+  assert.match(modal, /id="edit_pool_custom_purity"[^>]*value="38"/);
+  assert.match(modal, /onchange="togglePoolEditCustomPurity\(\)"/);
+});
+
+test('pool percentage edits save for each metal without changing weight or purchase prices', async () => {
+  for (const metal of ['Gold', 'Silver', 'Platinum']) {
+    const api = await loadInventoryApi();
+    const state = customPoolFixture(metal);
+    const original = structuredClone(state.stock);
+    api.setState(state);
+    const result = await saveCustomPoolEdit(api, 'POOL-CUSTOM', '__custom__', '45.5');
+    assert.equal(result.saves, 1);
+    assert.equal(result.pools[0].karat, '45.5%');
+    assert.equal(result.pools[0].metal, metal);
+    result.stock.forEach((item, index) => {
+      assert.equal(item.karat, '45.5%');
+      for (const key of ['cost', 'payout', 'rate', 'netWeight', 'currentWeight']) assert.equal(item[key], original[index][key]);
+    });
+    api.setState({ ...state, stock: result.stock, inventoryPools: result.pools });
+    assert.match(api.openPoolEdit('POOL-CUSTOM'), /id="edit_pool_custom_purity"[^>]*value="45.5"/);
+  }
+});
+
+test('invalid pool custom percentages are rejected before saving or changing inventory', async () => {
+  for (const value of ['', '0', '-1', '0.001', '100.01', 'not a number']) {
+    const api = await loadInventoryApi();
+    const state = customPoolFixture();
+    const before = structuredClone(state);
+    api.setState(state);
+    const result = await saveCustomPoolEdit(api, 'POOL-CUSTOM', '__custom__', value);
+    assert.equal(result.saves, 0, value);
+    assert.deepEqual(result.stock, before.stock, value);
+    assert.deepEqual(result.pools, before.inventoryPools, value);
+  }
+});
+
+test('mixed-metal pools do not offer or accept a shared custom purity', async () => {
+  const api = await loadInventoryApi();
+  const state = customPoolFixture();
+  state.stock[1].metal = 'Silver';
+  Object.assign(state.inventoryPools[0], { metal: 'Mixed', karat: 'Mixed' });
+  api.setState(state);
+  const modal = api.openPoolEdit('POOL-CUSTOM');
+  assert.doesNotMatch(modal, /<option value="__custom__"/);
+  const result = await saveCustomPoolEdit(api, 'POOL-CUSTOM', '__custom__', '45');
+  assert.equal(result.saves, 0);
+  assert.deepEqual(result.stock.map(item => item.karat), ['38%', '38%']);
+});
+
+test('a failed pool purity save restores the previous composition', async () => {
+  const api = await loadInventoryApi();
+  const state = customPoolFixture();
+  const before = structuredClone(state);
+  api.setState(state);
+  const result = await saveCustomPoolEdit(api, 'POOL-CUSTOM', '__custom__', '60', false);
+  assert.equal(result.saves, 1);
+  assert.deepEqual(result.stock, before.stock);
+  assert.deepEqual(result.pools, before.inventoryPools);
 });
 
 test('a same-metal pool with several purities keeps Mixed selected when edited', async () => {
