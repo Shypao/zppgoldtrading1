@@ -3658,6 +3658,16 @@ function liquidationBatchDisplayName(batch){
   const name=String(batch?.name||'').trim();
   return /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}(?:,\s*\d{4})?$/.test(name)?'':name;
 }
+function liquidationBatchWeightOptions(batch){
+  const totals=new Map();
+  for(const line of batch.lines||[]){
+    const item=db.stock.find(stock=>stock.id===line.itemId);
+    const metal=item?.metal||batch.metal||'Unknown';
+    totals.set(metal,(totals.get(metal)||0)+Number(line.weight||0));
+  }
+  return ['Gold','Silver','Platinum',...Array.from(totals.keys()).filter(metal=>!['Gold','Silver','Platinum'].includes(metal))]
+    .filter(metal=>totals.has(metal)).map(metal=>`<option>${esc(metal)} · ${fmtWeight(totals.get(metal))}</option>`).join('');
+}
 function renderLiquidation(){
   const batches=db.liquidationBatches.slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
   const allLines=batches.flatMap(batch=>batch.lines||[]);
@@ -3671,7 +3681,7 @@ function renderLiquidation(){
     const minimized=!expandedLiquidationBatches.has(batch.id),batchGradeBadges=liquidationBatchGradeBadges(batch),karatTotals=liquidationBatchKaratTotals(batch),displayName=liquidationBatchDisplayName(batch);
     return `<section class="block liquidation-batch-card ${minimized?'is-minimized':''}">
       <div class="batch-head liquidation-batch-head"><div><div class="liquidation-batch-identity"><label class="liquidation-batch-select"><input type="checkbox" onchange="toggleLiquidationBatchMergeSelection('${esc(batch.id)}',this.checked)" ${liquidationBatchMergeSelection.has(batch.id)?'checked':''}> <span>Select batch</span></label><p class="eyebrow">${esc(batch.id)} · ${esc(batch.metal)}</p>${batchGradeBadges}</div>${displayName?`<h2 class="block-title">${esc(displayName)}</h2>`:''}<p class="liquidation-batch-buyer"><span>Assigned buyer</span><strong>${esc(batch.buyer||'—')}</strong>${batch.createdAt?`<small>· Created ${new Date(batch.createdAt).toLocaleString('en-PH',{dateStyle:'medium',timeStyle:'short'})}</small>`:''}</p>${batch.notes?`<p class="liquidation-batch-comment"><strong>Comment:</strong> ${esc(batch.notes)}</p>`:''}</div><div class="form-actions"><button class="btn secondary small" onclick="toggleLiquidationBatchMinimized('${batch.id}')" aria-expanded="${minimized?'false':'true'}">${minimized?'Expand':'Minimize'}</button><button class="btn secondary small" onclick="openLiquidationBatchEdit('${batch.id}')">Edit batch</button><button class="btn secondary small" onclick="returnLiquidationBatch('${batch.id}')">Return to Inventory</button><button class="btn small" onclick="openCompleteLiquidationBatch('${batch.id}')">Record sale</button></div></div>
-      <div class="liquidation-batch-compact-summary"><span><small>Items</small><strong>${lines.length}</strong></span><span><small>Total weight</small><strong>${fmtWeight(weight)}</strong></span><span><small>Total inventory cost</small><strong>${fmtMoney(cost)}</strong></span></div>
+      <div class="liquidation-batch-compact-summary"><span><small>Items</small><strong>${lines.length}</strong></span><span><small>Total weight</small><select class="liquidation-metal-weights" aria-label="Weight by metal for ${esc(batch.id)}"><option>All metals · ${fmtWeight(weight)}</option>${liquidationBatchWeightOptions(batch)}</select></span><span><small>Total inventory cost</small><strong>${fmtMoney(cost)}</strong></span></div>
       <div class="liquidation-batch-karat-totals"><h3>Totals per karat / purity</h3><div class="table-wrap"><table><thead><tr><th>Metal</th><th>Karat / purity</th><th class="num-head">Items</th><th class="num-head">Total weight</th><th class="num-head">Total cost</th></tr></thead><tbody>${karatTotals.map(entry=>`<tr><td><span class="metal-tag ${String(entry.metal).toLowerCase()}">${esc(entry.metal)}</span></td><td><strong>${esc(entry.grade)}</strong></td><td class="num">${entry.items}</td><td class="num"><strong>${fmtWeight(entry.weight)}</strong></td><td class="num"><strong>${fmtMoney(entry.cost)}</strong></td></tr>`).join('')}</tbody></table></div></div>
       ${minimized?'':`
       <div class="table-wrap liquidation-batch-items"><table><thead><tr><th>Item</th><th>Original seller</th><th>Purchase date</th><th>Status</th><th class="num-head">Weight</th><th class="num-head">Carrying cost</th></tr></thead><tbody>${lines.map(line=>{
