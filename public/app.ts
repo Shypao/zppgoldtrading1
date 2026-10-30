@@ -60,6 +60,10 @@ function formatMoneyEntry(input){
   input.value=Number(whole).toLocaleString('en-PH')+(hasDecimal?'.'+decimals:'');
   input.setSelectionRange?.(input.value.length,input.value.length);
 }
+function liquidationDisplayId(id){
+  const match=String(id||'').match(/^L-?0*(\d+)$/);
+  return match?`L${match[1]}`:String(id||'');
+}
 function nextSequenceId(prefix,records){
   const maximum=records.reduce((max,record)=>{
     const match=String(record.id||'').match(new RegExp(`^${prefix}-(\\d+)$`));
@@ -3867,7 +3871,7 @@ function openLiquidationDetails(id){
   const profitMargin=Number(record.cost)>0?(profit/Number(record.cost))*100:0;
   const modal=document.createElement('div'); modal.id='liquidation_details_modal'; modal.className='modal-backdrop';
   modal.innerHTML=`<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="liquidation_details_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">Liquidation batch details</div><h2 id="liquidation_details_title">${esc(record.id)}</h2></div><button class="modal-close" onclick="closeLiquidationDetails()" aria-label="Close">×</button></div>
+    <div class="summary-modal-head"><div><div class="eyebrow">Liquidation batch details</div><h2 id="liquidation_details_title">${esc(liquidationDisplayId(record.id))}</h2></div><button class="modal-close" onclick="closeLiquidationDetails()" aria-label="Close">×</button></div>
     <div class="move-confirmation-summary" style="margin-top:16px;">
       <div><span>Date</span><strong>${fmtDate(record.date)}${record.recordedAt?`<br><small>${new Date(record.recordedAt).toLocaleString('en-PH',{timeStyle:'short'})}</small>`:''}</strong></div><div><span>Buyer</span><strong>${esc(record.buyer)}</strong></div>
       ${record.poolId?`<div><span>Pool ID</span><strong>${esc(record.poolId)}<br><small>${esc(record.poolName||'')}</small></strong></div>`:''}
@@ -4581,7 +4585,7 @@ function exportStock(){ downloadCSV('zpp_inventory.csv', toCSV(db.stock, [
   {label:'Payout',key:'payout'},{label:'Cost remaining',key:'cost'},{label:'Status',key:'status'},{label:'Staff',key:'staff'}
 ])); }
 function exportLiquidations(){ downloadCSV('zpp_liquidations.csv', toCSV(liquidationHistoryRecords(), [
-  {label:'Liquidation ID',key:'id'},{label:'Date',key:'date'},{label:'Metal',key:'metal'},{label:'Buyer/Refiner',key:'buyer'},{label:'Number of items',get:record=>(record.lines||[]).length||record.itemCount||0},{label:'Released weight',key:'releasedWeight'},
+  {label:'Liquidation ID',get:record=>liquidationDisplayId(record.id)},{label:'Date',key:'date'},{label:'Metal',key:'metal'},{label:'Buyer/Refiner',key:'buyer'},{label:'Number of items',get:record=>(record.lines||[]).length||record.itemCount||0},{label:'Released weight',key:'releasedWeight'},
   {label:'Total sold by item',get:record=>(record.lines||[]).map(line=>`${line.assay||'Item'}: ${Number(line.sellingAmount??line.proceeds)||0}`).join(' | ')},
   {label:'Total sold',key:'proceeds'},{label:'Payment status',key:'paymentStatus'},{label:'Total cost',key:'cost'},{label:'Profit',key:'margin'}
 ])); }
@@ -4663,7 +4667,7 @@ function renderLiquidationHistory(){
       <div class="stat"><div class="label">Total profit</div><div class="value" style="color:${totalProfit>=0?'var(--sage)':'var(--rust)'}">${fmtMoney(totalProfit)}</div></div>
     </div>
     ${tableOrEmpty(liquidations,
-      l=>`<tr data-dashboard-search="${dashboardSearchValue(l.id,l.date,fmtDate(l.date),l.buyer,l.metal,l.paymentStatus)}"><td><button class="link-button" onclick="openLiquidationDetails('${l.id}')">${esc(l.id)}</button></td><td>${fmtDate(l.date)}</td><td>${esc(l.buyer)}</td><td class="num">${(l.lines||[]).length||l.itemCount||0}</td>
+      l=>`<tr data-dashboard-search="${dashboardSearchValue(l.id,liquidationDisplayId(l.id),l.date,fmtDate(l.date),l.buyer,l.metal,l.paymentStatus)}"><td><button class="link-button" style="white-space:nowrap" onclick="openLiquidationDetails('${l.id}')">${esc(liquidationDisplayId(l.id))}</button></td><td>${fmtDate(l.date)}</td><td>${esc(l.buyer)}</td><td class="num">${(l.lines||[]).length||l.itemCount||0}</td>
       <td class="num">${fmtMoney(l.cost)}</td><td class="num">${fmtMoney(l.proceeds)}</td><td class="num" style="color:${l.margin>=0?'var(--sage)':'var(--rust)'}">${fmtMoney(l.margin)}</td><td>${esc(l.paymentStatus||'—')}</td><td><div class="form-actions"><button class="btn secondary small" onclick="openLiquidationDetails('${l.id}')">Details</button>${adminEditButton('Liquidation',l.id)}</div></td></tr>`,
       ['ID','Date','Buyer / refiner','Items','Total cost','Total sold','Profit','Status','Actions'],
       'No liquidations recorded yet.')}
