@@ -3829,6 +3829,14 @@ function prepareInventoryItemAllocation(item, requestedWeight, costBasisOverride
     const cost = hasCostBasisOverride ? roundMoney(full ? requestedCost : Math.min(requestedCost, availableCost)) : automaticCost;
     return { itemId: item.id, previousStatus: item.status, weight: allocatedWeight, cost, automaticCost, originalCost: availableCost, costBasisOverridden: hasCostBasisOverride, pooledAllocation: !full, partialAllocation: !full, remainingWeight: roundWeight(availableWeight - allocatedWeight), remainingCost: full ? 0 : roundMoney(availableCost - cost) };
 }
+function ensureInventoryWeightAdjustment(item) {
+    if (!item)
+        return;
+    const netWeight = Number(item.netWeight), currentWeight = Number(item.currentWeight);
+    if (Number.isFinite(netWeight) && Number.isFinite(currentWeight) && currentWeight > netWeight) {
+        item.inventoryWeightAdjustment = Math.max(Number(item.inventoryWeightAdjustment || 0), roundWeight(currentWeight - netWeight));
+    }
+}
 function inventoryMoveCostBasis(id) {
     const input = document.getElementById(`inventory_move_cost_${id}`);
     if (!input || input.dataset.automatic === 'true' || !String(input.value || '').trim())
@@ -3960,6 +3968,7 @@ async function confirmInventoryMoveToLiquidation() {
         render();
         return;
     }
+    selected.forEach(ensureInventoryWeightAdjustment);
     const pools = (pending.poolIds || []).map(id => db.inventoryPools.find(pool => pool.id === id)).filter(Boolean);
     if (pools.length !== (pending.poolIds || []).length || pools.some(pool => inventoryPoolSnapshot(pool).weight <= 0)) {
         closeInventoryMoveConfirmation();
@@ -3967,6 +3976,7 @@ async function confirmInventoryMoveToLiquidation() {
         render();
         return;
     }
+    pools.flatMap(inventoryPoolItems).forEach(ensureInventoryWeightAdjustment);
     const allocations = pending.mode === 'individual' ? selected.map(item => prepareInventoryItemAllocation(item, val(`inventory_move_weight_${item.id}`), inventoryMoveCostBasis(item.id))) : null;
     if (allocations?.some(allocation => !allocation)) {
         toast(`Enter a valid weight and cost basis from PHP 0 to ${fmtMoney(selected[0]?.cost || 0)}`);
@@ -4757,7 +4767,11 @@ async function saveInventoryEdit() {
         toast('Liquidated, Refined, or Sold inventory must have zero remaining weight');
         return;
     }
+    const originalNetWeight = Number(item.netWeight);
+    const inventoryWeightAdjustment = Number.isFinite(originalNetWeight) && weight > originalNetWeight ? roundWeight(weight - originalNetWeight) : Number(item.inventoryWeightAdjustment || 0);
     Object.assign(item, { date: val('edit_inventory_date'), status, karat, currentWeight: roundWeight(weight), cost: roundMoney(cost), paymentMethod: val('edit_inventory_payment').trim(), staff: val('edit_inventory_staff').trim(), itemType: val('edit_inventory_type'), remarks: val('edit_inventory_remarks').trim() });
+    if (Number.isFinite(inventoryWeightAdjustment) && inventoryWeightAdjustment > 0)
+        item.inventoryWeightAdjustment = Math.max(Number(item.inventoryWeightAdjustment || 0), inventoryWeightAdjustment);
     closeAdminEditModal();
     await saveDB();
     render();
