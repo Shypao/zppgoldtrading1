@@ -3691,7 +3691,7 @@ function openPoolLiquidationModal(id) {
     modal.addEventListener('click', event => { if (event.target === modal)
         closePoolLiquidationModal(); });
     document.body.appendChild(modal);
-    updatePoolLiquidationPreview();
+    changePoolLiquidationDestination(defaultDestination);
 }
 function stagePoolLiquidationBatch(pool, prepared, details) {
     prepared.poolItems = inventoryPoolItems(pool);
@@ -3758,6 +3758,7 @@ async function confirmPoolLiquidation() {
         toast(`Enter a valid weight and a cost basis from PHP 0 to ${fmtMoneyExact(snapshot.cost)}`);
         return;
     }
+    snapshot.items.forEach(ensureInventoryWeightAdjustment);
     if (destination !== 'new') {
         const batch = db.liquidationBatches.find(record => record.id === destination);
         if (!batch) {
@@ -4083,14 +4084,12 @@ function openLiquidationBatchSetup() {
         render();
         return;
     }
-    const openBatches = db.liquidationBatches || [];
     const modal = document.createElement('div');
     modal.id = 'liquidation_batch_setup';
     modal.className = 'modal-backdrop';
     modal.innerHTML = `<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="liquidation_batch_setup_title">
-    <div class="summary-modal-head"><div><div class="eyebrow">Send inventory to Liquidation</div><h2 id="liquidation_batch_setup_title">Choose batch destination</h2></div><button class="modal-close" onclick="closeLiquidationBatchSetup()" aria-label="Close">×</button></div>
-    <p class="move-confirmation-intro">Choose whether to create a new batch or add this inventory to an existing open batch.</p>
-    ${groups.length === 1 && openBatches.length ? `<div class="field"><label for="liquidation_batch_destination">Liquidation destination</label><select id="liquidation_batch_destination"><option value="new" ${pending.destination === 'new' ? 'selected' : ''}>Create new liquidation batch</option>${openBatches.map(batch => `<option value="${esc(batch.id)}" ${pending.destination === batch.id ? 'selected' : ''}>Add to existing open batch · ${esc(batch.id)} · ${esc(batch.name)}</option>`).join('')}</select></div>` : `<input id="liquidation_batch_destination" type="hidden" value="${esc(pending.destination || 'new')}">`}
+    <div class="summary-modal-head"><div><div class="eyebrow">Send inventory to Liquidation</div><h2 id="liquidation_batch_setup_title">New batch details</h2></div><button class="modal-close" onclick="closeLiquidationBatchSetup()" aria-label="Close">×</button></div>
+    <p class="move-confirmation-intro">Enter the name and assigned buyer for the new liquidation batch.</p>
     ${groups.map((group, index) => {
         const allocations = group.allocations || liquidationLinesForItems(group.items);
         const totalWeight = allocations.reduce((sum, line) => sum + Number(line.weight), 0), totalCost = allocations.reduce((sum, line) => sum + Number(line.cost), 0);
@@ -4134,7 +4133,7 @@ async function createLiquidationBatch() {
     const pending = pendingLiquidationBatchSetup;
     if (!pending)
         return;
-    const destination = val('liquidation_batch_destination') || pending.destination || 'new';
+    const destination = pending.destination || 'new';
     if (destination !== 'new') {
         await addPendingInventoryMoveToExistingBatch(pending);
         return;

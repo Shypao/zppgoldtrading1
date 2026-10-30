@@ -1015,7 +1015,8 @@ test('selected pools accept independent partial weights before liquidation movem
   assert.match(reviewHtml, /Select a liquidation destination/);
   assert.match(reviewHtml, /Create new liquidation batch/);
   assert.match(reviewHtml, /Add to existing open batch · LB-0001/);
-  assert.match(html, /Add to existing open batch/);
+  assert.match(html, /New batch details/);
+  assert.doesNotMatch(html, /<select[^>]*id="liquidation_batch_destination"/);
   assert.equal(pending.groups[0].poolMoves[0].prepared.weight, 1);
   assert.equal(pending.groups[0].poolMoves[0].prepared.cost, 5000);
   assert.equal(pending.groups[0].poolMoves[1].prepared.weight, 2);
