@@ -6588,6 +6588,8 @@ function renderReports() {
 }
 /* ============================= INIT ============================= */
 function installLiquidationWeightDismiss() {
+    if (typeof document === 'undefined')
+        return;
     document.addEventListener?.('click', event => {
         document.querySelectorAll?.('.liquidation-weight-breakdown[open]').forEach(details => {
             if (!details.contains(event.target))
