@@ -307,6 +307,28 @@ async function loadInventoryApi() {
       liquidateInventoryItem(id);
       return appended.at(-1)?.innerHTML || '';
     },
+    async submitMoveForm(id, options = {}) {
+      const fields = {
+        pool_liquidation_id: { value: id },
+        pool_liquidation_item_id: { value: options.pool ? '' : id },
+        pool_liquidation_destination: { value: options.destination || 'new' },
+        pool_liquidation_weight: { value: String(options.weight || '') },
+        pool_liquidation_cost: { value: options.cost === undefined ? '' : String(options.cost), dataset: { automatic: options.cost === undefined ? 'true' : 'false' } },
+        pool_liquidation_buyer: { value: 'Buyer' },
+        pool_liquidation_name: { value: 'Single-form batch' },
+        pool_liquidation_notes: { value: '' }
+      };
+      const originalGet = document.getElementById, originalQuery = document.querySelector;
+      const originalSave = saveDB, originalRender = render, originalToast = toast, originalGoTab = goTab;
+      let saves = 0, message = '';
+      document.getElementById = key => fields[key] || null;
+      document.querySelector = () => ({ value: options.type || 'entire' });
+      saveDB = async () => { saves++; return options.save !== false; };
+      render = () => ''; goTab = () => ''; toast = value => { message = value; };
+      try { await confirmPoolLiquidation(); }
+      finally { document.getElementById = originalGet; document.querySelector = originalQuery; saveDB = originalSave; render = originalRender; goTab = originalGoTab; toast = originalToast; }
+      return JSON.parse(JSON.stringify({ stock: db.stock, pools: db.inventoryPools, batches: db.liquidationBatches, saves, message }));
+    },
     preparePartialItem(id, weight, costBasis) {
       const item = db.stock.find(record => record.id === id);
       return JSON.parse(JSON.stringify(prepareInventoryItemAllocation(item, weight, costBasis)));
@@ -568,20 +590,77 @@ test('individual liquidation movement accepts a configurable partial weight', as
   const modal = api.openIndividualMove('stock-on-hand');
   const allocation = api.preparePartialItem('stock-on-hand', 1);
 
-  assert.match(modal, /Enter the exact weight to move/);
-  assert.match(modal, /id="inventory_move_weight_stock-on-hand"/);
-  assert.match(modal, /of 2\.47 g available/);
+  assert.match(modal, /Choose the entire item or a partial weight/);
+  assert.match(modal, /id="pool_liquidation_weight"[^>]*value="2\.47"[^>]*disabled/);
+  assert.match(modal, /value="entire"[^>]*checked> Entire item/);
+  assert.match(modal, /value="partial"[^>]*> Partial/);
   assert.match(modal, /Select a liquidation destination/);
-  assert.match(modal, /id="inventory_move_continue"[^>]*disabled/);
+  assert.doesNotMatch(modal, /inventory_move_continue|Review inventory movement/);
+  assert.match(modal, /id="pool_liquidation_buyer"/);
+  assert.match(modal, /id="pool_liquidation_name"/);
   assert.match(modal, /Create new liquidation batch/);
   assert.match(modal, /Add to existing open batch · LB-0001/);
   assert.match(modal, /Cost basis \(PHP\)/);
   assert.match(modal, /Reset automatic cost/);
-  assert.doesNotMatch(modal, /id="inventory_move_cost_stock-on-hand"[^>]*max=/);
+  assert.doesNotMatch(modal, /id="pool_liquidation_cost"[^>]*max=/);
   assert.equal(allocation.weight, 1);
   assert.equal(allocation.cost, 6210.12);
   assert.equal(allocation.partialAllocation, true);
   assert.equal(allocation.pooledAllocation, true);
+});
+
+test('single-form entire item goes directly to a new batch with an editable cost', async () => {
+  const api = await loadInventoryApi(), state = stateFixture();
+  Object.assign(state.stock[0], { netWeight: 4, currentWeight: 4, cost: 40000 });
+  api.setState(state);
+  const result = await api.submitMoveForm('stock-on-hand', { cost: 44000 });
+  assert.equal(result.saves, 1);
+  const item = result.stock.find(record => record.id === 'stock-on-hand');
+  const batch = result.batches.find(record => record.id === item.liquidationBatchId);
+  assert.equal(item.status, 'For Liquidation');
+  assert.equal(batch.lines[0].weight, 4);
+  assert.equal(batch.lines[0].cost, 44000);
+  assert.equal(batch.poolId, undefined);
+});
+
+test('single-form partial item appends to an existing batch and preserves its balance', async () => {
+  const api = await loadInventoryApi(), state = stateFixture();
+  Object.assign(state.stock[0], { netWeight: 4, currentWeight: 4, cost: 40000 });
+  api.setState(state);
+  const result = await api.submitMoveForm('stock-on-hand', { type: 'partial', weight: 1.5, cost: 18000, destination: 'LB-0001' });
+  const item = result.stock.find(record => record.id === 'stock-on-hand');
+  const line = result.batches.find(record => record.id === 'LB-0001').lines.find(record => record.itemId === item.id);
+  assert.equal(item.currentWeight, 2.5);
+  assert.equal(item.cost, 22000);
+  assert.equal(item.status, 'Available');
+  assert.equal(line.weight, 1.5);
+  assert.equal(line.cost, 18000);
+  assert.equal(result.batches.length, state.liquidationBatches.length);
+});
+
+test('single-form failed save restores the inventory and does not retain a new batch', async () => {
+  const api = await loadInventoryApi(), state = stateFixture();
+  const originalCount = state.liquidationBatches.length;
+  api.setState(state);
+  const result = await api.submitMoveForm('stock-on-hand', { save: false });
+  assert.equal(result.stock.find(record => record.id === 'stock-on-hand').status, 'Available');
+  assert.equal(result.batches.length, originalCount);
+  assert.match(result.message, /not moved/);
+});
+
+test('pool liquidation defaults to entire pool and moves all grams using the same form', async () => {
+  const api = await loadInventoryApi(), state = customPoolFixture('Gold', '24K');
+  state.liquidationBatches = [];
+  api.setState(state);
+  const modal = api.openPoolLiquidation('POOL-CUSTOM');
+  assert.match(modal, /value="entire"[^>]*checked> Entire pool/);
+  assert.match(modal, /id="pool_liquidation_weight"[^>]*value="10"[^>]*disabled/);
+  const result = await api.submitMoveForm('POOL-CUSTOM', { pool: true });
+  assert.equal(result.saves, 1);
+  assert.equal(result.batches.length, 1);
+  assert.equal(result.batches[0].lines.reduce((sum, line) => sum + line.weight, 0), 10);
+  assert.equal(result.pools[0].remainingWeight, 0);
+  assert.equal(api.liquidationItemCount(result.batches[0]), 1);
 });
 
 test('a single inventory liquidation can use an overridden cost basis', async () => {

@@ -860,6 +860,15 @@
   .delete-confirm-actions{justify-content:flex-end;margin-top:18px;}
   .inventory-move-modal{width:min(920px,100%);max-height:90vh;overflow:auto;background:var(--paper);border:1px solid var(--brass-bright);box-shadow:0 24px 70px rgba(0,0,0,.45);padding:24px;}
   @media (max-width:600px){
+    #pool_liquidation_modal{padding:12px;}
+    #pool_liquidation_modal .summary-modal{max-height:calc(100dvh - 24px);min-width:0;overscroll-behavior:contain;}
+    #pool_liquidation_modal .form-grid{grid-template-columns:minmax(0,1fr);padding:14px;}
+    #pool_liquidation_modal .field.span-2{grid-column:1;}
+    #pool_liquidation_modal input,#pool_liquidation_modal select,#pool_liquidation_modal textarea{min-width:0;width:100%;box-sizing:border-box;}
+    #pool_liquidation_modal input[type=radio]{width:auto;}
+    #pool_liquidation_modal .form-actions .btn{flex:1;justify-content:center;}
+  }
+  @media (max-width:600px){
     #liquidation_batch_setup{padding:12px;}
     #liquidation_batch_setup .inventory-move-modal{max-height:calc(100dvh - 24px);min-width:0;overscroll-behavior:contain;}
     #liquidation_batch_setup .form-grid{width:100%;grid-template-columns:minmax(0,1fr);padding:14px;}
