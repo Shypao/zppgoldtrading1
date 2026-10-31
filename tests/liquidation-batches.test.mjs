@@ -31,6 +31,8 @@ async function loadInventoryApi() {
     renderFeaturedBox,
     renderInventory,
     renderLiquidation,
+    liquidationDisplayLines,
+    liquidationItemCount,
     mergeOpenLiquidationBatches(batchIds, name, buyer, notes = '') {
       const result = mergeOpenLiquidationBatches(batchIds, { name, buyer, notes });
       return JSON.parse(JSON.stringify({ result, batches: db.liquidationBatches, stock: db.stock }));
@@ -1536,6 +1538,43 @@ function customPoolFixture(metal = 'Gold', karat = '38%') {
 async function saveCustomPoolEdit(api, ...args) {
   return JSON.parse(JSON.stringify(await api.savePoolEdit(...args)));
 }
+
+test('same-purity pool counts as one liquidation item and preserves source allocations', async () => {
+  const api = await loadInventoryApi();
+  const state = customPoolFixture('Gold', '24K');
+  state.liquidationBatches = [];
+  api.setState(state);
+  const staged = api.stagePool('POOL-CUSTOM', 8, { name: '24K batch', buyer: 'Buyer', notes: '' });
+  const batch = staged.result.batch;
+  const before = structuredClone(batch);
+  const rows = api.liquidationDisplayLines(batch);
+  assert.equal(batch.lines.length, 2);
+  assert.equal(api.liquidationItemCount(batch), 1);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].weight, 8);
+  assert.equal(rows[0].cost, 8000);
+  assert.equal(JSON.stringify(batch), JSON.stringify(before));
+  assert.doesNotMatch(api.renderLiquidation(), /Totals per karat \/ purity/);
+  const html = api.openPoolEdit('POOL-CUSTOM');
+  assert.match(html, /<h3>Pool item<\/h3>/);
+  assert.match(html, /<details><summary>Original records/);
+});
+
+test('liquidation grouping keeps separate pools, purities, and individual inventory distinct', async () => {
+  const api = await loadInventoryApi();
+  api.setState(customPoolFixture('Gold', '24K'));
+  const record = { metal: 'Gold', lines: [
+    { itemId: 'custom-a', sourcePoolId: 'POOL-A', assay: '24K', weight: 2, cost: 2000 },
+    { itemId: 'custom-b', sourcePoolId: 'POOL-A', assay: '24K', weight: 3, cost: 3000 },
+    { itemId: 'custom-b', sourcePoolId: 'POOL-B', assay: '24K', weight: 1, cost: 1000 },
+    { itemId: 'custom-b', sourcePoolId: 'POOL-A', assay: '18K', weight: 1, cost: 1000 },
+    { itemId: 'custom-a', weight: 1, cost: 1000 }
+  ] };
+  assert.equal(api.liquidationItemCount(record), 4);
+  const rows = api.liquidationDisplayLines(record);
+  assert.equal(rows[0].weight, 5);
+  assert.equal(rows.reduce((sum, row) => sum + row.cost, 0), 8000);
+});
 
 test('pooled custom purity has a prefilled editable percentage input', async () => {
   const api = await loadInventoryApi();
