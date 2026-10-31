@@ -30,6 +30,26 @@ async function loadInventoryApi() {
     renderCustomers,
     renderFeaturedBox,
     renderInventory,
+    applyInventorySelection(actions, filter = {}) {
+      const originalRender = render, originalQuery = document.querySelectorAll, originalGet = document.getElementById;
+      let renders = 0;
+      const controls = Object.fromEntries(['inventory_move_selected','inventory_pool_selected','inventory_merge_pools','inventory_clear_selected','inventory_selected_pool_count','inventory_liq_count'].map(id => [id, { disabled: false, textContent: '' }]));
+      const inputs = db.stock.filter(item => !item.inventoryPoolId).map(item => ({ dataset: { inventoryMoveId: item.id }, checked: false }));
+      const pools = db.inventoryPools.map(pool => ({ dataset: { inventoryPoolId: pool.id }, checked: false }));
+      document.querySelectorAll = selector => selector === '[data-inventory-move-id]' ? inputs : selector === '[data-inventory-pool-id]' ? pools : [];
+      document.getElementById = id => controls[id] || null;
+      render = () => { renders++; syncInventoryMoveCheckboxes(); };
+      invFilter = { ...invFilter, ...filter };
+      try {
+        actions.forEach(action => {
+          if (action.kind === 'all') selectAllVisibleInventory();
+          else if (action.kind === 'clear') clearInventorySelection();
+          else if (action.kind === 'pool') toggleInventoryPoolSelection(action.id, action.checked);
+          else toggleInventoryForLiquidation(action.id, action.checked);
+        });
+        return JSON.parse(JSON.stringify({ items: [...inventoryMoveSelection], pools: [...inventoryPoolRowSelection], inputs, poolInputs: pools, controls, renders }));
+      } finally { render = originalRender; document.querySelectorAll = originalQuery; document.getElementById = originalGet; }
+    },
     renderLiquidation,
     async markPaymentPaid(id, saved = true) {
       const originalSave = saveDB, originalRender = render, originalToast = toast;
@@ -1443,6 +1463,38 @@ test('editing a pool can raise its remaining cost for a later liquidation', asyn
   assert.equal(result.items.reduce((sum, item) => sum + item.cost, 0), 11000);
   assert.equal(result.pool.originalCost, 11000);
   assert.equal(result.pool.remainingCost, 11000);
+});
+
+test('Select all and checkbox changes keep multiple visible pools and individual items selected', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = [
+    { id: 'single', date: '2026-09-17', metal: 'Gold', karat: '24K', status: 'Available', currentWeight: 1, cost: 1000 },
+    { id: 'pool-a', date: '2026-09-17', metal: 'Gold', karat: '24K', status: 'Available', inventoryPoolId: 'POOL-A', currentWeight: 2, cost: 2000 },
+    { id: 'pool-b', date: '2026-09-17', metal: 'Silver', karat: '925', status: 'Available', inventoryPoolId: 'POOL-B', currentWeight: 3, cost: 3000 }
+  ];
+  state.inventoryPools = [
+    { id: 'POOL-A', metal: 'Gold', karat: '24K', itemIds: ['pool-a'], originalWeight: 2, originalCost: 2000 },
+    { id: 'POOL-B', metal: 'Silver', karat: '925', itemIds: ['pool-b'], originalWeight: 3, originalCost: 3000 }
+  ];
+  api.setState(state);
+  const all = api.applyInventorySelection([{ kind: 'all' }]);
+  assert.deepEqual(Array.from(all.items), ['single']);
+  assert.deepEqual(Array.from(all.pools), ['POOL-A', 'POOL-B']);
+  assert.ok(all.poolInputs.every(input => input.checked));
+  assert.equal(all.controls.inventory_merge_pools.disabled, false);
+  const toggled = api.applyInventorySelection([{ kind: 'pool', id: 'POOL-A', checked: false }, { kind: 'pool', id: 'POOL-A', checked: true }]);
+  assert.equal(toggled.renders, 0);
+  assert.deepEqual(Array.from(toggled.pools), ['POOL-B', 'POOL-A']);
+  assert.deepEqual(Array.from(toggled.items), ['single']);
+  assert.equal(toggled.controls.inventory_move_selected.disabled, false);
+  api.applyInventorySelection([{ kind: 'clear' }]);
+  const filtered = api.applyInventorySelection([{ kind: 'all' }], { metal: 'Gold', karat: '24K' });
+  assert.deepEqual(Array.from(filtered.pools), ['POOL-A']);
+  assert.deepEqual(Array.from(filtered.items), ['single']);
+  const unchecked = api.applyInventorySelection([{ kind: 'pool', id: 'POOL-A', checked: false }]);
+  assert.equal(unchecked.controls.inventory_merge_pools.disabled, true);
+  assert.deepEqual(Array.from(unchecked.items), ['single']);
 });
 
 test('checked inventory pools can be reviewed and merged into one available pool', async () => {

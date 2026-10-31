@@ -2312,22 +2312,14 @@ function percentageStockCount(percentage,total){ return total?Math.max(1,Math.ce
 function toggleInventoryForLiquidation(id,checked){
   const item=db.stock.find(stock=>stock.id===id); if(!item||!categorizableInventory(item)) return;
   if(checked) inventoryMoveSelection.add(id); else inventoryMoveSelection.delete(id);
-  const selected=selectedInventoryForCategory();
-  const buttons=document.querySelectorAll('.inventory-move-liquidation');
-  const count=document.getElementById('inventory_liq_count');
-  buttons.forEach(button=>button.disabled=!inventoryPercentagePool().length);
-  document.querySelectorAll('[data-inventory-selection-required]').forEach(button=>{button.disabled=!selected.length;});
-  const moveButton=document.getElementById('inventory_move_selected');
-  if(moveButton) moveButton.disabled=!inventoryPoolRowSelection.size&&(!selected.length||selected.some(record=>!movableInventory(record)));
-  const poolButton=document.getElementById('inventory_pool_selected');
-  if(poolButton) poolButton.disabled=!inventoryPoolingSelection().valid;
-  const clearButton=document.getElementById('inventory_clear_selected');
-  if(clearButton) clearButton.disabled=!selected.length&&!inventoryPoolRowSelection.size;
-  if(count) count.textContent=String(selected.length);
+  syncInventoryMoveCheckboxes();
 }
 function syncInventoryMoveCheckboxes(){
   document.querySelectorAll('[data-inventory-move-id]').forEach(input=>{
     input.checked=inventoryMoveSelection.has(input.dataset.inventoryMoveId);
+  });
+  document.querySelectorAll('[data-inventory-pool-id]').forEach(input=>{
+    input.checked=inventoryPoolRowSelection.has(input.dataset.inventoryPoolId);
   });
   const count=document.getElementById('inventory_liq_count');
   const selected=selectedInventoryForCategory();
@@ -2338,6 +2330,10 @@ function syncInventoryMoveCheckboxes(){
   if(poolButton) poolButton.disabled=!inventoryPoolingSelection().valid;
   const clearButton=document.getElementById('inventory_clear_selected');
   if(clearButton) clearButton.disabled=!selected.length&&!inventoryPoolRowSelection.size;
+  const mergeButton=document.getElementById('inventory_merge_pools');
+  if(mergeButton) mergeButton.disabled=!inventoryPoolMergeSelection().valid;
+  const poolCount=document.getElementById('inventory_selected_pool_count');
+  if(poolCount) poolCount.textContent=inventoryPoolRowSelection.size?` · ${inventoryPoolRowSelection.size} pool${inventoryPoolRowSelection.size===1?'':'s'} selected`:'';
   if(count) count.textContent=String(selected.length);
 }
 function syncVisibleInventorySelections(){
@@ -2360,7 +2356,16 @@ function visibleInventoryRecords(){
     (invFilter.status==='All'||item.status===invFilter.status)&&inventorySearchMatch(item));
 }
 function selectAllVisibleInventory(){
-  visibleInventoryRecords().filter(categorizableInventory).forEach(item=>inventoryMoveSelection.add(item.id));
+  const active=db.stock.filter(item=>inventoryDateScope(item)&&activeInventoryRecord(item)&&(inventorySelectedDate==='All'||isPurchaseRecord(item)));
+  inventoryDisplayRows(active).filter(item=>
+    (invFilter.metal==='All'||item.metal===invFilter.metal)&&
+    (invFilter.karat==='All'||item.karat===invFilter.karat)&&
+    (invFilter.type==='All'||item.itemType===invFilter.type)&&
+    (invFilter.status==='All'||item.status===invFilter.status)&&inventorySearchMatch(item)
+  ).forEach(item=>{
+    if(item.isInventoryPool) inventoryPoolRowSelection.add(item.inventoryPoolId);
+    else if(categorizableInventory(item)) inventoryMoveSelection.add(item.id);
+  });
   render();
 }
 function selectAllLowKaratGold(){
@@ -2617,7 +2622,7 @@ function toggleInventoryPoolSelection(id,checked){
   const pool=db.inventoryPools.find(item=>item.id===id);
   if(!pool||inventoryPoolSnapshot(pool).weight<=0) return;
   if(checked) inventoryPoolRowSelection.add(id); else inventoryPoolRowSelection.delete(id);
-  render();
+  syncInventoryMoveCheckboxes();
 }
 function closeInventoryPoolMergeModal(){document.getElementById('inventory_pool_merge_modal')?.remove();}
 function remapMergedPoolReferences(sourcePoolIds,targetPoolId){
@@ -3287,7 +3292,7 @@ function renderInventory(){
 
   <section class="block" id="inventory_stock_list">
     <div class="inventory-stock-head"><div><h2 class="block-title">Stock records</h2><p class="form-note">${inventorySearch?`${rows.length} matching record${rows.length===1?'':'s'}`:activeFilterLabels.length?`Showing: ${activeFilterLabels.map(esc).join(' · ')}`:'Showing all records'} across ${inventoryDateLabel()}.</p></div><div class="inventory-stock-tools"><div class="field inventory-stock-search"><label for="inventory_stock_search">Search stock records</label><input id="inventory_stock_search" type="search" autocomplete="off" value="${esc(inventorySearch)}" placeholder="Customer, date, metal, karat, or status" oninput="updateInventorySearch(this.value)"></div><div class="field inventory-stock-sort"><label for="inventory_stock_sort">Transaction date</label><select id="inventory_stock_sort" onchange="updateInventorySort(this.value)"><option value="newest" ${inventorySort==='newest'?'selected':''}>Newest to oldest</option><option value="oldest" ${inventorySort==='oldest'?'selected':''}>Oldest to newest</option></select></div><button class="btn secondary small" onclick="openInventoryFilterModal()">Change filters</button></div></div>
-    ${isAdmin()?`<div class="inventory-action-panel"><div class="inventory-action-status"><strong>${percentagePool.length} eligible ${inventorySelectedDate==='All'?'across all dates':'on this date'}</strong><span><span id="inventory_liq_count">${selectedMoveCount}</span> inventory item${selectedMoveCount===1?'':'s'} selected${selectedPoolCount?` · ${selectedPoolCount} pool selected`:''}${percentagePool.length?'':' · change the filters'}</span>${selectedGradeCounts.size?`<div class="inventory-selection-chips">${Array.from(selectedGradeCounts.entries()).map(([grade,count])=>`<span>${esc(grade)} · ${count}</span>`).join('')}</div>`:''}</div><div class="inventory-action-buttons"><div class="inventory-selection-actions" role="group" aria-label="Select inventory"><button class="btn secondary small" onclick="selectAllVisibleInventory()">Select all shown</button><button class="btn secondary small" onclick="selectAllLowKaratGold()">Select low-karat Gold</button><button class="btn secondary small" id="inventory_clear_selected" onclick="clearInventorySelection()" ${selectedMoveCount||selectedPoolCount?'':'disabled'}>Clear</button></div><div class="inventory-bulk-category" role="group" aria-label="Change category"><select id="inventory_bulk_status" aria-label="Category for selected inventory" onchange="inventoryBulkStatus=this.value">${['Available','For Refining','On Hold'].map(status=>`<option ${inventoryBulkStatus===status?'selected':''}>${status}</option>`).join('')}</select><button class="btn secondary small" data-inventory-selection-required onclick="categorizeCheckedInventory()" ${selectedMoveCount?'':'disabled'}>Apply category</button></div><div class="inventory-operation-actions" role="group" aria-label="Inventory actions"><button class="btn small" id="inventory_pool_selected" onclick="openManualInventoryPoolModal()" ${canPoolSelected?'':'disabled'}>Pool selected</button><button class="btn secondary small" id="inventory_move_selected" onclick="moveCheckedInventoryToLiquidation()" ${canMoveSelected?'':'disabled'}>Move selected to liquidation</button><button class="btn secondary small" onclick="openCombineLiquidationDateSelection()" ${hasMovableStock?'':'disabled'}>Combine dates</button><button class="btn secondary small" data-inventory-selection-required onclick="prepareInventoryForRefining()" ${selectedMoveCount?'':'disabled'}>Refine selected</button><button class="btn secondary small" id="inventory_merge_pools" onclick="openInventoryPoolMergeModal()" ${canMergeSelectedPools?'':'disabled'}>Merge selected pools</button></div></div></div>`:''}
+    ${isAdmin()?`<div class="inventory-action-panel"><div class="inventory-action-status"><strong>${percentagePool.length} eligible ${inventorySelectedDate==='All'?'across all dates':'on this date'}</strong><span><span id="inventory_liq_count">${selectedMoveCount}</span> inventory item${selectedMoveCount===1?'':'s'} selected<span id="inventory_selected_pool_count">${selectedPoolCount?` · ${selectedPoolCount} pool${selectedPoolCount===1?'':'s'} selected`:''}</span>${percentagePool.length?'':' · change the filters'}</span>${selectedGradeCounts.size?`<div class="inventory-selection-chips">${Array.from(selectedGradeCounts.entries()).map(([grade,count])=>`<span>${esc(grade)} · ${count}</span>`).join('')}</div>`:''}</div><div class="inventory-action-buttons"><div class="inventory-selection-actions" role="group" aria-label="Select inventory"><button class="btn secondary small" onclick="selectAllVisibleInventory()">Select all shown</button><button class="btn secondary small" onclick="selectAllLowKaratGold()">Select low-karat Gold</button><button class="btn secondary small" id="inventory_clear_selected" onclick="clearInventorySelection()" ${selectedMoveCount||selectedPoolCount?'':'disabled'}>Clear</button></div><div class="inventory-bulk-category" role="group" aria-label="Change category"><select id="inventory_bulk_status" aria-label="Category for selected inventory" onchange="inventoryBulkStatus=this.value">${['Available','For Refining','On Hold'].map(status=>`<option ${inventoryBulkStatus===status?'selected':''}>${status}</option>`).join('')}</select><button class="btn secondary small" data-inventory-selection-required onclick="categorizeCheckedInventory()" ${selectedMoveCount?'':'disabled'}>Apply category</button></div><div class="inventory-operation-actions" role="group" aria-label="Inventory actions"><button class="btn small" id="inventory_pool_selected" onclick="openManualInventoryPoolModal()" ${canPoolSelected?'':'disabled'}>Pool selected</button><button class="btn secondary small" id="inventory_move_selected" onclick="moveCheckedInventoryToLiquidation()" ${canMoveSelected?'':'disabled'}>Move selected to liquidation</button><button class="btn secondary small" onclick="openCombineLiquidationDateSelection()" ${hasMovableStock?'':'disabled'}>Combine dates</button><button class="btn secondary small" data-inventory-selection-required onclick="prepareInventoryForRefining()" ${selectedMoveCount?'':'disabled'}>Refine selected</button><button class="btn secondary small" id="inventory_merge_pools" onclick="openInventoryPoolMergeModal()" ${canMergeSelectedPools?'':'disabled'}>Merge selected pools</button></div></div></div>`:''}
     ${tableOrEmpty(rows, s=>`<tr>${isAdmin()?`<td>${s.isInventoryPool?`<input type="checkbox" data-inventory-pool-id="${s.inventoryPoolId}" aria-label="Select pooled inventory to merge or add inventory" onchange="toggleInventoryPoolSelection('${s.inventoryPoolId}',this.checked)" ${inventoryPoolRowSelection.has(s.inventoryPoolId)?'checked':''}>`:`<input type="checkbox" data-inventory-move-id="${s.id}" aria-label="Select ${esc(s.metal)} ${esc(s.karat)} from ${esc(s.customerName)}" onchange="toggleInventoryForLiquidation('${s.id}',this.checked)" ${inventoryMoveSelection.has(s.id)?'checked':''} ${categorizableInventory(s)?'':'disabled'}>`}</td>`:''}<td>${fmtDate(s.date)}</td><td>${s.isInventoryPool?'':esc(s.customerName)}</td><td><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)}</td>
       <td>${esc(s.itemType)}</td><td class="num">${fmtWeight(s.currentWeight)}</td><td class="num">${fmtMoney(s.cost)}</td><td>${statusPill(s.status)}${s.isInventoryPool?`<br><span class="form-note">${esc(s.inventoryPoolId)}</span>`:''}</td><td>${s.isInventoryPool?esc(s.remarks||''):esc(s.remarks||'—')}</td>${isAdmin()?`<td><div class="form-actions">${s.isInventoryPool?`<button class="btn small" onclick="openPoolLiquidationModal('${s.inventoryPoolId}')">Liquidate</button><button class="btn secondary small" onclick="openInventoryPoolEdit('${s.inventoryPoolId}')">Edit</button>`:`${movableInventory(s)?`<button class="btn secondary small" onclick="liquidateInventoryItem('${s.id}')">Liquidate</button>`:''}${adminEditButton('Inventory',s.id)}`}</div></td>`:''}</tr>`,
       [...(isAdmin()?['Select']:[]),'Date','Customer','Metal / karat','Type','Current weight','Cost','Status','Remarks',...(isAdmin()?['Actions']:[])],
