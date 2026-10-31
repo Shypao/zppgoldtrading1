@@ -1024,7 +1024,7 @@ test('a manually created On Hold pool stays On Hold after partial liquidation', 
   assert.equal(result.pool.remainingCost, 200000);
   assert.doesNotMatch(api.renderPools(), /Silver reserve/);
   assert.match(api.renderPools(), /On Hold/);
-  assert.match(api.renderPools(), /Liquidate Pool/);
+  assert.match(api.renderPools(), />Liquidate<\/button>/);
 });
 
 test('manual pools remain independent when one pool is partially liquidated', async () => {
@@ -1202,7 +1202,7 @@ test('inventory displays a pool as one available row with combined weight and co
   assert.match(html, /3000\.00 g/);
   assert.match(html, /PHP 300,000/);
   assert.match(html, />Available</);
-  assert.match(html, /Liquidate Pool/);
+  assert.match(html, />Liquidate<\/button>/);
   assert.match(html, /openInventoryPoolEdit\('POOL-0003'\)[^>]*>Edit</);
   assert.match(html, /toggleInventoryPoolSelection\('POOL-0003',this\.checked\)/);
   assert.doesNotMatch(html, /Put On Hold/);
