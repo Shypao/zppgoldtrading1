@@ -586,6 +586,16 @@
   .liquidation-batch-compact-summary>span:last-child{border-right:0}
   .liquidation-batch-compact-summary strong{font-size:13px;font-variant-numeric:tabular-nums}
   .liquidation-metal-weights{width:100%;min-width:0;max-width:100%;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;padding:6px;background:var(--paper);}
+  .liquidation-weight-breakdown{min-width:0;}
+  .liquidation-weight-cell{display:flex;min-width:0;flex-direction:column;gap:4px;padding:9px 11px;border-right:1px solid var(--line);}
+  @media (max-width:600px){.liquidation-weight-cell{border-right:0;border-bottom:1px solid var(--line);}}
+  .liquidation-weight-breakdown>summary{cursor:pointer;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;}
+  .liquidation-weight-breakdown>summary:focus-visible{outline:2px solid var(--brass-bright);outline-offset:3px;}
+  .liquidation-weight-breakdown .liquidation-metal-weights{margin-top:10px;padding:0;font-weight:400;}
+  .liquidation-weight-metal+.liquidation-weight-metal{margin-top:10px;}
+  .liquidation-weight-metal ul{margin:5px 0 0;padding-left:18px;}
+  .liquidation-weight-metal li{padding:3px 0;overflow-wrap:anywhere;}
+  .item-weight-total{display:flex;justify-content:flex-start;align-items:center;flex-wrap:wrap;gap:8px 18px;text-align:left;padding:12px 0;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums;}
   .liquidation-batch-karat-totals{margin:0 0 14px}
   .liquidation-batch-karat-totals h3{font-family:'Fraunces',serif;font-size:15px;color:var(--brass-deep);margin:0 0 7px}
   .liquidation-batch-karat-totals>.table-wrap{width:100%;max-width:none;margin:0;background:var(--paper)}
