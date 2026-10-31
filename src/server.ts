@@ -162,15 +162,16 @@ async function dbGet<T>(sql: string, args: SqlArgs = []): Promise<T | undefined>
   return localDatabase!.prepare(sql).get(...args) as unknown as T | undefined;
 }
 
-async function dbBatch(statements: SqlStatement[]): Promise<void> {
+async function dbBatch(statements: SqlStatement[]): Promise<number[]> {
   if (tursoClient) {
-    await withTransientDatabaseRetry(() => tursoClient!.batch(statements.map(statement => ({ sql: statement.sql, args: statement.args ?? [] }) as InStatement), 'write'));
-    return;
+    const results=await withTransientDatabaseRetry(() => tursoClient!.batch(statements.map(statement => ({ sql: statement.sql, args: statement.args ?? [] }) as InStatement), 'write'));
+    return results.map(result=>Number(result.rowsAffected));
   }
   localDatabase!.exec('BEGIN IMMEDIATE');
   try {
-    for (const statement of statements) localDatabase!.prepare(statement.sql).run(...(statement.args ?? []));
+    const changed=statements.map(statement=>Number(localDatabase!.prepare(statement.sql).run(...(statement.args??[])).changes));
     localDatabase!.exec('COMMIT');
+    return changed;
   } catch (error) {
     localDatabase!.exec('ROLLBACK');
     throw error;
@@ -193,24 +194,16 @@ async function migrateForSellingInventory(): Promise<void> {
   const updates: SqlStatement[] = [];
   for (const row of rows) {
     const record=JSON.parse(row.data) as LedgerRecord;
-    if (record.status !== 'For Selling') continue;
-    record.status='Available';
+    const migrated=record.status==='For Selling';
+    const cleaned=removeInventoryLocationFields([record]);
+    if(!migrated&&!cleaned)continue;
+    if(migrated)record.status='Available';
     updates.push({sql:'UPDATE inventory SET data = ? WHERE id = ?',args:[JSON.stringify(record),row.id]});
   }
   if (!updates.length) return;
   const revision=Number((await dbGet<{value:string}>("SELECT value FROM settings WHERE key = 'ledger_revision'"))?.value??0)+1;
   updates.push({sql:"UPDATE settings SET value = ? WHERE key = 'ledger_revision'",args:[String(revision)]});
   await dbBatch(updates);
-}
-
-async function purgeStoredInventoryLocations(): Promise<void> {
-  const rows = await dbAll<{ id: string; data: string }>('SELECT id, data FROM inventory');
-  const cleaned=rows.map(row=>({id:row.id,record:JSON.parse(row.data) as LedgerRecord}));
-  if (!removeInventoryLocationFields(cleaned.map(row=>row.record))) return;
-  await dbBatch(cleaned.map(row => ({
-    sql: 'UPDATE inventory SET data = ? WHERE id = ?',
-    args: [JSON.stringify(row.record), row.id]
-  })));
 }
 
 const sessionLifetimeMs = 12 * 60 * 60 * 1000;
@@ -258,11 +251,12 @@ async function initializeDatabase(): Promise<void> {
     localDatabase.exec('PRAGMA journal_mode=WAL');
     localDatabase.exec('PRAGMA foreign_keys=ON');
   }
-  for (const statement of schemaStatements) await dbRun(statement);
-  await dbRun("INSERT INTO settings (key, value) VALUES ('ledger_revision', '0') ON CONFLICT(key) DO NOTHING");
-  await dbRun("INSERT INTO settings (key, value) VALUES ('pricing', ?) ON CONFLICT(key) DO NOTHING", [JSON.stringify(defaultPricingSettings())]);
+  await dbBatch([
+    ...schemaStatements.map(sql=>({sql})),
+    {sql:"INSERT INTO settings (key, value) VALUES ('ledger_revision', '0') ON CONFLICT(key) DO NOTHING"},
+    {sql:"INSERT INTO settings (key, value) VALUES ('pricing', ?) ON CONFLICT(key) DO NOTHING",args:[JSON.stringify(defaultPricingSettings())]}
+  ]);
   await migrateForSellingInventory();
-  await purgeStoredInventoryLocations();
   await ensureDefaultUsers();
 }
 
@@ -422,6 +416,7 @@ async function saveStaffAdditions(candidate: LedgerState, user: AuthUser): Promi
     { sql: "INSERT INTO settings (key, value) VALUES ('pricing', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", args: [JSON.stringify(nextPricing)] },
     { sql: "INSERT INTO settings (key, value) VALUES ('ledger_revision', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", args: [String(Number(current._revision||0)+1)] }
   ]);
+  candidate._revision=Number(current._revision||0)+1;
 }
 
 function buyingDraftKey(user: AuthUser): string {
@@ -429,17 +424,46 @@ function buyingDraftKey(user: AuthUser): string {
 }
 
 async function loadState(): Promise<LedgerState> {
+  return ledgerStateFromRows(await readLedgerRows());
+}
+
+interface LedgerStoredRow { store: string; id: string; data: string }
+async function readLedgerRows(): Promise<LedgerStoredRow[]> {
+  // One SQL statement gives a consistent snapshot with one Turso round trip.
+  const selects=Object.entries(tableMap).map(([key,table])=>`SELECT '${key}' AS store, id, data FROM ${table}`);
+  selects.push("SELECT 'settings' AS store, key AS id, value AS data FROM settings WHERE key IN ('pricing', 'ledger_revision')");
+  return dbAll<LedgerStoredRow>(selects.join(' UNION ALL '));
+}
+
+function ledgerStateFromRows(rows: LedgerStoredRow[]): LedgerState {
   const state = {} as LedgerState;
-  for (const [key, table] of Object.entries(tableMap) as Array<[keyof typeof tableMap, string]>) {
-    state[key] = (await dbAll<{ data: string }>(`SELECT data FROM ${table}`))
-      .map(row => JSON.parse(String((row as { data: string }).data))) as never;
+  for (const key of Object.keys(tableMap) as Array<keyof typeof tableMap>) state[key]=[];
+  state.pricing=null;state._revision=0;
+  for(const row of rows){
+    if(row.store==='settings'){
+      if(row.id==='pricing')state.pricing=JSON.parse(row.data) as PricingSettings;
+      else if(row.id==='ledger_revision')state._revision=Number(row.data);
+    }else if(Object.prototype.hasOwnProperty.call(tableMap,row.store)){
+      (state[row.store as keyof typeof tableMap] as LedgerRecord[]).push(JSON.parse(row.data) as LedgerRecord);
+    }
   }
-  const pricingRow = await dbGet<{ value: string }>("SELECT value FROM settings WHERE key = 'pricing'");
-  state.pricing = pricingRow ? JSON.parse(pricingRow.value) as PricingSettings | null : null;
-  const revisionRow = await dbGet<{ value: string }>("SELECT value FROM settings WHERE key = 'ledger_revision'");
-  state._revision = Number(revisionRow?.value ?? 0);
   removeInventoryLocationFields(state.stock);
   return state;
+}
+
+export function ledgerDeltaStatements(state: LedgerState, rows: LedgerStoredRow[]): SqlStatement[] {
+  const statements:SqlStatement[]=[];
+  for(const [key,table] of Object.entries(tableMap) as Array<[keyof typeof tableMap,string]>){
+    const stored=new Map(rows.filter(row=>row.store===key).map(row=>[row.id,row.data]));
+    for(const record of state[key]){
+      if(!record.id)throw new Error(`${key} contains a record without an id`);
+      const serialized=JSON.stringify(record);
+      if(stored.get(record.id)!==serialized)statements.push({sql:`INSERT INTO ${table} (id, data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET data=excluded.data`,args:[record.id,serialized]});
+      stored.delete(record.id);
+    }
+    for(const id of stored.keys())statements.push({sql:`DELETE FROM ${table} WHERE id = ?`,args:[id]});
+  }
+  return statements;
 }
 
 async function loadCashflowSettings(): Promise<CashflowSettings> {
@@ -788,30 +812,31 @@ export function validateLedgerIntegrity(state: LedgerState): void {
 async function saveState(state: LedgerState): Promise<void> {
   removeInventoryLocationFields(state.stock);
   validateLedgerIntegrity(state);
-  const currentRevision=await currentLedgerRevision();
+  const storedRows=await readLedgerRows();
+  const currentRevision=Number(storedRows.find(row=>row.store==='settings'&&row.id==='ledger_revision')?.data??0);
   if (!Number.isInteger(state._revision) || state._revision !== currentRevision) {
     throw new LedgerRevisionConflict('The ledger changed in another session. Refresh and try again.');
   }
   const nextRevision=currentRevision+1;
-  const currentPricingRow = await dbGet<{ value: string }>("SELECT value FROM settings WHERE key = 'pricing'");
-  if (state.pricing) state.pricing = isolatedPricingUpdate(currentPricingRow ? JSON.parse(currentPricingRow.value) : null, state.pricing, 'internal');
-  const statements: SqlStatement[] = [];
-  for (const [key, table] of Object.entries(tableMap) as Array<[keyof typeof tableMap, string]>) {
-    statements.push({ sql: `DELETE FROM ${table}` });
-    for (const record of state[key] as LedgerRecord[]) {
-      if (!record.id) throw new Error(`${key} contains a record without an id`);
-      statements.push({ sql: `INSERT INTO ${table} (id, data) VALUES (?, ?)`, args: [record.id, JSON.stringify(record)] });
-    }
-  }
+  const currentPricingRow=storedRows.find(row=>row.store==='settings'&&row.id==='pricing');
+  if (state.pricing) state.pricing = isolatedPricingUpdate(currentPricingRow ? JSON.parse(currentPricingRow.data) : null, state.pricing, 'internal');
+  const statements=ledgerDeltaStatements(state,storedRows);
   statements.push({
     sql: "INSERT INTO settings (key, value) VALUES ('pricing', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
     args: [JSON.stringify(state.pricing)]
   });
-  statements.push({
-    sql: "INSERT INTO settings (key, value) VALUES ('ledger_revision', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-    args: [String(nextRevision)]
-  });
-  await dbBatch(statements);
+  // Every mutation checks the revision inside the same write transaction.
+  // A concurrent save cannot apply a stale delta after the snapshot was read.
+  const guarded=statements.map(statement=>({
+    sql:statement.sql.startsWith('DELETE ')
+      ?statement.sql+" AND (SELECT CAST(value AS INTEGER) FROM settings WHERE key='ledger_revision') = ?"
+      :statement.sql.replace('VALUES (?, ?)',"SELECT ?, ? WHERE (SELECT CAST(value AS INTEGER) FROM settings WHERE key='ledger_revision') = ?")
+        .replace("VALUES ('pricing', ?)","SELECT 'pricing', ? WHERE (SELECT CAST(value AS INTEGER) FROM settings WHERE key='ledger_revision') = ?"),
+    args:[...(statement.args??[]),currentRevision]
+  }));
+  guarded.push({sql:"UPDATE settings SET value = ? WHERE key = 'ledger_revision' AND CAST(value AS INTEGER) = ?",args:[String(nextRevision),currentRevision]});
+  const changes=await dbBatch(guarded);
+  if(changes.at(-1)!==1)throw new LedgerRevisionConflict('The ledger changed in another session. Refresh and try again.');
   state._revision=nextRevision;
 }
 
@@ -941,7 +966,8 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
       const user: AuthUser = { id: row.id, username: row.username, displayName: row.display_name, role: row.role };
       const token = signSession(user.id, Date.now() + sessionLifetimeMs);
       const secure = isVercel ? '; Secure' : '';
-      return sendJson(response, 200, { user }, { 'Set-Cookie': `zpp_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${secure}` });
+      const state=url.searchParams.get('includeState')==='1'?await publicStateFor(user):undefined;
+      return sendJson(response, 200, { user, state }, { 'Set-Cookie': `zpp_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${secure}` });
     }
     if (request.method === 'POST' && url.pathname === '/api/logout') {
       const secure = isVercel ? '; Secure' : '';
@@ -949,11 +975,12 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
     }
     if (request.method === 'GET' && url.pathname === '/api/session') {
       const user = await sessionUser(request);
-      return sendJson(response, 200, user ? { authenticated: true, user } : { authenticated: false });
+      const state=user&&url.searchParams.get('includeState')==='1'?await publicStateFor(user):undefined;
+      return sendJson(response, 200, user ? { authenticated: true, user, state } : { authenticated: false });
     }
     if (request.method === 'GET' && url.pathname === '/api/public-pricing') {
-      const state = await loadState();
-      return sendJson(response, 200, publicPricingPayload(state.pricing), { 'Access-Control-Allow-Origin': '*', Vary: 'Origin' });
+      const row=await dbGet<{value:string}>("SELECT value FROM settings WHERE key = 'pricing'");
+      return sendJson(response, 200, publicPricingPayload(row?JSON.parse(row.value):null), { 'Access-Control-Allow-Origin': '*', Vary: 'Origin' });
     }
     const user = await sessionUser(request);
     if (url.pathname.startsWith('/api/') && !user) return sendJson(response, 401, { error: 'Sign in required' });
@@ -1103,7 +1130,7 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
         try { await saveStaffAdditions(body, user!); }
         catch (error) { return sendJson(response, 403, { error: error instanceof Error ? error.message : 'Staff action is not permitted' }); }
       }
-      return sendJson(response, 200, { ok: true, revision: await currentLedgerRevision() });
+      return sendJson(response, 200, { ok: true, revision: body._revision });
     }
     if (request.method === 'GET' && url.pathname === '/api/users') {
       if (user!.role !== 'admin') return sendJson(response, 403, { error: 'Administrator access required' });

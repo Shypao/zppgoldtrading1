@@ -7,6 +7,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import test from 'node:test';
 import vm from 'node:vm';
+import { DatabaseSync } from 'node:sqlite';
 import { createPublicRatesBrowser } from './helpers/public-rates-browser.mjs';
 
 test('internal buying rates ignore published public rates for all metals and custom purity', async () => {
@@ -114,4 +115,45 @@ test('pricing API saves public and internal rates independently, including stale
   await publicBrowser.refresh();
   assert.deepEqual(publicBrowser.table('Gold'), ['24K ₱9,100'], 'explicit public-editor save reaches the actual public renderer');
   assert.equal((await api('/api/state')).pricing.dailyFormula.baseRates.Gold, 8000, 'publishing does not change buying rates');
+
+  const baseline = await api('/api/state');
+  baseline.customers.push(...['keep', 'edit', 'delete'].map(id => ({ id, name: id })));
+  await api('/api/state', baseline);
+  const inspection = new DatabaseSync(path.join(directory, 'data/zpp-gold-trading.db'));
+  t.after(() => inspection.close());
+  inspection.exec(`CREATE TABLE write_audit (operation TEXT, id TEXT);
+    CREATE TRIGGER audit_customer_insert AFTER INSERT ON customers BEGIN INSERT INTO write_audit VALUES ('insert', NEW.id); END;
+    CREATE TRIGGER audit_customer_update AFTER UPDATE ON customers BEGIN INSERT INTO write_audit VALUES ('update', NEW.id); END;
+    CREATE TRIGGER audit_customer_delete AFTER DELETE ON customers BEGIN INSERT INTO write_audit VALUES ('delete', OLD.id); END;`);
+  const changed = await api('/api/state');
+  changed.customers.find(record => record.id === 'edit').name = 'Edited';
+  changed.customers = changed.customers.filter(record => record.id !== 'delete');
+  changed.customers.push({ id: 'new', name: 'New' });
+  await api('/api/state', changed);
+  assert.deepEqual(inspection.prepare('SELECT operation, id FROM write_audit ORDER BY operation').all().map(row => ({ ...row })), [
+    { operation: 'delete', id: 'delete' }, { operation: 'insert', id: 'new' }, { operation: 'update', id: 'edit' }
+  ]);
+  const concurrent = await api('/api/state');
+  const saves = await Promise.all(['first', 'second'].map(id => {
+    const candidate = structuredClone(concurrent);
+    candidate.customers.push({ id, name: id });
+    return fetch(base + '/api/state', { method: 'PUT', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify(candidate) });
+  }));
+  assert.deepEqual(saves.map(response => response.status).sort(), [200, 409]);
+  const final = await api('/api/state');
+  assert.equal(final.customers.filter(record => ['first', 'second'].includes(record.id)).length, 1, 'a stale concurrent save must not partially apply');
+  assert.deepEqual(final.pricing.publicDailyRates, publicCandidate.publicDailyRates);
+  const bundledSession = await api('/api/session?includeState=1');
+  assert.equal(bundledSession.authenticated, true);
+  assert.deepEqual(bundledSession.state, final, 'combined startup returns the same current ledger');
+  const anonymous = await (await fetch(base + '/api/session?includeState=1')).json();
+  assert.equal(anonymous.authenticated, false);
+  assert.equal(anonymous.state, undefined);
+  const staffLogin = await fetch(base + '/api/login?includeState=1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'staff', password: 'StaffIsolation@123' }) });
+  assert.equal(staffLogin.status, 200);
+  const staffResult = await staffLogin.json();
+  assert.equal(staffResult.user.role, 'staff');
+  assert.deepEqual(staffResult.state.liquidationBatches, []);
+  assert.deepEqual(staffResult.state.liquidations, []);
+  assert.deepEqual(staffResult.state.pricingHistory, []);
 });
