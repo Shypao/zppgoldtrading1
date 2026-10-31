@@ -1096,6 +1096,26 @@
   }
   ::selection{background:var(--brass-bright);color:#fff;}
   a{color:var(--brass-deep);}
+  /* Keep stock selection, category editing, and operations in deliberate rows. */
+  #inventory_stock_list .inventory-action-panel{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;padding:16px;}
+  #inventory_stock_list .inventory-action-status{white-space:normal;}
+  #inventory_stock_list .inventory-action-buttons{display:grid;grid-template-columns:minmax(0,1fr);width:100%;gap:14px;justify-content:stretch;}
+  .inventory-selection-actions,.inventory-operation-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;}
+  #inventory_stock_list .inventory-bulk-category{justify-self:start;border:0;padding:0;gap:8px;}
+  #inventory_stock_list .inventory-operation-actions{border-top:1px solid var(--line);padding-top:14px;}
+  #inventory_stock_list .inventory-action-buttons .btn,#inventory_stock_list .inventory-bulk-category select{min-height:40px;margin:0;}
+  @media(min-width:1100px){
+    #inventory_stock_list .inventory-action-panel{grid-template-columns:minmax(200px,1fr) minmax(0,3fr);align-items:start;}
+    #inventory_stock_list .inventory-action-status{padding-top:8px;}
+    #inventory_stock_list .inventory-action-buttons{grid-template-columns:minmax(0,1fr) auto;align-items:start;}
+    #inventory_stock_list .inventory-operation-actions{grid-column:1/-1;}
+  }
+  @media(max-width:600px){
+    #inventory_stock_list .inventory-selection-actions,#inventory_stock_list .inventory-operation-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:stretch;}
+    #inventory_stock_list .inventory-action-buttons .btn{width:100%;white-space:normal;justify-content:center;}
+    #inventory_stock_list .inventory-bulk-category{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);width:100%;}
+    #inventory_stock_list .inventory-bulk-category select{width:100%;min-width:0;}
+  }
 </style>
 <script>
   if (window.location.protocol === 'file:') {
