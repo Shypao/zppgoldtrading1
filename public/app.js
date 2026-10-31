@@ -6587,6 +6587,19 @@ function renderReports() {
   </section>`;
 }
 /* ============================= INIT ============================= */
+function installLiquidationWeightDismiss() {
+    document.addEventListener?.('click', event => {
+        document.querySelectorAll?.('.liquidation-weight-breakdown[open]').forEach(details => {
+            if (!details.contains(event.target))
+                details.open = false;
+        });
+    });
+    document.addEventListener?.('keydown', event => {
+        if (event.key !== 'Escape')
+            return;
+        document.querySelectorAll?.('.liquidation-weight-breakdown[open]').forEach(details => { details.open = false; details.querySelector('summary')?.focus(); });
+    });
+}
 function installButtonDoubleClickGuard() {
     if (typeof document === 'undefined')
         return;
@@ -6613,4 +6626,5 @@ function installButtonDoubleClickGuard() {
     }, true);
 }
 installButtonDoubleClickGuard();
+installLiquidationWeightDismiss();
 initializeAuth();
