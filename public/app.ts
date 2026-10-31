@@ -673,7 +673,7 @@ function liquidationHistoryDateMatch(item){
   return (!liquidationHistoryFrom||item.date>=liquidationHistoryFrom)&&(!liquidationHistoryTo||item.date<=liquidationHistoryTo);
 }
 function liquidationHistoryRecords(){
-  return db.liquidations.filter(liquidationHistoryDateMatch).slice().sort((a,b)=>b.date.localeCompare(a.date));
+  return db.liquidations.filter(liquidationHistoryDateMatch).slice().sort((a,b)=>liquidationDisplayId(a.id).localeCompare(liquidationDisplayId(b.id),'en',{numeric:true}));
 }
 function applyLiquidationHistoryDates(){
   const from=val('liquidation_history_from'),to=val('liquidation_history_to');
