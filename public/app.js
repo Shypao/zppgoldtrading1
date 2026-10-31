@@ -4926,17 +4926,18 @@ function liquidationDisplayLines(record) {
         const item = db.stock.find(stock => stock.id === line.itemId) || {};
         const poolId = line.sourcePoolId || line.originalSourcePoolId || (line.pooledAllocation ? (record.poolId || record.originalPoolId || item.inventoryPoolId) : '');
         if (!poolId) {
-            rows.push({ ...line });
+            rows.push({ ...line, sourceLines: [line] });
             continue;
         }
         const metal = item.metal || record.metal, karat = line.assay || item.karat || '';
         const key = JSON.stringify([poolId, metal, karat]);
         let row = groups.get(key);
         if (!row) {
-            row = { ...line, weight: 0, cost: 0, costPortion: 0, sellingAmount: 0, proceeds: 0, displayPoolId: poolId, displayItem: { ...item, metal, karat, customerName: '', itemType: 'Pooled inventory' } };
+            row = { ...line, weight: 0, cost: 0, costPortion: 0, sellingAmount: 0, proceeds: 0, sourceLines: [], displayPoolId: poolId, displayItem: { ...item, metal, karat, customerName: '', itemType: 'Pooled inventory' } };
             groups.set(key, row);
             rows.push(row);
         }
+        row.sourceLines.push(line);
         row.weight = roundWeight(row.weight + Number(line.weight || 0));
         row.cost = roundMoney(row.cost + Number(line.cost || 0));
         row.costPortion = roundMoney(row.costPortion + Number(line.costPortion || 0));
@@ -4950,10 +4951,10 @@ function liquidationItemCount(record) { return record.lines?.length ? liquidatio
 function liquidationBatchKaratTotals(batch) {
     const totals = new Map();
     liquidationDisplayLines(batch).forEach(line => {
-        const item = db.stock.find(stock => stock.id === line.itemId) || {};
+        const item = line.displayItem || db.stock.find(stock => stock.id === line.itemId) || {};
         const metal = item.metal || batch.metal || 'Unknown';
-        const grade = gradeLabel(metal, item.karat || 'Unknown');
-        const key = `${metal}|${grade}`, entry = totals.get(key) || { metal, grade, key: item.karat || 'Unknown', items: 0, weight: 0, cost: 0 };
+        const gradeKey = line.assay || item.karat || 'Unknown', grade = gradeLabel(metal, gradeKey);
+        const key = `${metal}|${grade}`, entry = totals.get(key) || { metal, grade, key: gradeKey, items: 0, weight: 0, cost: 0 };
         entry.items += 1;
         entry.weight += Number(line.weight || 0);
         entry.cost += Number(line.cost || 0);
@@ -4973,7 +4974,31 @@ function liquidationBatchWeightOptions(batch) {
         totals.set(metal, (totals.get(metal) || 0) + Number(line.weight || 0));
     }
     return ['Gold', 'Silver', 'Platinum', ...Array.from(totals.keys()).filter(metal => !['Gold', 'Silver', 'Platinum'].includes(metal))]
-        .filter(metal => totals.has(metal)).map(metal => `<option>${esc(metal)} · ${fmtWeight(totals.get(metal))}</option>`).join('');
+        .filter(metal => totals.has(metal)).map(metal => `<optgroup label="${esc(metal)}"><option>${esc(metal)} total · ${fmtWeight(totals.get(metal))}</option>${liquidationBatchKaratTotals(batch).filter(entry => entry.metal === metal).map(entry => `<option>${esc(entry.grade)} · ${fmtWeight(entry.weight)}</option>`).join('')}</optgroup>`).join('');
+}
+function closeLiquidationItemBreakdown() { document.getElementById('liquidation_item_breakdown')?.remove(); }
+function openLiquidationItemBreakdown(batchId, metal = '', grade = '') {
+    const batch = db.liquidationBatches.find(record => record.id === batchId);
+    if (!batch)
+        return;
+    const rows = liquidationDisplayLines(batch).filter(line => {
+        const item = line.displayItem || db.stock.find(stock => stock.id === line.itemId) || {};
+        return (!metal || (item.metal || batch.metal) === metal) && (!grade || (line.assay || item.karat) === grade);
+    });
+    const weight = rows.reduce((sum, line) => sum + Number(line.weight || 0), 0), cost = rows.reduce((sum, line) => sum + Number(line.cost || 0), 0);
+    closeLiquidationItemBreakdown();
+    const modal = document.createElement('div');
+    modal.id = 'liquidation_item_breakdown';
+    modal.className = 'modal-backdrop';
+    modal.innerHTML = `<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="liquidation_item_breakdown_title"><div class="summary-modal-head"><div><div class="eyebrow">${esc(batch.id)} · ${esc(batch.buyer)}</div><h2 id="liquidation_item_breakdown_title">${metal ? esc(metal) + ' ' + esc(gradeLabel(metal, grade)) + ' · ' : ''}Item weight breakdown</h2></div><button class="modal-close" onclick="closeLiquidationItemBreakdown()" aria-label="Close">×</button></div><div class="move-confirmation-summary"><div><span>Items</span><strong>${rows.length}</strong></div><div><span>Total weight</span><strong>${fmtWeight(weight)}</strong></div><div><span>Inventory cost</span><strong>${fmtMoney(cost)}</strong></div></div>
+  ${rows.map(line => {
+        const item = line.displayItem || db.stock.find(stock => stock.id === line.itemId) || {};
+        return `<section><h3>${esc(item.metal || batch.metal)} ${esc(gradeLabel(item.metal || batch.metal, line.assay || item.karat || ''))} · ${esc(line.displayPoolId || line.itemId)}</h3>${line.displayPoolId ? '<p class="form-note">One pooled item. The source weights below add up to its liquidation weight.</p>' : ''}<div class="table-wrap"><table><thead><tr><th>Source record</th><th>Customer</th><th>Purchase date</th><th class="num-head">Weight in batch</th><th class="num-head">Cost in batch</th></tr></thead><tbody>${line.sourceLines.map(source => { const original = db.stock.find(stock => stock.id === source.itemId) || {}; return `<tr><td>${esc(source.itemId)}</td><td>${esc(original.customerName || '—')}</td><td>${fmtDate(original.date)}</td><td class="num">${fmtWeight(source.weight)}</td><td class="num">${fmtMoney(source.cost)}</td></tr>`; }).join('')}</tbody><tfoot><tr><th colspan="3">Item total</th><th class="num">${fmtWeight(line.weight)}</th><th class="num">${fmtMoney(line.cost)}</th></tr></tfoot></table></div></section>`;
+    }).join('')}<div class="form-actions"><button class="btn secondary" onclick="closeLiquidationItemBreakdown()">Close</button></div></div>`;
+    modal.addEventListener('click', event => { if (event.target === modal)
+        closeLiquidationItemBreakdown(); });
+    document.body.appendChild(modal);
+    modal.querySelector('.modal-close')?.focus();
 }
 function renderLiquidation() {
     const batches = db.liquidationBatches.slice().sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
@@ -4988,8 +5013,8 @@ function renderLiquidation() {
         const minimized = !expandedLiquidationBatches.has(batch.id), batchGradeBadges = liquidationBatchGradeBadges(batch), karatTotals = liquidationBatchKaratTotals(batch), displayName = liquidationBatchDisplayName(batch);
         return `<section class="block liquidation-batch-card ${minimized ? 'is-minimized' : ''}">
       <div class="batch-head liquidation-batch-head"><div><div class="liquidation-batch-identity"><label class="liquidation-batch-select"><input type="checkbox" onchange="toggleLiquidationBatchMergeSelection('${esc(batch.id)}',this.checked)" ${liquidationBatchMergeSelection.has(batch.id) ? 'checked' : ''}> <span>Select batch</span></label><p class="eyebrow">${esc(batch.id)} · ${esc(batch.metal)}</p>${batchGradeBadges}</div>${displayName ? `<h2 class="block-title">${esc(displayName)}</h2>` : ''}<p class="liquidation-batch-buyer"><span>Assigned buyer</span><strong>${esc(batch.buyer || '—')}</strong>${batch.createdAt ? `<small>· Created ${new Date(batch.createdAt).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}</small>` : ''}</p>${batch.notes ? `<p class="liquidation-batch-comment"><strong>Comment:</strong> ${esc(batch.notes)}</p>` : ''}</div><div class="form-actions"><button class="btn secondary small" onclick="toggleLiquidationBatchMinimized('${batch.id}')" aria-expanded="${minimized ? 'false' : 'true'}">${minimized ? 'Expand' : 'Minimize'}</button><button class="btn secondary small" onclick="openLiquidationBatchEdit('${batch.id}')">Edit batch</button><button class="btn secondary small" onclick="returnLiquidationBatch('${batch.id}')">Return to Inventory</button><button class="btn small" onclick="openCompleteLiquidationBatch('${batch.id}')">Record sale</button></div></div>
-      <div class="liquidation-batch-compact-summary"><span><small>Items</small><strong>${lines.length}</strong></span><span><small>Total weight</small><select class="liquidation-metal-weights" aria-label="Weight by metal for ${esc(batch.id)}"><option>All metals · ${fmtWeight(weight)}</option>${liquidationBatchWeightOptions(batch)}</select></span><span><small>Total inventory cost</small><strong>${fmtMoney(cost)}</strong></span></div>
-      ${lines.length === 1 && lines[0].displayPoolId ? '' : `<div class="liquidation-batch-karat-totals"><h3>Totals per karat / purity</h3><div class="table-wrap"><table><thead><tr><th>Metal</th><th>Karat / purity</th><th class="num-head">Items</th><th class="num-head">Total weight</th><th class="num-head">Total cost</th></tr></thead><tbody>${karatTotals.map(entry => `<tr><td><span class="metal-tag ${String(entry.metal).toLowerCase()}">${esc(entry.metal)}</span></td><td><strong>${esc(entry.grade)}</strong></td><td class="num">${entry.items}</td><td class="num"><strong>${fmtWeight(entry.weight)}</strong></td><td class="num"><strong>${fmtMoney(entry.cost)}</strong></td></tr>`).join('')}</tbody></table></div></div>`}
+      <div class="liquidation-batch-compact-summary"><span><small>Items</small><strong><button type="button" class="link-button" onclick="openLiquidationItemBreakdown('${esc(batch.id)}')" aria-label="Verify weights of ${lines.length} items in ${esc(batch.id)}">${lines.length}</button></strong></span><span><small>Total weight</small><select class="liquidation-metal-weights" aria-label="Weight by metal and karat for ${esc(batch.id)}"><option>All metals · ${fmtWeight(weight)}</option>${liquidationBatchWeightOptions(batch)}</select></span><span><small>Total inventory cost</small><strong>${fmtMoney(cost)}</strong></span></div>
+      ${lines.length === 1 && lines[0].displayPoolId ? '' : `<div class="liquidation-batch-karat-totals"><h3>Totals per karat / purity</h3><div class="table-wrap"><table><thead><tr><th>Metal</th><th>Karat / purity</th><th class="num-head">Items</th><th class="num-head">Total weight</th><th class="num-head">Total cost</th></tr></thead><tbody>${karatTotals.map(entry => `<tr><td><span class="metal-tag ${String(entry.metal).toLowerCase()}">${esc(entry.metal)}</span></td><td><strong>${esc(entry.grade)}</strong></td><td class="num"><button type="button" class="link-button" onclick="openLiquidationItemBreakdown('${esc(batch.id)}','${esc(entry.metal)}','${esc(entry.key)}')" aria-label="Verify ${entry.items} ${esc(entry.metal)} ${esc(entry.grade)} items">${entry.items}</button></td><td class="num"><strong>${fmtWeight(entry.weight)}</strong></td><td class="num"><strong>${fmtMoney(entry.cost)}</strong></td></tr>`).join('')}</tbody></table></div></div>`}
       ${minimized ? '' : `
       <div class="table-wrap liquidation-batch-items"><table><thead><tr><th>Item</th><th>Original seller</th><th>Purchase date</th><th>Status</th><th class="num-head">Weight</th><th class="num-head">Carrying cost</th></tr></thead><tbody>${lines.map(line => {
             const item = line.displayItem || db.stock.find(stock => stock.id === line.itemId) || {};

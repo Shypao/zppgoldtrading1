@@ -33,6 +33,12 @@ async function loadInventoryApi() {
     renderLiquidation,
     liquidationDisplayLines,
     liquidationItemCount,
+    liquidationBatchWeightOptions,
+    openItemBreakdown(batchId, metal = '', grade = '') {
+      appended.length = 0;
+      openLiquidationItemBreakdown(batchId, metal, grade);
+      return appended.at(-1)?.innerHTML || '';
+    },
     mergeOpenLiquidationBatches(batchIds, name, buyer, notes = '') {
       const result = mergeOpenLiquidationBatches(batchIds, { name, buyer, notes });
       return JSON.parse(JSON.stringify({ result, batches: db.liquidationBatches, stock: db.stock }));
@@ -1555,9 +1561,35 @@ test('same-purity pool counts as one liquidation item and preserves source alloc
   assert.equal(rows[0].cost, 8000);
   assert.equal(JSON.stringify(batch), JSON.stringify(before));
   assert.doesNotMatch(api.renderLiquidation(), /Totals per karat \/ purity/);
+  assert.match(api.renderLiquidation(), /openLiquidationItemBreakdown/);
+  assert.match(api.liquidationBatchWeightOptions(batch), /24K · 8\.00 g/);
+  const breakdown = api.openItemBreakdown(batch.id);
+  assert.match(breakdown, /One pooled item/);
+  assert.match(breakdown, /custom-a/);
+  assert.match(breakdown, /custom-b/);
+  assert.match(breakdown, /6\.00 g/);
+  assert.match(breakdown, /2\.00 g/);
+  assert.match(breakdown, /8\.00 g/);
   const html = api.openPoolEdit('POOL-CUSTOM');
   assert.match(html, /<h3>Pool item<\/h3>/);
   assert.match(html, /<details><summary>Original records/);
+});
+
+test('weight dropdown separates karats and quantity breakdown filters to the selected karat', async () => {
+  const api = await loadInventoryApi();
+  const state = customPoolFixture('Gold', '24K');
+  state.stock[1].karat = '22K';
+  state.inventoryPools[0].karat = 'Mixed';
+  state.liquidationBatches = [];
+  api.setState(state);
+  const { result } = api.stagePool('POOL-CUSTOM', 10, { name: 'Mixed karat pool', buyer: 'Buyer', notes: '' });
+  const options = api.liquidationBatchWeightOptions(result.batch);
+  assert.match(options, /24K · 6\.00 g/);
+  assert.match(options, /22K · 4\.00 g/);
+  const breakdown = api.openItemBreakdown(result.batch.id, 'Gold', '22K');
+  assert.match(breakdown, /custom-b/);
+  assert.doesNotMatch(breakdown, /custom-a/);
+  assert.match(breakdown, /4\.00 g/);
 });
 
 test('liquidation grouping keeps separate pools, purities, and individual inventory distinct', async () => {
