@@ -5062,6 +5062,35 @@ function openLiquidationItemBreakdown(batchId, metal = '', grade = '') {
     document.body.appendChild(modal);
     modal.querySelector('.modal-close')?.focus();
 }
+const liquidationPaymentBusy = new Set();
+async function markLiquidationPaid(id) {
+    if (!adminEditGuard() || liquidationPaymentBusy.has(id))
+        return;
+    const record = db.liquidations.find(item => item.id === id);
+    if (!record || record.paymentStatus === 'Paid')
+        return;
+    liquidationPaymentBusy.add(id);
+    const previous = record.paymentStatus;
+    record.paymentStatus = 'Paid';
+    try {
+        if (!await saveDB()) {
+            record.paymentStatus = previous;
+            toast('Payment status was not saved. Please try again.');
+            return;
+        }
+        toast(`${liquidationDisplayId(id)} marked Paid`);
+    }
+    finally {
+        liquidationPaymentBusy.delete(id);
+        render();
+    }
+}
+function renderPendingLiquidationPayments() {
+    const pending = db.liquidations.filter(record => ['Pending', 'Partially Paid'].includes(record.paymentStatus)).slice().sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    if (!pending.length)
+        return '';
+    return `<section class="block"><h2 class="block-title">Awaiting payment</h2><p class="form-note">These sales are recorded. They stay here until payment is marked Paid.</p>${pending.map(record => `<section class="liquidation-pending-payment"><div class="batch-head"><div><h3>${esc(liquidationDisplayId(record.id))} · ${esc(record.batchName || record.metal)}</h3><p>${esc(record.buyer)} · ${fmtDate(record.date)} · <strong>${esc(record.paymentStatus)}</strong></p></div><div class="form-actions"><button class="btn secondary small" onclick="openLiquidationDetails('${esc(record.id)}')">Details</button>${isAdmin() ? `<button class="btn secondary small" onclick="openLiquidationEdit('${esc(record.id)}')">Edit payment</button><button class="btn small" onclick="markLiquidationPaid('${esc(record.id)}')" ${liquidationPaymentBusy.has(record.id) ? 'disabled' : ''}>Mark as Paid</button>` : ''}</div></div><div class="move-confirmation-summary"><div><span>Items</span><strong>${liquidationItemCount(record)}</strong></div><div><span>Weight</span><strong>${fmtWeight(record.releasedWeight)}</strong></div><div><span>Total sold</span><strong>${fmtMoney(record.proceeds)}</strong></div><div><span>Inventory cost</span><strong>${fmtMoney(record.cost)}</strong></div></div></section>`).join('')}</section>`;
+}
 function renderLiquidation() {
     const stockById = new Map(db.stock.map(item => [item.id, item]));
     const batches = db.liquidationBatches.slice().sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
@@ -5085,7 +5114,7 @@ function renderLiquidation() {
         }).join('')}</tbody><tfoot><tr><th colspan="4">Batch subtotal · ${lines.length} item${lines.length === 1 ? '' : 's'}</th><th class="num">${fmtWeight(weight)}</th><th class="num">${fmtMoney(cost)}</th></tr></tfoot></table></div>
       `}
     </section>`;
-    }).join('') || `<section class="block"><div class="empty-note">No items are currently marked For Liquidation.<div class="form-actions" style="justify-content:center;"><button class="btn" onclick="goTab('inventory')">Open Current Inventory</button></div></div></section>`}`;
+    }).join('') || `<section class="block"><div class="empty-note">No items are currently marked For Liquidation.<div class="form-actions" style="justify-content:center;"><button class="btn" onclick="goTab('inventory')">Open Current Inventory</button></div></div></section>`}${renderPendingLiquidationPayments()}`;
 }
 function liquidationAmountLabel(record) {
     const amounts = new Map();
@@ -5596,7 +5625,7 @@ function beginRefiningAction() { if (refiningActionBusy)
     return false; refiningActionBusy = true; return true; }
 function finishRefiningAction() { refiningActionBusy = false; }
 function refiningEligibleItem(item) {
-    if (!item || item.refiningBatchId || Number(item.currentWeight) <= 0)
+    if (!item || item.refiningBatchId || item.liquidationBatchId || Number(item.currentWeight) <= 0 || !['Available', 'For Refining'].includes(item.status))
         return false;
     if (item.status === 'For Refining')
         return true;
@@ -5836,7 +5865,7 @@ function submitRefining() {
     }
     const date = todayStr(), refiner = 'In-house refining', batchName = val('rf_batch_name').trim() || `${refMetal} refining run`;
     const items = chosen.map(id => db.stock.find(s => s.id === id)).filter(Boolean);
-    if (items.length !== chosen.length || items.some(item => item.status !== 'For Refining' || Number(item.currentWeight) <= 0)) {
+    if (items.length !== chosen.length || items.some(item => !refiningEligibleItem(item))) {
         toast('One or more selected items are no longer available for refining');
         return;
     }
@@ -5866,7 +5895,7 @@ async function confirmRefiningBatch() {
         return;
     }
     const items = pending.chosen.map(id => db.stock.find(s => s.id === id)).filter(Boolean);
-    if (items.length !== pending.chosen.length || items.some(item => item.status !== 'For Refining' || Number(item.currentWeight) <= 0)) {
+    if (items.length !== pending.chosen.length || items.some(item => !refiningEligibleItem(item))) {
         finishRefiningAction();
         closeRefiningConfirmation();
         toast('One or more input items changed. Review the batch again.');
@@ -5877,7 +5906,7 @@ async function confirmRefiningBatch() {
     const beforeState = JSON.parse(JSON.stringify(db));
     const { date, refiner, batchName, notes, metal, inputWeight, inputCost } = pending;
     const batchId = nextSequenceId('R', db.refiningBatches);
-    items.forEach(item => { item.refiningBatchId = batchId; });
+    items.forEach(item => { item.status = 'For Refining'; item.refiningBatchId = batchId; });
     db.refiningBatches.push({ id: batchId, name: batchName, notes, date, metal, refiner, staff: currentUser?.displayName || '', status: 'Open', itemIds: pending.chosen, itemSnapshots, inputCost: roundMoney(inputCost), inputWeight: roundWeight(inputWeight), createdAt: new Date().toISOString(), createdBy: currentUser?.displayName || '' });
     const itemCount = pending.chosen.length;
     const saved = await saveDB();

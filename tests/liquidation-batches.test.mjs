@@ -31,6 +31,14 @@ async function loadInventoryApi() {
     renderFeaturedBox,
     renderInventory,
     renderLiquidation,
+    async markPaymentPaid(id, saved = true) {
+      const originalSave = saveDB, originalRender = render, originalToast = toast;
+      saveDB = async () => saved; render = () => ''; toast = () => {};
+      try {
+        await markLiquidationPaid(id);
+        return JSON.parse(JSON.stringify({ liquidations: db.liquidations, stock: db.stock, batches: db.liquidationBatches, html: renderLiquidation() }));
+      } finally { saveDB = originalSave; render = originalRender; toast = originalToast; }
+    },
     liquidationDisplayLines,
     liquidationItemCount,
     liquidationBatchWeightOptions,
@@ -44,6 +52,18 @@ async function loadInventoryApi() {
       return JSON.parse(JSON.stringify({ result, batches: db.liquidationBatches, stock: db.stock }));
     },
     renderRefining,
+    async createSelectedRefiningBatch(ids, changedId = '') {
+      const originalSave = saveDB, originalRender = render, originalToast = toast;
+      saveDB = async () => true; render = () => ''; toast = () => {};
+      refMetal = 'Gold'; refiningSelection.clear(); ids.forEach(id => refiningSelection.add(id)); appended.length = 0;
+      try {
+        submitRefining();
+        const preview = appended.at(-1)?.innerHTML || '';
+        if (changedId) db.stock.find(item => item.id === changedId).status = 'For Liquidation';
+        await confirmRefiningBatch();
+        return JSON.parse(JSON.stringify({ preview, batches: db.refiningBatches, stock: db.stock }));
+      } finally { saveDB = originalSave; render = originalRender; toast = originalToast; }
+    },
     renderRetail,
     renderRates,
     customerSalesLeaderboard(month, year, rankBy) {
@@ -1394,6 +1414,18 @@ test('refining tracking includes pooled records classified at the pool level', a
   assert.match(html, /2 pooled records/);
   assert.doesNotMatch(html, /Pooled Seller A/);
   assert.doesNotMatch(html, /Pooled Seller B/);
+  const created = await api.createSelectedRefiningBatch(['pooled-a', 'pooled-b']);
+  assert.match(created.preview, /Confirm refining batch/);
+  assert.equal(created.batches.length, 1);
+  assert.equal(created.batches[0].inputWeight, 10);
+  assert.equal(created.batches[0].inputCost, 50000);
+  assert.ok(created.stock.every(item => item.status === 'For Refining' && item.refiningBatchId === created.batches[0].id));
+  api.setState(structuredClone(state));
+  state.stock.forEach(item => { item.status = 'Available'; delete item.refiningBatchId; });
+  state.refiningBatches = [];
+  api.setState(state);
+  const rejected = await api.createSelectedRefiningBatch(['pooled-a', 'pooled-b'], 'pooled-a');
+  assert.equal(rejected.batches.length, 0);
 });
 
 test('editing a pool can raise its remaining cost for a later liquidation', async () => {
@@ -1649,6 +1681,34 @@ function customPoolFixture(metal = 'Gold', karat = '38%') {
 async function saveCustomPoolEdit(api, ...args) {
   return JSON.parse(JSON.stringify(await api.savePoolEdit(...args)));
 }
+
+test('pending and partially paid sales stay in Liquidation until Paid without moving stock again', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.liquidationBatches = [];
+  state.liquidations = [
+    { id: 'L-0101', date: '2026-11-01', metal: 'Gold', buyer: 'Pending buyer', paymentStatus: 'Pending', proceeds: 10000, cost: 8000, releasedWeight: 1, itemCount: 1 },
+    { id: 'L-0102', date: '2026-11-01', metal: 'Silver', buyer: 'Partial buyer', paymentStatus: 'Partially Paid', proceeds: 5000, cost: 4000, releasedWeight: 10, itemCount: 1 },
+    { id: 'L-0103', date: '2026-11-01', metal: 'Gold', buyer: 'Paid buyer', paymentStatus: 'Paid', proceeds: 1000, cost: 800, releasedWeight: 1, itemCount: 1 }
+  ];
+  api.setState(state);
+  const html = api.renderLiquidation();
+  assert.match(html, /Awaiting payment|Mark as Paid/);
+  assert.match(html, /Pending buyer/);
+  assert.match(html, /Partial buyer/);
+  assert.doesNotMatch(html, /Paid buyer/);
+  const beforeStock = structuredClone(state.stock);
+  const failed = await api.markPaymentPaid('L-0101', false);
+  assert.equal(failed.liquidations[0].paymentStatus, 'Pending');
+  assert.match(failed.html, /Pending buyer/);
+  const paid = await api.markPaymentPaid('L-0101');
+  assert.equal(paid.liquidations[0].paymentStatus, 'Paid');
+  assert.doesNotMatch(paid.html, /Pending buyer/);
+  assert.match(paid.html, /Partial buyer/);
+  assert.equal(JSON.stringify(paid.stock), JSON.stringify(beforeStock));
+  assert.equal(paid.batches.length, 0);
+  assert.equal(paid.liquidations.length, 3);
+});
 
 test('same-purity pool counts as one liquidation item and preserves source allocations', async () => {
   const api = await loadInventoryApi();
