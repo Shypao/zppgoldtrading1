@@ -1696,18 +1696,28 @@ test('weight dropdown separates karats and quantity breakdown filters to the sel
 
 test('liquidation grouping keeps separate pools, purities, and individual inventory distinct', async () => {
   const api = await loadInventoryApi();
-  api.setState(customPoolFixture('Gold', '24K'));
-  const record = { metal: 'Gold', lines: [
+  const state = customPoolFixture('Gold', '24K');
+  const record = { id: 'LB-per-item', metal: 'Gold', lines: [
     { itemId: 'custom-a', sourcePoolId: 'POOL-A', assay: '24K', weight: 2, cost: 2000 },
     { itemId: 'custom-b', sourcePoolId: 'POOL-A', assay: '24K', weight: 3, cost: 3000 },
     { itemId: 'custom-b', sourcePoolId: 'POOL-B', assay: '24K', weight: 1, cost: 1000 },
     { itemId: 'custom-b', sourcePoolId: 'POOL-A', assay: '18K', weight: 1, cost: 1000 },
     { itemId: 'custom-a', weight: 1, cost: 1000 }
   ] };
+  state.liquidationBatches = [record];
+  api.setState(state);
   assert.equal(api.liquidationItemCount(record), 4);
   const rows = api.liquidationDisplayLines(record);
   assert.equal(rows[0].weight, 5);
   assert.equal(rows.reduce((sum, row) => sum + row.cost, 0), 8000);
+  const modal = api.openItemBreakdown(record.id);
+  assert.equal((modal.match(/<tr><td><strong>/g) || []).length, 4);
+  assert.equal((modal.match(/Gold 24K<\/strong>/g) || []).length, 3);
+  assert.match(modal, /5\.00 g/);
+  assert.doesNotMatch(modal, /Source record|custom-a|custom-b|Pooled item|Individual item|POOL-A|POOL-B/);
+  const filtered = api.openItemBreakdown(record.id, 'Gold', '24K');
+  assert.equal((filtered.match(/<tr><td><strong>/g) || []).length, 3);
+  assert.doesNotMatch(filtered, /18K/);
 });
 
 test('pooled custom purity has a prefilled editable percentage input', async () => {

@@ -5049,13 +5049,15 @@ function openLiquidationItemBreakdown(batchId, metal = '', grade = '') {
         return (!metal || (item.metal || batch.metal) === metal) && (!grade || (line.assay || item.karat) === grade);
     });
     const weight = rows.reduce((sum, line) => sum + Number(line.weight || 0), 0), cost = rows.reduce((sum, line) => sum + Number(line.cost || 0), 0);
-    const totals = liquidationBatchKaratTotals(batch).filter(entry => (!metal || entry.metal === metal) && (!grade || entry.key === grade));
     closeLiquidationItemBreakdown();
     const modal = document.createElement('div');
     modal.id = 'liquidation_item_breakdown';
     modal.className = 'modal-backdrop';
     modal.innerHTML = `<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="liquidation_item_breakdown_title"><div class="summary-modal-head"><div><div class="eyebrow">${esc(batch.id)} · ${esc(batch.buyer)}</div><h2 id="liquidation_item_breakdown_title">${metal ? esc(metal) + ' ' + esc(gradeLabel(metal, grade)) + ' · ' : ''}Item weight breakdown</h2></div><button class="modal-close" onclick="closeLiquidationItemBreakdown()" aria-label="Close">×</button></div><div class="move-confirmation-summary"><div><span>Items</span><strong>${rows.length}</strong></div><div><span>Total weight</span><strong>${fmtWeight(weight)}</strong></div><div><span>Inventory cost</span><strong>${fmtMoney(cost)}</strong></div></div>
-  <div class="table-wrap liquidation-item-summary"><table><thead><tr><th>Karat / purity</th><th class="num-head">Weight</th><th class="num-head">Cost</th></tr></thead><tbody>${totals.map(entry => `<tr><td><strong>${batch.metal === 'Mixed' ? esc(entry.metal) + ' ' : ''}${esc(entry.grade)}</strong></td><td class="num">${fmtWeight(entry.weight)}</td><td class="num">${fmtMoney(entry.cost)}</td></tr>`).join('')}</tbody></table></div><div class="item-weight-total"><strong>Item total</strong><span>${fmtWeight(weight)}</span><span>${fmtMoney(cost)}</span></div><div class="form-actions"><button class="btn secondary" onclick="closeLiquidationItemBreakdown()">Close</button></div></div>`;
+  <div class="table-wrap liquidation-item-summary"><table><thead><tr><th>Karat / purity</th><th class="num-head">Weight</th><th class="num-head">Cost</th></tr></thead><tbody>${rows.map(line => {
+        const item = line.displayItem || db.stock.find(stock => stock.id === line.itemId) || {}, itemMetal = item.metal || batch.metal;
+        return `<tr><td><strong>${esc(itemMetal)} ${esc(gradeLabel(itemMetal, line.assay || item.karat || ''))}</strong></td><td class="num">${fmtWeight(line.weight)}</td><td class="num">${fmtMoney(line.cost)}</td></tr>`;
+    }).join('')}</tbody></table></div><div class="item-weight-total"><strong>Item total</strong><span>${fmtWeight(weight)}</span><span>${fmtMoney(cost)}</span></div><div class="form-actions"><button class="btn secondary" onclick="closeLiquidationItemBreakdown()">Close</button></div></div>`;
     modal.addEventListener('click', event => { if (event.target === modal)
         closeLiquidationItemBreakdown(); });
     document.body.appendChild(modal);
