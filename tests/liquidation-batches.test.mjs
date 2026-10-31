@@ -1274,6 +1274,32 @@ test('all-stock purity filter groups options by Gold Silver and Platinum headers
   assert.ok(modal.indexOf('90% purity') > modal.indexOf('24K'));
 });
 
+test('stock purity filter uses the displayed pool grade instead of hidden source grades', async () => {
+  const api = await loadInventoryApi();
+  const state = stateFixture();
+  state.stock = ['16K', '17K', '85%'].map((karat, index) => ({
+    id: `hidden-grade-${index}`, date: '2026-09-17', metal: 'Gold', karat,
+    itemType: 'Scrap', status: 'Available', inventoryPoolId: 'POOL-filter',
+    netWeight: 1, currentWeight: 1, payout: 1000, cost: 1000
+  }));
+  state.inventoryPools = [{ id: 'POOL-filter', metal: 'Gold', karat: 'Mixed',
+    itemIds: state.stock.map(item => item.id), originalWeight: 3, originalCost: 3000, onHold: false }];
+  api.setState(state);
+  const mixedModal = api.openInventoryFilter();
+  assert.match(mixedModal, /value="Gold::Mixed"/);
+  assert.doesNotMatch(mixedModal, /Gold::16K|Gold::17K|Gold::85%/);
+  state.stock.forEach(item => { item.karat = '1%'; });
+  state.inventoryPools[0].karat = '1%';
+  api.setState(state);
+  const customModal = api.openInventoryFilter();
+  assert.match(customModal, /value="Gold::1%"/);
+  assert.doesNotMatch(customModal, /Gold::16K|Gold::17K|Gold::85%|Gold::Mixed/);
+  state.stock.push({ id: 'real-16k', date: '2026-09-17', metal: 'Gold', karat: '16K',
+    itemType: 'Scrap', status: 'Available', netWeight: 1, currentWeight: 1, payout: 1000, cost: 1000 });
+  api.setState(state);
+  assert.match(api.openInventoryFilter(), /value="Gold::16K"/);
+});
+
 test('splitting a pool creates a proportional-cost pool without changing purchase history', async () => {
   const api = await loadInventoryApi();
   const state = stateFixture();
@@ -1643,11 +1669,8 @@ test('same-purity pool counts as one liquidation item and preserves source alloc
   assert.match(api.renderLiquidation(), /openLiquidationItemBreakdown/);
   assert.match(api.liquidationBatchWeightOptions(batch), /24K · 8\.00 g/);
   const breakdown = api.openItemBreakdown(batch.id);
-  assert.match(breakdown, /One pooled item/);
-  assert.match(breakdown, /custom-a/);
-  assert.match(breakdown, /custom-b/);
-  assert.match(breakdown, /6\.00 g/);
-  assert.match(breakdown, /2\.00 g/);
+  assert.match(breakdown, /Karat \/ purity/);
+  assert.doesNotMatch(breakdown, /Source record|Purchase date|custom-a|custom-b/);
   assert.match(breakdown, /8\.00 g/);
   const html = api.openPoolEdit('POOL-CUSTOM');
   assert.match(html, /<h3>Pool item<\/h3>/);
@@ -1666,8 +1689,8 @@ test('weight dropdown separates karats and quantity breakdown filters to the sel
   assert.match(options, /24K · 6\.00 g/);
   assert.match(options, /22K · 4\.00 g/);
   const breakdown = api.openItemBreakdown(result.batch.id, 'Gold', '22K');
-  assert.match(breakdown, /custom-b/);
-  assert.doesNotMatch(breakdown, /custom-a/);
+  assert.match(breakdown, /22K/);
+  assert.doesNotMatch(breakdown, /24K|custom-a|custom-b/);
   assert.match(breakdown, /4\.00 g/);
 });
 

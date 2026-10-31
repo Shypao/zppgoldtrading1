@@ -2216,7 +2216,9 @@ function closeInventoryFilterModal(){ document.getElementById('inventory_filter_
 function activeInventoryRecord(item){ return Number(item.currentWeight)>0&&!['For Liquidation','Liquidated','Refined','Sold'].includes(item.status)&&!item.refiningBatchId; }
 function inventoryFilterGradesForDate(metal){
   const order=['Gold','Silver','Platinum'];
-  const rows=db.stock.filter(item=>inventoryDateScope(item)&&activeInventoryRecord(item)&&(metal==='All'||item.metal===metal)).map(item=>({metal:item.metal,karat:item.karat}));
+  const current=db.stock.filter(item=>inventoryDateScope(item)&&activeInventoryRecord(item));
+  // Match the stock table: a pool exposes its current combined grade, not hidden source grades.
+  const rows=inventoryDisplayRows(current).filter(item=>metal==='All'||item.metal===metal).map(item=>({metal:item.metal,karat:item.karat}));
   const unique=new Map(rows.map(row=>[`${row.metal}|${row.karat}`,row]));
   return Array.from(unique.values()).sort((a,b)=>(order.indexOf(a.metal)-order.indexOf(b.metal))||(gradeSortIndex(a.metal,a.karat)-gradeSortIndex(b.metal,b.karat))||String(a.karat).localeCompare(String(b.karat)));
 }
@@ -2524,7 +2526,7 @@ function inventoryPoolReviewRow(pool){
     status:poolInventoryClassification(pool,snapshot),
     currentWeight:snapshot.weight,
     cost:snapshot.cost,
-    remarks:pool.notes||`${pool.itemIds.length} pooled inventory records`,
+    remarks:pool.notes||'',
     inventoryPoolId:pool.id,
     isInventoryPool:true
   };
@@ -2586,7 +2588,7 @@ function inventoryDisplayRows(records){
       status:poolInventoryClassification(pool,snapshot),
       currentWeight:snapshot.weight,
       cost:snapshot.cost,
-      remarks:pool.notes||`${pool.itemIds.length} pooled inventory records`,
+      remarks:pool.notes||'',
       recordedAt,
       inventoryPoolId:pool.id,
       isInventoryPool:true
@@ -3288,7 +3290,7 @@ function renderInventory(){
     ${isAdmin()?`<div class="inventory-action-panel"><div class="inventory-action-status"><strong>${percentagePool.length} eligible ${inventorySelectedDate==='All'?'across all dates':'on this date'}</strong><span><span id="inventory_liq_count">${selectedMoveCount}</span> inventory item${selectedMoveCount===1?'':'s'} selected${selectedPoolCount?` · ${selectedPoolCount} pool selected`:''}${percentagePool.length?'':' · change the filters'}</span>${selectedGradeCounts.size?`<div class="inventory-selection-chips">${Array.from(selectedGradeCounts.entries()).map(([grade,count])=>`<span>${esc(grade)} · ${count}</span>`).join('')}</div>`:''}</div><div class="inventory-action-buttons"><button class="btn secondary small" onclick="selectAllVisibleInventory()">Select all shown</button><button class="btn secondary small" onclick="selectAllLowKaratGold()">Select low-karat Gold</button><button class="btn secondary small" id="inventory_clear_selected" onclick="clearInventorySelection()" ${selectedMoveCount||selectedPoolCount?'':'disabled'}>Clear</button><div class="inventory-bulk-category"><select id="inventory_bulk_status" aria-label="Category for selected inventory" onchange="inventoryBulkStatus=this.value">${['Available','For Refining','On Hold'].map(status=>`<option ${inventoryBulkStatus===status?'selected':''}>${status}</option>`).join('')}</select><button class="btn secondary small" data-inventory-selection-required onclick="categorizeCheckedInventory()" ${selectedMoveCount?'':'disabled'}>Apply category</button></div><button class="btn" id="inventory_pool_selected" onclick="openManualInventoryPoolModal()" ${canPoolSelected?'':'disabled'}>Pool selected</button><button class="btn secondary small" id="inventory_move_selected" onclick="moveCheckedInventoryToLiquidation()" ${canMoveSelected?'':'disabled'}>Move selected to liquidation</button><button class="btn secondary small" onclick="openCombineLiquidationDateSelection()" ${hasMovableStock?'':'disabled'}>Combine dates</button><button class="btn secondary small" data-inventory-selection-required onclick="prepareInventoryForRefining()" ${selectedMoveCount?'':'disabled'}>Refine selected</button></div></div>`:''}
     ${isAdmin()?`<div class="form-actions" style="margin:0 0 12px"><button class="btn secondary small" id="inventory_merge_pools" onclick="openInventoryPoolMergeModal()" ${canMergeSelectedPools?'':'disabled'}>Merge selected pools</button></div>`:''}
     ${tableOrEmpty(rows, s=>`<tr>${isAdmin()?`<td>${s.isInventoryPool?`<input type="checkbox" data-inventory-pool-id="${s.inventoryPoolId}" aria-label="Select pooled inventory to merge or add inventory" onchange="toggleInventoryPoolSelection('${s.inventoryPoolId}',this.checked)" ${inventoryPoolRowSelection.has(s.inventoryPoolId)?'checked':''}>`:`<input type="checkbox" data-inventory-move-id="${s.id}" aria-label="Select ${esc(s.metal)} ${esc(s.karat)} from ${esc(s.customerName)}" onchange="toggleInventoryForLiquidation('${s.id}',this.checked)" ${inventoryMoveSelection.has(s.id)?'checked':''} ${categorizableInventory(s)?'':'disabled'}>`}</td>`:''}<td>${fmtDate(s.date)}</td><td>${s.isInventoryPool?'':esc(s.customerName)}</td><td><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)}</td>
-      <td>${esc(s.itemType)}</td><td class="num">${fmtWeight(s.currentWeight)}</td><td class="num">${fmtMoney(s.cost)}</td><td>${statusPill(s.status)}${s.isInventoryPool?`<br><span class="form-note">${esc(s.inventoryPoolId)}</span>`:''}</td><td>${esc(s.remarks||'—')}</td>${isAdmin()?`<td><div class="form-actions">${s.isInventoryPool?`<button class="btn small" onclick="openPoolLiquidationModal('${s.inventoryPoolId}')">Liquidate</button><button class="btn secondary small" onclick="openInventoryPoolEdit('${s.inventoryPoolId}')">Edit</button>`:`${movableInventory(s)?`<button class="btn secondary small" onclick="liquidateInventoryItem('${s.id}')">Liquidate</button>`:''}${adminEditButton('Inventory',s.id)}`}</div></td>`:''}</tr>`,
+      <td>${esc(s.itemType)}</td><td class="num">${fmtWeight(s.currentWeight)}</td><td class="num">${fmtMoney(s.cost)}</td><td>${statusPill(s.status)}${s.isInventoryPool?`<br><span class="form-note">${esc(s.inventoryPoolId)}</span>`:''}</td><td>${s.isInventoryPool?esc(s.remarks||''):esc(s.remarks||'—')}</td>${isAdmin()?`<td><div class="form-actions">${s.isInventoryPool?`<button class="btn small" onclick="openPoolLiquidationModal('${s.inventoryPoolId}')">Liquidate</button><button class="btn secondary small" onclick="openInventoryPoolEdit('${s.inventoryPoolId}')">Edit</button>`:`${movableInventory(s)?`<button class="btn secondary small" onclick="liquidateInventoryItem('${s.id}')">Liquidate</button>`:''}${adminEditButton('Inventory',s.id)}`}</div></td>`:''}</tr>`,
       [...(isAdmin()?['Select']:[]),'Date','Customer','Metal / karat','Type','Current weight','Cost','Status','Remarks',...(isAdmin()?['Actions']:[])],
       `No stock matches this filter ${inventorySelectedDate==='All'?'across all purchase dates':`on ${fmtDate(selectedDay.date)}`}.`)}
   </section>
@@ -3730,13 +3732,11 @@ function openLiquidationItemBreakdown(batchId,metal='',grade=''){
     return (!metal||(item.metal||batch.metal)===metal)&&(!grade||(line.assay||item.karat)===grade);
   });
   const weight=rows.reduce((sum,line)=>sum+Number(line.weight||0),0),cost=rows.reduce((sum,line)=>sum+Number(line.cost||0),0);
+  const totals=liquidationBatchKaratTotals(batch).filter(entry=>(!metal||entry.metal===metal)&&(!grade||entry.key===grade));
   closeLiquidationItemBreakdown();
   const modal=document.createElement('div');modal.id='liquidation_item_breakdown';modal.className='modal-backdrop';
   modal.innerHTML=`<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="liquidation_item_breakdown_title"><div class="summary-modal-head"><div><div class="eyebrow">${esc(batch.id)} · ${esc(batch.buyer)}</div><h2 id="liquidation_item_breakdown_title">${metal?esc(metal)+' '+esc(gradeLabel(metal,grade))+' · ':''}Item weight breakdown</h2></div><button class="modal-close" onclick="closeLiquidationItemBreakdown()" aria-label="Close">×</button></div><div class="move-confirmation-summary"><div><span>Items</span><strong>${rows.length}</strong></div><div><span>Total weight</span><strong>${fmtWeight(weight)}</strong></div><div><span>Inventory cost</span><strong>${fmtMoney(cost)}</strong></div></div>
-  ${rows.map(line=>{
-    const item=line.displayItem||db.stock.find(stock=>stock.id===line.itemId)||{};
-    return `<section><h3>${esc(item.metal||batch.metal)} ${esc(gradeLabel(item.metal||batch.metal,line.assay||item.karat||''))} · ${esc(line.displayPoolId||line.itemId)}</h3>${line.displayPoolId?'<p class="form-note">One pooled item. The source weights below add up to its liquidation weight.</p>':''}<div class="table-wrap"><table><thead><tr><th>Source record</th><th>Customer</th><th>Purchase date</th><th class="num-head">Weight in batch</th><th class="num-head">Cost in batch</th></tr></thead><tbody>${line.sourceLines.map(source=>{const original=db.stock.find(stock=>stock.id===source.itemId)||{};return `<tr><td>${esc(source.itemId)}</td><td>${esc(original.customerName||'—')}</td><td>${fmtDate(original.date)}</td><td class="num">${fmtWeight(source.weight)}</td><td class="num">${fmtMoney(source.cost)}</td></tr>`;}).join('')}</tbody></table></div><div class="item-weight-total"><strong>Item total</strong><span>${fmtWeight(line.weight)}</span><span>${fmtMoney(line.cost)}</span></div></section>`;
-  }).join('')}<div class="form-actions"><button class="btn secondary" onclick="closeLiquidationItemBreakdown()">Close</button></div></div>`;
+  <div class="table-wrap liquidation-item-summary"><table><thead><tr><th>Karat / purity</th><th class="num-head">Weight</th><th class="num-head">Cost</th></tr></thead><tbody>${totals.map(entry=>`<tr><td><strong>${batch.metal==='Mixed'?esc(entry.metal)+' ':''}${esc(entry.grade)}</strong></td><td class="num">${fmtWeight(entry.weight)}</td><td class="num">${fmtMoney(entry.cost)}</td></tr>`).join('')}</tbody></table></div><div class="item-weight-total"><strong>Item total</strong><span>${fmtWeight(weight)}</span><span>${fmtMoney(cost)}</span></div><div class="form-actions"><button class="btn secondary" onclick="closeLiquidationItemBreakdown()">Close</button></div></div>`;
   modal.addEventListener('click',event=>{if(event.target===modal)closeLiquidationItemBreakdown();});document.body.appendChild(modal);modal.querySelector('.modal-close')?.focus();
 }
 function renderLiquidation(){
