@@ -956,7 +956,7 @@ async function downloadRateSheetImage(format:'auto'|'desktop'|'phone'='auto',ima
   try{
     await document.fonts?.ready;
     const canvas=document.createElement('canvas');
-    const width=isPhone?1080:1600,height=isPhone?2800:1120,pad=isPhone?44:28,columnGap=isPhone?16:7,cardHeight=isPhone?118:86;
+    const width=isPhone?1080:1600,height=isPhone?2800:960,pad=isPhone?44:28,columnGap=isPhone?16:7,cardHeight=isPhone?118:86;
     canvas.width=width; canvas.height=height;
     const ctx=canvas.getContext('2d');
     if(!ctx) throw new Error('Canvas is unavailable');
