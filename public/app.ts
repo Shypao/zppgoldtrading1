@@ -1812,7 +1812,7 @@ function renderBuying(){
       <div class="field"><label>Item type</label>
         <select id="b_itemtype" onchange="scheduleBuyingDraftSave()">${['Scrap','Jewelry'].map(type=>`<option ${buyingDraftValue('b_itemtype','Scrap')===type?'selected':''}>${type}</option>`).join('')}</select>
       </div>
-      <div class="field"><label>Karat / purity</label>
+      <div class="field buying-karat-field"><label>Karat / purity</label>
         <select id="b_karat" onchange="handleBuyingGradeChange();scheduleBuyingDraftSave()">
           ${karats.length? karats.map(k=>`<option value="${k}" ${k===karatSelection?'selected':''}>${esc(gradeLabel(metal,k))}</option>`).join('') : `<option value="">No rate set</option>`}
           <option value="__custom__" ${customSelected?'selected':''}>Custom purity (%)</option>
