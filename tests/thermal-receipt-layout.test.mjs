@@ -20,7 +20,7 @@ async function androidReceiptHarness({ paperWidth = 58, blocked = false } = {}) 
       write(value) { html = value; calls.push('write'); },
       close() { calls.push('close-document'); }
     },
-    requestAnimationFrame(callback) { calls.push('frame'); callback(); },
+    setTimeout(callback) { calls.push('layout-ready'); callback(); },
     focus() { calls.push('focus'); },
     print() { calls.push('print'); }
   };
@@ -50,9 +50,12 @@ test('Android printing opens a receipt-only document and waits for fonts and lay
     assert.match(html, /Gold 18K|9,000/);
     assert.match(html, /&lt;script&gt;unsafe&lt;\/script&gt;/);
     assert.doesNotMatch(html, /Buying receipt|receipt-preview-controls|appShell|<script>/);
+    assert.match(html, /<button type="button" onclick="window.print\(\)">Print receipt<\/button>/);
+    assert.match(html, /@media print\{\.receipt-print-tools\{display:none!important\}\}/);
+    assert.match(html, /Share → Print\. Select Xprinter/);
     harness.releaseFonts();
     await completion;
-    assert.deepEqual(harness.calls.slice(-4), ['frame', 'frame', 'focus', 'print']);
+    assert.deepEqual(harness.calls.slice(-3), ['layout-ready', 'focus', 'print']);
   }
 });
 

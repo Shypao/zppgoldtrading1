@@ -2135,7 +2135,10 @@ function thermalReceiptPrintDocument(markup,paperWidth,receiptHeight){
     .receipt-weight,.receipt-amount{text-align:right;white-space:nowrap}
     .receipt-total{display:flex;justify-content:space-between;align-items:baseline;gap:3px;font-size:${paperWidth===80?14:13}px;font-weight:900}.receipt-total span:last-child{margin-left:auto;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
     .receipt-thanks{text-align:center;font-weight:900;margin-top:6px}.receipt-quote{margin-top:5px;padding-top:4px;border-top:1px dashed #000;text-align:center;font-size:${paperWidth===80?9:8}px;font-style:italic;line-height:1.2}
-  </style></head><body><main class="thermal-receipt">${markup}</main></body></html>`;
+    .receipt-print-tools{display:none}
+    @media screen{.receipt-print-tools{display:block;padding:10px;font:12px/1.4 Arial,Helvetica,sans-serif;font-weight:400;-webkit-text-stroke:0;border-top:1px solid #ccc;margin-top:12px}.receipt-print-tools button{width:100%;padding:10px;border:1px solid #222;background:#222;color:#fff;font:700 14px Arial,Helvetica,sans-serif;cursor:pointer}.receipt-print-tools p{margin:8px 0 0}.receipt-print-tools button:focus-visible{outline:3px solid #956800;outline-offset:2px}}
+    @media print{.receipt-print-tools{display:none!important}}
+  </style></head><body><main class="thermal-receipt">${markup}</main><aside class="receipt-print-tools" aria-label="Receipt printing"><button type="button" onclick="window.print()">Print receipt</button><p>If no print dialog appears, use Chrome menu (⋮) → Share → Print. Select Xprinter and ${paperWidth} mm paper.</p></aside></body></html>`;
 }
 function printAndroidPurchaseReceipt(items,paperWidth){
   // Open during the click so Android Chrome retains the user gesture.
@@ -2147,9 +2150,11 @@ function printAndroidPurchaseReceipt(items,paperWidth){
   printWindow.document.open();
   printWindow.document.write(thermalReceiptPrintDocument(markup,paperWidth,height));
   printWindow.document.close();
-  // The document contains only the receipt; no modal styles or screen controls.
+  // Try automatic printing; the page also offers a direct user-click fallback.
   const ready=printWindow.document.fonts?.ready||Promise.resolve();
-  return ready.then(()=>new Promise(resolve=>printWindow.requestAnimationFrame(()=>printWindow.requestAnimationFrame(resolve))))
+  // Animation frames can pause during Android tab switching. Use the receipt
+  // window's timer instead, so this does not depend on the dashboard repainting.
+  return ready.then(()=>new Promise(resolve=>printWindow.setTimeout(resolve,100)))
     .then(()=>{if(!printWindow.closed){printWindow.focus();printWindow.print();}})
     .catch(()=>toast('The receipt opened in a separate tab. Use the browser Print option there.'));
 }
