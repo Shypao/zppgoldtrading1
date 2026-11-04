@@ -2708,7 +2708,7 @@ function openPurchaseReceipt(batchId) {
     modal.innerHTML = `<div class="receipt-preview-modal" role="dialog" aria-modal="true" aria-labelledby="receipt_preview_title">
     <div class="summary-modal-head"><div><div class="eyebrow">Thermal receipt preview</div><h2 id="receipt_preview_title">Buying receipt</h2></div><button class="modal-close" onclick="closePurchaseReceipt()" aria-label="Close">×</button></div>
     <div class="receipt-preview-stage"><div class="thermal-receipt ${savedPaperWidth === '80' ? 'paper-80' : ''}" id="receipt_preview_paper">${purchaseReceiptMarkup(items)}</div></div>
-    <div class="receipt-preview-controls"><div class="field"><label for="receipt_paper_size">Thermal paper width</label><select id="receipt_paper_size" onchange="setReceiptPaperSize(this.value)"><option value="58" ${savedPaperWidth === '58' ? 'selected' : ''}>58 mm (VOZY P50)</option><option value="80" ${savedPaperWidth === '80' ? 'selected' : ''}>80 mm</option></select></div>
+    <div class="receipt-preview-controls"><div class="field"><label for="receipt_paper_size">Thermal paper width</label><select id="receipt_paper_size" onchange="setReceiptPaperSize(this.value)"><option value="58" ${savedPaperWidth === '58' ? 'selected' : ''}>58 mm</option><option value="80" ${savedPaperWidth === '80' ? 'selected' : ''}>80 mm</option></select><span class="form-note">Choose the same paper width in the printer settings.</span></div>
     <div class="form-actions"><button class="btn secondary" onclick="closePurchaseReceipt()">Close</button><button class="btn" onclick="printPurchaseReceipt('${batchId}')">Print receipt</button></div></div>
   </div>`;
     modal.addEventListener('click', event => { if (event.target === modal)
@@ -2720,7 +2720,7 @@ function measureThermalReceiptHeight(receipt, paperWidth, receiptWidth, paperPad
     probe.removeAttribute('id');
     probe.setAttribute('aria-hidden', 'true');
     probe.classList.toggle('paper-80', paperWidth === 80);
-    Object.assign(probe.style, { position: 'fixed', left: '-10000px', top: '0', visibility: 'hidden', boxSizing: 'border-box', width: `${receiptWidth}mm`, maxWidth: 'none', height: 'auto', minHeight: '0', margin: '0', padding: `${paperPadding}mm`, boxShadow: 'none', fontFamily: '"Courier New", Courier, monospace', fontSize: paperWidth === 80 ? '11.5px' : '10.5px', fontWeight: '900', lineHeight: '1.22', transform: 'none', writingMode: 'horizontal-tb' });
+    Object.assign(probe.style, { position: 'fixed', left: '-10000px', top: '0', visibility: 'hidden', boxSizing: 'border-box', width: `${receiptWidth}mm`, maxWidth: 'none', height: 'auto', minHeight: '0', margin: '0', padding: `${paperPadding}mm`, boxShadow: 'none', fontFamily: 'Arial,Helvetica,sans-serif', fontSize: paperWidth === 80 ? '11.5px' : '10.5px', fontWeight: '900', lineHeight: '1.22', transform: 'none', writingMode: 'horizontal-tb' });
     const table = probe.querySelector('.receipt-items');
     if (table)
         table.style.fontSize = paperWidth === 80 ? '10px' : '9px';
@@ -2734,7 +2734,7 @@ function measureThermalReceiptHeight(receipt, paperWidth, receiptWidth, paperPad
 }
 function thermalReceiptPrintDocument(markup, paperWidth, receiptHeight) {
     const receiptWidth = paperWidth === 80 ? 72 : 48, paperPadding = paperWidth === 80 ? 2 : 1;
-    return `<!doctype html><html><head><meta charset="UTF-8"><title>ZP Gold &amp; Silver receipt</title><style>
+    return `<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=${Math.round(paperWidth * 96 / 25.4)},initial-scale=1"><title>ZP Gold &amp; Silver receipt</title><style>
     @page{size:${paperWidth}mm ${receiptHeight}mm;margin:0}
     *{box-sizing:border-box}
     html,body{width:${paperWidth}mm;height:auto;min-height:0;margin:0!important;padding:0!important;background:#fff;color:#000}
@@ -2757,6 +2757,28 @@ function thermalReceiptPrintDocument(markup, paperWidth, receiptHeight) {
     .receipt-thanks{text-align:center;font-weight:900;margin-top:6px}.receipt-quote{margin-top:5px;padding-top:4px;border-top:1px dashed #000;text-align:center;font-size:${paperWidth === 80 ? 9 : 8}px;font-style:italic;line-height:1.2}
   </style></head><body><main class="thermal-receipt">${markup}</main></body></html>`;
 }
+function printAndroidPurchaseReceipt(items, paperWidth) {
+    // Open during the click so Android Chrome retains the user gesture.
+    const printWindow = window.open('', 'zp_receipt_print');
+    if (!printWindow) {
+        toast('Allow pop-ups for this site, then tap Print receipt again.');
+        return;
+    }
+    const markup = purchaseReceiptMarkup(items), receipt = document.getElementById('receipt_preview_paper');
+    const receiptWidth = paperWidth === 80 ? 72 : 48, paperPadding = paperWidth === 80 ? 2 : 1;
+    const height = receipt ? measureThermalReceiptHeight(receipt, paperWidth, receiptWidth, paperPadding) : Math.max(100, 60 + items.length * 25);
+    printWindow.document.open();
+    printWindow.document.write(thermalReceiptPrintDocument(markup, paperWidth, height));
+    printWindow.document.close();
+    // The document contains only the receipt; no modal styles or screen controls.
+    const ready = printWindow.document.fonts?.ready || Promise.resolve();
+    return ready.then(() => new Promise(resolve => printWindow.requestAnimationFrame(() => printWindow.requestAnimationFrame(resolve))))
+        .then(() => { if (!printWindow.closed) {
+        printWindow.focus();
+        printWindow.print();
+    } })
+        .catch(() => toast('The receipt opened in a separate tab. Use the browser Print option there.'));
+}
 function printPurchaseReceipt(batchId) {
     const items = db.stock.filter(item => (item.batchId || item.id) === batchId);
     if (!items.length) {
@@ -2764,6 +2786,8 @@ function printPurchaseReceipt(batchId) {
         return;
     }
     const paperWidth = Number(val('receipt_paper_size')) === 80 ? 80 : 58;
+    if (/Android/i.test(navigator.userAgent))
+        return printAndroidPurchaseReceipt(items, paperWidth);
     const receiptWidth = paperWidth === 80 ? 72 : 46;
     const paperPadding = paperWidth === 80 ? 2 : 2;
     document.getElementById('thermal_print_page_style')?.remove();
