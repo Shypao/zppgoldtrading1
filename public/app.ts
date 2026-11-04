@@ -2141,22 +2141,18 @@ function thermalReceiptPrintDocument(markup,paperWidth,receiptHeight){
   </style></head><body><main class="thermal-receipt">${markup}</main><aside class="receipt-print-tools" aria-label="Receipt printing"><button type="button" onclick="window.print()">Print receipt</button><p>If no print dialog appears, use Chrome menu (⋮) → Share → Print. Select Xprinter and ${paperWidth} mm paper.</p></aside></body></html>`;
 }
 function printAndroidPurchaseReceipt(items,paperWidth){
-  // Open during the click so Android Chrome retains the user gesture.
-  const printWindow=window.open('','zp_receipt_print');
-  if(!printWindow){toast('Allow pop-ups for this site, then tap Print receipt again.');return;}
   const markup=purchaseReceiptMarkup(items),receipt=document.getElementById('receipt_preview_paper');
   const receiptWidth=paperWidth===80?72:48,paperPadding=paperWidth===80?2:1;
   const height=receipt?measureThermalReceiptHeight(receipt,paperWidth,receiptWidth,paperPadding):Math.max(100,60+items.length*25);
-  printWindow.document.open();
-  printWindow.document.write(thermalReceiptPrintDocument(markup,paperWidth,height));
-  printWindow.document.close();
-  // Try automatic printing; the page also offers a direct user-click fallback.
-  const ready=printWindow.document.fonts?.ready||Promise.resolve();
-  // Animation frames can pause during Android tab switching. Use the receipt
-  // window's timer instead, so this does not depend on the dashboard repainting.
-  return ready.then(()=>new Promise(resolve=>printWindow.setTimeout(resolve,100)))
-    .then(()=>{if(!printWindow.closed){printWindow.focus();printWindow.print();}})
-    .catch(()=>toast('The receipt opened in a separate tab. Use the browser Print option there.'));
+  // A new same-origin tab receives a copy of sessionStorage. Receipt data stays
+  // in the browser session, never in a public URL or on the server.
+  const key='zp_thermal_receipt_print';
+  try{
+    sessionStorage.setItem(key,JSON.stringify({createdAt:Date.now(),html:thermalReceiptPrintDocument(markup,paperWidth,height)}));
+    const printWindow=window.open('/receipt-print.html','_blank');
+    if(!printWindow) toast('Allow pop-ups for this site, then tap Print receipt again.');
+  }catch{toast('Receipt printing needs browser session storage. Open this site in Chrome and try again.');}
+  finally{try{sessionStorage.removeItem(key);}catch{}}
 }
 function printPurchaseReceipt(batchId){
   const items=db.stock.filter(item=>(item.batchId||item.id)===batchId);

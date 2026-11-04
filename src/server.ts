@@ -1212,6 +1212,8 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
     if (request.method === 'GET' && url.pathname === '/website.js') return serveFile(response, 'website.js', 'text/javascript; charset=utf-8');
     if (request.method === 'GET' && url.pathname === '/store-location.png') return serveFile(response, 'store-location.png', 'image/png');
     if (request.method === 'GET' && url.pathname === '/app.js') return serveFile(response, 'app.js', 'text/javascript; charset=utf-8');
+    if (request.method === 'GET' && url.pathname === '/receipt-print.html') return serveFile(response, 'receipt-print.html', 'text/html; charset=utf-8');
+    if (request.method === 'GET' && url.pathname === '/receipt-print.js') return serveFile(response, 'receipt-print.js', 'text/javascript; charset=utf-8');
     if (request.method === 'GET' && url.pathname === '/zpp-logo.png') return serveFile(response, 'zpp-logo.png', 'image/png');
     return sendJson(response, 404, { error: 'Not found' });
   } catch (error) {

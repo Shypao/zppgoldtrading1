@@ -10,6 +10,7 @@ async function androidReceiptHarness({ paperWidth = 58, blocked = false } = {}) 
   const source = await readFile(appPath, 'utf8');
   const receiptCode = source.slice(source.indexOf('function receiptWeightNumber('), source.indexOf('/* ============================= INVENTORY'));
   const calls = [];
+  const storage = new Map();
   let html = '', releaseFonts;
   const fontsReady = new Promise(resolve => { releaseFonts = resolve; });
   const printWindow = {
@@ -26,7 +27,12 @@ async function androidReceiptHarness({ paperWidth = 58, blocked = false } = {}) 
   };
   const context = vm.createContext({
     navigator: { userAgent: 'Mozilla/5.0 (Linux; Android 14; POCO Pad) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36' },
-    window: { open() { calls.push('open-window'); return blocked ? null : printWindow; }, print() { throw new Error('Android must not print the dashboard document'); } },
+    sessionStorage: {
+      setItem(key, value) { storage.set(key, value); },
+      getItem(key) { return storage.get(key); },
+      removeItem(key) { storage.delete(key); }
+    },
+    window: { open(url, target) { calls.push(['open-window', url, target]); if (!blocked) html = JSON.parse(storage.get('zp_thermal_receipt_print')).html; return blocked ? null : printWindow; }, print() { throw new Error('Android must not print the dashboard document'); } },
     document: { getElementById() { return null; } },
     db: { stock: [{ id: 'receipt-1', batchId: 'buy-1', metal: 'Gold', karat: '18K', itemType: 'Scrap', date: '2026-11-04', customerName: '<script>unsafe</script>', staff: 'Staff', netWeight: 1.5, rate: 6000, payout: 9000, paymentMethod: 'Cash' }] },
     val: () => String(paperWidth), roundMoney: value => value, fmtDate: value => value,
@@ -35,14 +41,15 @@ async function androidReceiptHarness({ paperWidth = 58, blocked = false } = {}) 
     toast: message => calls.push(message)
   });
   vm.runInContext(receiptCode + '\n globalThis.startPrint = () => printPurchaseReceipt("buy-1");', context);
-  return { start: () => context.startPrint(), releaseFonts: () => releaseFonts(), calls, html: () => html };
+  return { start: () => context.startPrint(), releaseFonts: () => releaseFonts(), calls, storage, html: () => html };
 }
 
-test('Android printing opens a receipt-only document and waits for fonts and layout', async () => {
+test('Android printing opens an HTTPS receipt route with session-only data instead of about:blank', async () => {
   for (const paperWidth of [58, 80]) {
     const harness = await androidReceiptHarness({ paperWidth });
-    const completion = harness.start();
-    assert.deepEqual(harness.calls, ['open-window', 'open-document', 'write', 'close-document']);
+    harness.start();
+    assert.deepEqual(harness.calls, [['open-window', '/receipt-print.html', '_blank']]);
+    assert.equal(harness.storage.size, 0, 'parent tab must clear its temporary receipt payload');
     const html = harness.html();
     assert.match(html, new RegExp(`@page\\{size:${paperWidth}mm \\d+mm;margin:0\\}`));
     assert.match(html, new RegExp(`html,body\\{width:${paperWidth}mm;`));
@@ -53,9 +60,6 @@ test('Android printing opens a receipt-only document and waits for fonts and lay
     assert.match(html, /<button type="button" onclick="window.print\(\)">Print receipt<\/button>/);
     assert.match(html, /@media print\{\.receipt-print-tools\{display:none!important\}\}/);
     assert.match(html, /Share → Print\. Select Xprinter/);
-    harness.releaseFonts();
-    await completion;
-    assert.deepEqual(harness.calls.slice(-3), ['layout-ready', 'focus', 'print']);
   }
 });
 
@@ -65,6 +69,38 @@ test('Android blocked pop-up shows recovery instructions without printing the da
   assert.equal(harness.html(), '');
   assert.match(harness.calls[1], /Allow pop-ups/);
   assert.ok(!harness.calls.includes('print'));
+  assert.equal(harness.storage.size, 0);
+});
+
+test('HTTPS receipt page renders before printing and rejects missing or expired session data', async () => {
+  const source = await readFile(new URL('../public/receipt-print.js', import.meta.url), 'utf8');
+  for (const valid of [true, false]) {
+    const calls = [];
+    let releaseFonts;
+    const ready = new Promise(resolve => { releaseFonts = resolve; });
+    const status = { textContent: '' };
+    const nodes = { 'main.thermal-receipt': { id: 'receipt' }, style: { id: 'styles' }, '.receipt-print-tools': { id: 'tools' }, 'meta[name="viewport"]': { content: 'width=219,initial-scale=1' } };
+    const context = vm.createContext({
+      sessionStorage: { getItem() { return JSON.stringify({ html: '<main></main>', createdAt: valid ? Date.now() : 0 }); } },
+      DOMParser: class { parseFromString() { return { title: 'Receipt', querySelector: selector => nodes[selector] }; } },
+      document: {
+        fonts: { ready }, getElementById: () => status, querySelector: () => ({}),
+        importNode: node => node, head: { appendChild() { calls.push('styles'); } },
+        body: { replaceChildren(...children) { calls.push(children.map(node => node.id).join(',')); } }
+      },
+      window: { setTimeout(callback) { calls.push('layout-ready'); callback(); }, print() { calls.push('print'); } }
+    });
+    const completion = vm.runInContext(source, context);
+    if (valid) {
+      assert.deepEqual(calls, ['styles', 'receipt,tools']);
+      releaseFonts(); await completion;
+      assert.deepEqual(calls.slice(-2), ['layout-ready', 'print']);
+    } else {
+      await completion;
+      assert.deepEqual(calls, []);
+      assert.match(status.textContent, /Return to the software/);
+    }
+  }
 });
 
 test('thermal receipt width includes its padding so printed totals are not clipped', async () => {
