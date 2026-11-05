@@ -15,8 +15,19 @@
     document.title = receipt.title;
     document.querySelector('meta[name="viewport"]').content = receipt.querySelector('meta[name="viewport"]').content;
     document.head.appendChild(document.importNode(style, true));
-    document.body.replaceChildren(document.importNode(main, true), document.importNode(tools, true));
+    const printedReceipt = document.importNode(main, true);
+    document.body.replaceChildren(printedReceipt, document.importNode(tools, true));
     await (document.fonts?.ready || Promise.resolve());
+    const paperWidth = payload.paperWidth === 80 ? 80 : 58;
+    const pageSize = document.createElement('style');
+    document.head.appendChild(pageSize);
+    const fitPageToReceipt = () => {
+      // Measure only the printed content, never the screen-only buttons/help.
+      const height = Math.max(1, Math.ceil(printedReceipt.getBoundingClientRect().height * 25.4 / 96 + 2));
+      pageSize.textContent = `@page{size:${paperWidth}mm ${height}mm;margin:0}`;
+    };
+    fitPageToReceipt();
+    window.addEventListener('beforeprint', fitPageToReceipt);
     window.setTimeout(() => window.print(), 100);
   } catch {
     status.textContent = 'Receipt unavailable. Return to the software and open Print receipt again.';

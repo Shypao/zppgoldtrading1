@@ -2761,14 +2761,14 @@ function thermalReceiptPrintDocument(markup, paperWidth, receiptHeight) {
   </style></head><body><main class="thermal-receipt">${markup}</main><aside class="receipt-print-tools" aria-label="Receipt printing"><button type="button" onclick="window.print()">Print receipt</button><p>If no print dialog appears, use Chrome menu (⋮) → Share → Print. Select Xprinter and ${paperWidth} mm paper.</p></aside></body></html>`;
 }
 function printAndroidPurchaseReceipt(items, paperWidth) {
-    const markup = purchaseReceiptMarkup(items), receipt = document.getElementById('receipt_preview_paper');
-    const receiptWidth = paperWidth === 80 ? 72 : 48, paperPadding = paperWidth === 80 ? 2 : 1;
-    const height = receipt ? measureThermalReceiptHeight(receipt, paperWidth, receiptWidth, paperPadding) : Math.max(100, 60 + items.length * 25);
+    const markup = purchaseReceiptMarkup(items);
     // A new same-origin tab receives a copy of sessionStorage. Receipt data stays
     // in the browser session, never in a public URL or on the server.
     const key = 'zp_thermal_receipt_print';
     try {
-        sessionStorage.setItem(key, JSON.stringify({ createdAt: Date.now(), html: thermalReceiptPrintDocument(markup, paperWidth, height) }));
+        // The receipt page measures its final layout after fonts load. Do not use
+        // the modal preview height or a fixed minimum roll length for Android.
+        sessionStorage.setItem(key, JSON.stringify({ createdAt: Date.now(), paperWidth, html: thermalReceiptPrintDocument(markup, paperWidth, 35) }));
         const printWindow = window.open('/receipt-print.html', '_blank');
         if (!printWindow)
             toast('Allow pop-ups for this site, then tap Print receipt again.');
@@ -2794,10 +2794,16 @@ function printPurchaseReceipt(batchId) {
         return printAndroidPurchaseReceipt(items, paperWidth);
     const receiptWidth = paperWidth === 80 ? 72 : 46;
     const paperPadding = paperWidth === 80 ? 2 : 2;
+    const receipt = document.getElementById('receipt_preview_paper');
+    if (!receipt) {
+        toast('Open the receipt preview before printing');
+        return;
+    }
+    const receiptHeight = measureThermalReceiptHeight(receipt, paperWidth, receiptWidth, paperPadding);
     document.getElementById('thermal_print_page_style')?.remove();
     const pageStyle = document.createElement('style');
     pageStyle.id = 'thermal_print_page_style';
-    pageStyle.textContent = `@page{size:${paperWidth}mm auto;margin:0}body.printing-thermal-receipt .thermal-receipt,body.printing-thermal-receipt .thermal-receipt.paper-80{box-sizing:border-box;width:${receiptWidth}mm;max-width:${receiptWidth}mm;margin:0!important;padding:${paperPadding}mm!important}`;
+    pageStyle.textContent = `@page{size:${paperWidth}mm ${receiptHeight}mm;margin:0}body.printing-thermal-receipt{margin:0!important;padding:0!important}body.printing-thermal-receipt .thermal-receipt,body.printing-thermal-receipt .thermal-receipt.paper-80{box-sizing:border-box;width:${receiptWidth}mm;max-width:${receiptWidth}mm;margin:0!important;padding:${paperPadding}mm!important}`;
     document.head.appendChild(pageStyle);
     document.body.classList.add('printing-thermal-receipt');
     window.addEventListener('afterprint', cleanupThermalPrintState, { once: true });

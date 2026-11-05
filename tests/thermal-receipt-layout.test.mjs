@@ -74,27 +74,33 @@ test('Android blocked pop-up shows recovery instructions without printing the da
 
 test('HTTPS receipt page renders before printing and rejects missing or expired session data', async () => {
   const source = await readFile(new URL('../public/receipt-print.js', import.meta.url), 'utf8');
-  for (const valid of [true, false]) {
+  for (const [valid, paperWidth, contentPixels] of [[true, 58, 256], [true, 80, 900], [false, 58, 256]]) {
     const calls = [];
     let releaseFonts;
     const ready = new Promise(resolve => { releaseFonts = resolve; });
     const status = { textContent: '' };
-    const nodes = { 'main.thermal-receipt': { id: 'receipt' }, style: { id: 'styles' }, '.receipt-print-tools': { id: 'tools' }, 'meta[name="viewport"]': { content: 'width=219,initial-scale=1' } };
+    let receiptHeight = contentPixels;
+    const pageSize = { textContent: '' }, events = {};
+    const nodes = { 'main.thermal-receipt': { id: 'receipt', getBoundingClientRect: () => ({ height: receiptHeight }) }, style: { id: 'styles' }, '.receipt-print-tools': { id: 'tools' }, 'meta[name="viewport"]': { content: 'width=219,initial-scale=1' } };
     const context = vm.createContext({
-      sessionStorage: { getItem() { return JSON.stringify({ html: '<main></main>', createdAt: valid ? Date.now() : 0 }); } },
+      sessionStorage: { getItem() { return JSON.stringify({ html: '<main></main>', createdAt: valid ? Date.now() : 0, paperWidth }); } },
       DOMParser: class { parseFromString() { return { title: 'Receipt', querySelector: selector => nodes[selector] }; } },
       document: {
-        fonts: { ready }, getElementById: () => status, querySelector: () => ({}),
+        fonts: { ready }, getElementById: () => status, querySelector: () => ({}), createElement: () => pageSize,
         importNode: node => node, head: { appendChild() { calls.push('styles'); } },
         body: { replaceChildren(...children) { calls.push(children.map(node => node.id).join(',')); } }
       },
-      window: { setTimeout(callback) { calls.push('layout-ready'); callback(); }, print() { calls.push('print'); } }
+      window: { addEventListener(name, callback) { events[name] = callback; }, setTimeout(callback) { calls.push('layout-ready'); callback(); }, print() { calls.push('print'); } }
     });
     const completion = vm.runInContext(source, context);
     if (valid) {
       assert.deepEqual(calls, ['styles', 'receipt,tools']);
       releaseFonts(); await completion;
       assert.deepEqual(calls.slice(-2), ['layout-ready', 'print']);
+      assert.equal(pageSize.textContent, `@page{size:${paperWidth}mm ${Math.ceil(contentPixels * 25.4 / 96 + 2)}mm;margin:0}`);
+      receiptHeight += 100;
+      events.beforeprint();
+      assert.equal(pageSize.textContent, `@page{size:${paperWidth}mm ${Math.ceil(receiptHeight * 25.4 / 96 + 2)}mm;margin:0}`);
     } else {
       await completion;
       assert.deepEqual(calls, []);
@@ -125,8 +131,8 @@ test('58 mm receipts use the proven centered VOZY P50 main-page print path', asy
   assert.match(source, /const paperPadding = paperWidth === 80 \? 2 : 2;/);
   assert.match(
     source,
-    /@page\{size:\$\{paperWidth\}mm auto;margin:0\}/,
-    'the main print page should use the selected continuous thermal roll width',
+    /@page\{size:\$\{paperWidth\}mm \$\{receiptHeight\}mm;margin:0\}/,
+    'the main print page should set both roll width and measured content height',
   );
   assert.match(
     source,
