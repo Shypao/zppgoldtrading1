@@ -5061,8 +5061,7 @@ function liquidationBatchKaratTotals(batch, stockById = new Map(db.stock.map(ite
     return Array.from(totals.values()).sort(compareLiquidationGrades);
 }
 function liquidationBatchDisplayName(batch) {
-    const name = String(batch?.name || '').trim();
-    return /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}(?:,\s*\d{4})?$/.test(name) ? '' : name;
+    return String(batch?.name || '').trim();
 }
 function liquidationBatchWeightOptions(batch, stockById = new Map(db.stock.map(item => [item.id, item]))) {
     const totals = new Map();

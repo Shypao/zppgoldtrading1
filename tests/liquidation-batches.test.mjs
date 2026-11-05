@@ -861,16 +861,16 @@ test('Liquidation batch selector uses the compact clean control styling', async 
   assert.match(stylesheet, /\.liquidation-batch-select input\{[^}]*accent-color:var\(--brass\)/);
 });
 
-test('Liquidation view does not promote a date-only batch name as the card header', async () => {
+test('Liquidation view displays saved batch names even when the name is a date', async () => {
   const api = await loadInventoryApi();
   const state = stateFixture();
-  state.liquidationBatches[0].name = 'Oct 16';
-  api.setState(state);
-
-  const html = api.renderLiquidation();
-
-  assert.doesNotMatch(html, /<h2 class="block-title">Oct 16<\/h2>/);
-  assert.match(html, /Created Sep 11, 2026/);
+  for (const name of ['Oct 16', 'Nov 4', 'Nov 4, 2026', 'Unpaid Nov 4']) {
+    state.liquidationBatches[0].name = name;
+    api.setState(state);
+    const html = api.renderLiquidation();
+    assert.ok(html.includes(`<h2 class="block-title">${name}</h2>`));
+    assert.match(html, /Created Sep 11, 2026/);
+  }
 });
 
 test('Liquidation view gives the assigned buyer a prominent visual treatment', async () => {
