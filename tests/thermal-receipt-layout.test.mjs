@@ -6,27 +6,15 @@ import vm from 'node:vm';
 const indexPath = new URL('../public/index.html', import.meta.url);
 const appPath = new URL('../public/app.js', import.meta.url);
 
-async function androidReceiptHarness({ paperWidth = 58, blocked = false } = {}) {
+async function androidReceiptHarness({ paperWidth = 58, blocked = false, userAgent = 'Android POCO Pad Chrome' } = {}) {
   const source = await readFile(appPath, 'utf8');
   const receiptCode = source.slice(source.indexOf('function receiptWeightNumber('), source.indexOf('/* ============================= INVENTORY'));
   const calls = [];
   const storage = new Map();
-  let html = '', releaseFonts;
-  const fontsReady = new Promise(resolve => { releaseFonts = resolve; });
-  const printWindow = {
-    closed: false,
-    document: {
-      fonts: { ready: fontsReady },
-      open() { calls.push('open-document'); },
-      write(value) { html = value; calls.push('write'); },
-      close() { calls.push('close-document'); }
-    },
-    setTimeout(callback) { calls.push('layout-ready'); callback(); },
-    focus() { calls.push('focus'); },
-    print() { calls.push('print'); }
-  };
+  let html = '';
+  const printWindow = {};
   const context = vm.createContext({
-    navigator: { userAgent: 'Mozilla/5.0 (Linux; Android 14; POCO Pad) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36' },
+    navigator: { userAgent },
     sessionStorage: {
       setItem(key, value) { storage.set(key, value); },
       getItem(key) { return storage.get(key); },
@@ -41,17 +29,17 @@ async function androidReceiptHarness({ paperWidth = 58, blocked = false } = {}) 
     toast: message => calls.push(message)
   });
   vm.runInContext(receiptCode + '\n globalThis.startPrint = () => printPurchaseReceipt("buy-1");', context);
-  return { start: () => context.startPrint(), releaseFonts: () => releaseFonts(), calls, storage, html: () => html };
+  return { start: () => context.startPrint(), calls, storage, html: () => html };
 }
 
-test('Android printing opens an HTTPS receipt route with session-only data instead of about:blank', async () => {
-  for (const paperWidth of [58, 80]) {
-    const harness = await androidReceiptHarness({ paperWidth });
+test('Android and Windows printing open a receipt-only HTTPS route with session-only data', async () => {
+  for (const [paperWidth,userAgent] of [[58,'Android POCO Pad Chrome'],[80,'Android Chrome'],[58,'Windows NT 10.0 Chrome']]) {
+    const harness = await androidReceiptHarness({ paperWidth,userAgent });
     harness.start();
     assert.deepEqual(harness.calls, [['open-window', '/receipt-print.html', '_blank']]);
     assert.equal(harness.storage.size, 0, 'parent tab must clear its temporary receipt payload');
     const html = harness.html();
-    assert.match(html, new RegExp(`@page\\{size:${paperWidth}mm \\d+mm;margin:0\\}`));
+    assert.match(html, new RegExp(`@page\\{size:${paperWidth}mm \\d+mm;margin:0;`));
     assert.match(html, new RegExp(`html,body\\{width:${paperWidth}mm;`));
     assert.match(html, /<meta name="viewport" content="width=\d+,initial-scale=1">/);
     assert.match(html, /Gold 18K|9,000/);
@@ -59,7 +47,8 @@ test('Android printing opens an HTTPS receipt route with session-only data inste
     assert.doesNotMatch(html, /Buying receipt|receipt-preview-controls|appShell|<script>/);
     assert.match(html, /<button type="button" onclick="window.print\(\)">Print receipt<\/button>/);
     assert.match(html, /@media print\{\.receipt-print-tools\{display:none!important\}\}/);
-    assert.match(html, /Share → Print\. Select Xprinter/);
+    assert.match(html, /Share → Print/);
+    assert.match(html, /Margins: None, Scale: 100%, and turn Headers and footers OFF/);
   }
 });
 
@@ -124,22 +113,24 @@ test('thermal receipt width includes its padding so printed totals are not clipp
   );
 });
 
-test('58 mm receipts use the proven centered VOZY P50 main-page print path', async () => {
+test('58 mm receipts isolate the print layout from modal positioning and app styles', async () => {
   const source = await readFile(appPath, 'utf8');
 
-  assert.match(source, /const receiptWidth = paperWidth === 80 \? 72 : 46;/);
-  assert.match(source, /const paperPadding = paperWidth === 80 \? 2 : 2;/);
+  assert.match(source, /const receiptWidth = paperWidth === 80 \? 72 : 48, paperPadding = paperWidth === 80 \? 2 : 1;/);
   assert.match(
     source,
-    /@page\{size:\$\{paperWidth\}mm \$\{receiptHeight\}mm;margin:0\}/,
-    'the main print page should set both roll width and measured content height',
+    /@page\{size:\$\{paperWidth\}mm \$\{receiptHeight\}mm;margin:0;/,
+    'the receipt document should set both paper dimensions and zero margins',
   );
   assert.match(
     source,
-    /width:\$\{receiptWidth\}mm;max-width:\$\{receiptWidth\}mm;[^}]*margin:0!important;[^}]*padding:\$\{paperPadding\}mm!important/,
-    'the 46 mm print block should rely on the VOZY driver alignment without a duplicate CSS offset',
+    /\.thermal-receipt\{width:\$\{receiptWidth\}mm;[^}]*min-height:0;[^}]*margin:0!important;[^}]*padding:\$\{paperPadding\}mm!important/,
+    'receipt content starts at the top, without a viewport-sized container',
   );
-  assert.match(source, /document\.body\.classList\.add\('printing-thermal-receipt'\)/);
+  assert.doesNotMatch(source, /document\.body\.classList\.add\('printing-thermal-receipt'\)/);
+  for (const corner of ['top-left','top-center','top-right','bottom-left','bottom-center','bottom-right']) {
+    assert.ok(source.includes(`@${corner}{content:none}`));
+  }
   assert.match(source, /window\.print\(\)/);
   assert.doesNotMatch(source, /window\.open\('',\s*'zpp_thermal_receipt'/);
   assert.match(source, /\.receipt-items\{[^}]*font-size:\$\{paperWidth\s*===\s*80\s*\?\s*10\s*:\s*9\}px/);

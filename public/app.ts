@@ -2101,21 +2101,10 @@ function openPurchaseReceipt(batchId){
   modal.addEventListener('click',event=>{if(event.target===modal)closePurchaseReceipt();});
   document.body.appendChild(modal);
 }
-function measureThermalReceiptHeight(receipt,paperWidth,receiptWidth,paperPadding){
-  const probe=receipt.cloneNode(true);
-  probe.removeAttribute('id');probe.setAttribute('aria-hidden','true');probe.classList.toggle('paper-80',paperWidth===80);
-  Object.assign(probe.style,{position:'fixed',left:'-10000px',top:'0',visibility:'hidden',boxSizing:'border-box',width:`${receiptWidth}mm`,maxWidth:'none',height:'auto',minHeight:'0',margin:'0',padding:`${paperPadding}mm`,boxShadow:'none',fontFamily:'Arial,Helvetica,sans-serif',fontSize:paperWidth===80?'11.5px':'10.5px',fontWeight:'900',lineHeight:'1.22',transform:'none',writingMode:'horizontal-tb'});
-  const table=probe.querySelector('.receipt-items');if(table)table.style.fontSize=paperWidth===80?'10px':'9px';
-  const total=probe.querySelector('.receipt-total');if(total)total.style.fontSize=paperWidth===80?'14px':'13px';
-  document.body.appendChild(probe);
-  const contentHeight=Math.ceil(probe.getBoundingClientRect().height*25.4/96+3);
-  probe.remove();
-  return Math.max(35,contentHeight);
-}
 function thermalReceiptPrintDocument(markup,paperWidth,receiptHeight){
   const receiptWidth=paperWidth===80?72:48,paperPadding=paperWidth===80?2:1;
   return `<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=${Math.round(paperWidth*96/25.4)},initial-scale=1"><title>ZP Gold &amp; Silver receipt</title><style>
-    @page{size:${paperWidth}mm ${receiptHeight}mm;margin:0}
+    @page{size:${paperWidth}mm ${receiptHeight}mm;margin:0;@top-left{content:none}@top-center{content:none}@top-right{content:none}@bottom-left{content:none}@bottom-center{content:none}@bottom-right{content:none}}
     *{box-sizing:border-box}
     html,body{width:${paperWidth}mm;height:auto;min-height:0;margin:0!important;padding:0!important;background:#fff;color:#000}
     body{font-family:Arial,Helvetica,sans-serif;font-size:${paperWidth===80?11.5:10.5}px;font-weight:900;font-synthesis:weight;text-rendering:optimizeLegibility;line-height:1.22;-webkit-text-stroke:.24px #000;-webkit-print-color-adjust:exact;print-color-adjust:exact}
@@ -2125,8 +2114,8 @@ function thermalReceiptPrintDocument(markup,paperWidth,receiptHeight){
     .receipt-shop{text-align:center;font-size:${paperWidth===80?17:15}px;font-weight:900;letter-spacing:.1px;line-height:1.08}
     .receipt-address{text-align:center;font-size:${paperWidth===80?10.5:9.5}px;line-height:1.2;margin-top:1px}
     .receipt-rule{border-top:1px dashed #000;margin:4px 0}.receipt-rule-strong{border-top-style:solid}
-    .receipt-meta,.receipt-payment{display:grid;grid-template-columns:max-content minmax(0,1fr);column-gap:4px;row-gap:2px;align-items:start}
-    .receipt-meta span,.receipt-payment span{white-space:nowrap}.receipt-meta strong{min-width:0;overflow-wrap:anywhere}.receipt-payment strong{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+    .receipt-meta,.receipt-payment{display:grid;grid-template-columns:42% minmax(0,1fr);column-gap:4px;row-gap:2px;align-items:start}
+    .receipt-meta span,.receipt-payment span{white-space:normal;font-size:${paperWidth===80?10:9}px}.receipt-meta strong{min-width:0;overflow-wrap:anywhere}.receipt-payment strong{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
     .receipt-items{width:100%;border-collapse:collapse;table-layout:fixed;font-size:${paperWidth===80?10:9}px;font-weight:900;line-height:1.16;font-variant-numeric:tabular-nums}
     .receipt-col-description{width:50%}.receipt-col-weight{width:20%}.receipt-col-amount{width:30%}
     .receipt-items th{padding:0 1px 5px;text-align:right;vertical-align:middle;font-family:Arial,Helvetica,sans-serif;font-size:${paperWidth===80?10:9.5}px;font-weight:900;line-height:1;letter-spacing:0;white-space:nowrap;-webkit-text-stroke:.18px #000}.receipt-items th:first-child{text-align:left}
@@ -2138,9 +2127,9 @@ function thermalReceiptPrintDocument(markup,paperWidth,receiptHeight){
     .receipt-print-tools{display:none}
     @media screen{.receipt-print-tools{display:block;padding:10px;font:12px/1.4 Arial,Helvetica,sans-serif;font-weight:400;-webkit-text-stroke:0;border-top:1px solid #ccc;margin-top:12px}.receipt-print-tools button{width:100%;padding:10px;border:1px solid #222;background:#222;color:#fff;font:700 14px Arial,Helvetica,sans-serif;cursor:pointer}.receipt-print-tools p{margin:8px 0 0}.receipt-print-tools button:focus-visible{outline:3px solid #956800;outline-offset:2px}}
     @media print{.receipt-print-tools{display:none!important}}
-  </style></head><body><main class="thermal-receipt">${markup}</main><aside class="receipt-print-tools" aria-label="Receipt printing"><button type="button" onclick="window.print()">Print receipt</button><p>If no print dialog appears, use Chrome menu (⋮) → Share → Print. Select Xprinter and ${paperWidth} mm paper.</p></aside></body></html>`;
+  </style></head><body><main class="thermal-receipt">${markup}</main><aside class="receipt-print-tools" aria-label="Receipt printing"><button type="button" onclick="window.print()">Print receipt</button><p>Chrome print settings: choose ${paperWidth} mm paper, Margins: None, Scale: 100%, and turn Headers and footers OFF. This removes the browser date, title, URL, and page number.</p><p>If no print dialog appears on Android, use Chrome menu (⋮) → Share → Print and select your printer.</p></aside></body></html>`;
 }
-function printAndroidPurchaseReceipt(items,paperWidth){
+function openThermalReceiptPrintPage(items,paperWidth){
   const markup=purchaseReceiptMarkup(items);
   // A new same-origin tab receives a copy of sessionStorage. Receipt data stays
   // in the browser session, never in a public URL or on the server.
@@ -2158,19 +2147,7 @@ function printPurchaseReceipt(batchId){
   const items=db.stock.filter(item=>(item.batchId||item.id)===batchId);
   if(!items.length){ toast('Receipt record not found'); return; }
   const paperWidth=Number(val('receipt_paper_size'))===80?80:58;
-  if(/Android/i.test(navigator.userAgent)) return printAndroidPurchaseReceipt(items,paperWidth);
-  const receiptWidth=paperWidth===80?72:46;
-  const paperPadding=paperWidth===80?2:2;
-  const receipt=document.getElementById('receipt_preview_paper');
-  if(!receipt){toast('Open the receipt preview before printing');return;}
-  const receiptHeight=measureThermalReceiptHeight(receipt,paperWidth,receiptWidth,paperPadding);
-  document.getElementById('thermal_print_page_style')?.remove();
-  const pageStyle=document.createElement('style');pageStyle.id='thermal_print_page_style';
-  pageStyle.textContent=`@page{size:${paperWidth}mm ${receiptHeight}mm;margin:0}body.printing-thermal-receipt{margin:0!important;padding:0!important}body.printing-thermal-receipt .thermal-receipt,body.printing-thermal-receipt .thermal-receipt.paper-80{box-sizing:border-box;width:${receiptWidth}mm;max-width:${receiptWidth}mm;margin:0!important;padding:${paperPadding}mm!important}`;
-  document.head.appendChild(pageStyle);
-  document.body.classList.add('printing-thermal-receipt');
-  window.addEventListener('afterprint',cleanupThermalPrintState,{once:true});
-  window.print();
+  return openThermalReceiptPrintPage(items,paperWidth);
 }
 
 /* ============================= INVENTORY ============================= */
