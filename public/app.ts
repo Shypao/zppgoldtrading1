@@ -2065,15 +2065,20 @@ async function commitPurchaseBatch(printAfter=false){
 
 function receiptWeightNumber(value){ return Number(value||0).toLocaleString('en-PH',{minimumFractionDigits:0,maximumFractionDigits:2}); }
 function receiptMoneyNumber(value){ return Math.round(Number(value)||0).toLocaleString('en-PH',{maximumFractionDigits:0}); }
+function receiptStaffName(first){
+  const signedIn=typeof currentUser!=='undefined'?(currentUser?.displayName||currentUser?.username||''):'';
+  return signedIn||first?.staff||'Not recorded';
+}
 function purchaseReceiptMarkup(items){
   const first=items[0],total=roundMoney(items.reduce((sum,item)=>sum+Number(item.payout),0));
   const transactionNumber=first.batchId||first.id;
   const itemLines=items.map(item=>`<tr class="receipt-item"><td class="receipt-description"><span class="receipt-item-title">${esc(item.metal)} ${esc(gradeLabel(item.metal,item.karat))}</span><small class="receipt-item-detail">${esc(item.itemType)}</small><small class="receipt-item-rate">Rate: PHP ${receiptMoneyNumber(item.rate)}/g</small></td><td class="receipt-weight">${receiptWeightNumber(item.netWeight)}g</td><td class="receipt-amount">${receiptMoneyNumber(item.payout)}</td></tr>`).join('');
   return `<header class="receipt-header"><div class="receipt-shop">ZP GOLD &amp; SILVER</div><div class="receipt-address">Barcelona St, Zone II<br>Zamboanga City</div></header><div class="receipt-rule"></div>
-    <div class="receipt-meta"><span>Date:</span><strong>${esc(fmtDate(first.date))}</strong><span>Customer:</span><strong>${esc(first.customerName||'Walk-in')}</strong><span>Transaction No.:</span><strong>${esc(transactionNumber)}</strong>${first.staff?`<span>Staff:</span><strong>${esc(first.staff)}</strong>`:''}</div><div class="receipt-rule"></div>
+    <div class="receipt-meta"><span>Date:</span><strong>${esc(fmtDate(first.date))}</strong><span>Customer:</span><strong>${esc(first.customerName||'Walk-in')}</strong><span>Transaction No.:</span><strong>${esc(transactionNumber)}</strong><span>Staff name:</span><strong>${esc(receiptStaffName(first))}</strong></div><div class="receipt-rule"></div>
     <table class="receipt-items"><colgroup><col class="receipt-col-description"><col class="receipt-col-weight"><col class="receipt-col-amount"></colgroup><thead><tr><th>ITEM</th><th>WT</th><th>AMT</th></tr></thead><tbody>${itemLines}</tbody></table>
     <div class="receipt-rule receipt-rule-strong"></div><div class="receipt-total"><span>TOTAL</span><span>PHP ${receiptMoneyNumber(total)}</span></div><div class="receipt-rule"></div>
     <div class="receipt-payment"><span>PAID:</span><strong>PHP ${receiptMoneyNumber(total)}</strong><span>METHOD:</span><strong>${esc(first.paymentMethod||'—')}</strong></div>
+    <section class="receipt-signature" aria-label="Staff signature"><div class="receipt-signature-line"></div><div>Staff signature</div></section>
     <div class="receipt-thanks">Thank you!</div><div class="receipt-quote">“Because gold is honest money it is disliked by dishonest men.”</div>`;
 }
 function cleanupThermalPrintState(){
@@ -2129,7 +2134,7 @@ function purchaseReceiptEscPos(items,paperWidth=58){
   bytes+=ESC+'a\x01'+ESC+'E\x01'+GS+'!\x10';line('ZP GOLD & SILVER');
   bytes+=GS+'!\x00'+ESC+'E\x00';line('Barcelona St, Zone II');line('Zamboanga City');bytes+=ESC+'a\x00';
   line(rule);wrap('Date: '+fmtDate(first.date));wrap('Customer: '+(first.customerName||'Walk-in'));
-  wrap('Transaction No.: '+(first.batchId||first.id));if(first.staff)wrap('Staff: '+first.staff);
+  wrap('Transaction No.: '+(first.batchId||first.id));wrap('Staff name: '+receiptStaffName(first));
   line(rule);bytes+=ESC+'E\x01';pair('ITEM','WT / AMT');bytes+=ESC+'E\x00';
   items.forEach(item=>{
     bytes+=ESC+'E\x01';wrap(item.metal+' '+gradeLabel(item.metal,item.karat));
@@ -2138,7 +2143,7 @@ function purchaseReceiptEscPos(items,paperWidth=58){
   });
   bytes+=ESC+'E\x01';pair('TOTAL','PHP '+receiptMoneyNumber(total));bytes+=ESC+'E\x00';
   pair('PAID','PHP '+receiptMoneyNumber(total));pair('METHOD',first.paymentMethod||'-');line(rule);
-  bytes+=ESC+'a\x01';line('Thank you!');wrap('"Because gold is honest money it is disliked by dishonest men."');
+  bytes+=ESC+'a\x01';line('');line('');line('_'.repeat(Math.min(24,columns)));line('Staff signature');line('');line('Thank you!');wrap('"Because gold is honest money it is disliked by dishonest men."');
   // Two extra lines to tear the receipt; never feed an entire browser page.
   bytes+='\n\n'+ESC+'a\x00';
   return bytes;
@@ -2183,7 +2188,7 @@ function thermalReceiptPrintDocument(markup,paperWidth,receiptHeight){
     body{font-family:Arial,Helvetica,sans-serif;font-size:${paperWidth===80?11.5:10.5}px;font-weight:900;font-synthesis:weight;text-rendering:optimizeLegibility;line-height:1.22;-webkit-text-stroke:.24px #000;-webkit-print-color-adjust:exact;print-color-adjust:exact}
     .thermal-receipt{width:${receiptWidth}mm;height:auto;min-height:0;margin:0!important;padding:${paperPadding}mm!important;background:#fff;color:#000;transform:none!important;rotate:none!important;writing-mode:horizontal-tb!important;direction:ltr!important}
     .thermal-receipt,.thermal-receipt *{font-weight:900}
-    .receipt-header,.receipt-meta,.receipt-total,.receipt-payment,.receipt-thanks,.receipt-quote,.receipt-item{break-inside:avoid;page-break-inside:avoid}
+    .receipt-header,.receipt-meta,.receipt-total,.receipt-payment,.receipt-signature,.receipt-thanks,.receipt-quote,.receipt-item{break-inside:avoid;page-break-inside:avoid}
     .receipt-shop{text-align:center;font-size:${paperWidth===80?17:15}px;font-weight:900;letter-spacing:.1px;line-height:1.08}
     .receipt-address{text-align:center;font-size:${paperWidth===80?10.5:9.5}px;line-height:1.2;margin-top:1px}
     .receipt-rule{border-top:1px dashed #000;margin:4px 0}.receipt-rule-strong{border-top-style:solid}
@@ -2196,6 +2201,7 @@ function thermalReceiptPrintDocument(markup,paperWidth,receiptHeight){
     .receipt-item-title,.receipt-item-detail,.receipt-item-rate{display:block}.receipt-item-title,.receipt-weight,.receipt-amount{font-family:Arial,Helvetica,sans-serif;font-size:${paperWidth===80?11:10}px;font-weight:900;line-height:1.1;-webkit-text-stroke:.16px #000}.receipt-item-detail{margin-top:1px}.receipt-item-rate{margin-top:1px;font-family:Arial,Helvetica,sans-serif;font-size:${paperWidth===80?10:9}px;font-weight:900;line-height:1.1;-webkit-text-stroke:.12px #000;white-space:normal}
     .receipt-weight,.receipt-amount{text-align:right;white-space:nowrap}
     .receipt-total{display:flex;justify-content:space-between;align-items:baseline;gap:3px;font-size:${paperWidth===80?14:13}px;font-weight:900}.receipt-total span:last-child{margin-left:auto;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+    .receipt-signature{margin-top:6px;text-align:center;font-size:10px;line-height:1.3}.receipt-signature-line{height:9mm;border-bottom:1px solid #000;margin:0 4mm 2px}
     .receipt-thanks{text-align:center;font-weight:900;margin-top:6px}.receipt-quote{margin-top:5px;padding-top:4px;border-top:1px dashed #000;text-align:center;font-size:${paperWidth===80?9:8}px;font-style:italic;line-height:1.2}
     .receipt-print-tools{display:none}
     @media screen{.receipt-print-tools{display:block;padding:10px;font:12px/1.4 Arial,Helvetica,sans-serif;font-weight:400;-webkit-text-stroke:0;border-top:1px solid #ccc;margin-top:12px}.receipt-print-tools button{width:100%;padding:10px;border:1px solid #222;background:#222;color:#fff;font:700 14px Arial,Helvetica,sans-serif;cursor:pointer}.receipt-print-tools p{margin:8px 0 0}.receipt-print-tools button:focus-visible{outline:3px solid #956800;outline-offset:2px}}

@@ -20,7 +20,7 @@ async function harness({android=true,method='browser',saved='browser'}={}){
     db:{stock:items},val:id=>values[id]||'',roundMoney:value=>Math.round(value*100)/100,fmtDate:value=>value,todayStr:()=> '2026-11-07',
     gradeLabel:(_metal,karat)=>karat,esc:value=>String(value),toast:value=>calls.push(value),
   });
-  vm.runInContext(code+'\nglobalThis.api={purchaseReceiptEscPos,thermalReceiptText,setReceiptPrintMethod,receiptPrintMethod,printPurchaseReceipt,openPurchaseReceipt,printThermalTestReceipt};',context);
+  vm.runInContext(code+'\nglobalThis.api={purchaseReceiptMarkup,purchaseReceiptEscPos,thermalReceiptText,setReceiptPrintMethod,receiptPrintMethod,printPurchaseReceipt,openPurchaseReceipt,printThermalTestReceipt};',context);
   return {api:context.api,context,calls,items,appended,storage};
 }
 
@@ -67,4 +67,25 @@ test('device print preference is opt-in and Android setup exposes a test receipt
   const before=JSON.stringify(h.items);h.api.printThermalTestReceipt();assert.equal(JSON.stringify(h.items),before);
   const bytes=Buffer.from(h.context.window.location.href.split(',')[1].split('#')[0],'base64').toString('binary');
   assert.match(bytes,/TEST-ONLY/);assert.match(bytes,/no\s+transaction/);
+});
+
+
+test('both receipt paths use the signed-in staff name and provide a handwritten signature line',async()=>{
+  const h=await harness();
+  h.items[0].staff='Original purchaser';
+  h.context.currentUser={displayName:'Maria Santos',username:'maria'};
+  const html=h.api.purchaseReceiptMarkup(h.items),raw=h.api.purchaseReceiptEscPos(h.items,58);
+  assert.match(html,/Staff name:<\/span><strong>Maria Santos<\/strong>/);
+  assert.match(html,/class="receipt-signature-line"/);
+  assert.match(html,/Staff signature/);
+  assert.match(raw,/Staff name: Maria Santos/);
+  assert.match(raw,/_{24}\nStaff signature/);
+  assert.ok(html.indexOf('Staff signature')<html.indexOf('Thank you!'));
+  h.context.currentUser={displayName:'Juan Reyes'};
+  assert.match(h.api.purchaseReceiptMarkup(h.items),/Juan Reyes/);
+  assert.match(h.api.purchaseReceiptEscPos(h.items,58),/Staff name: Juan Reyes/);
+  h.context.currentUser=null;
+  delete h.items[0].staff;
+  assert.match(h.api.purchaseReceiptMarkup(h.items),/Not recorded/);
+  assert.match(h.api.purchaseReceiptEscPos(h.items,58),/Staff name: Not recorded/);
 });
