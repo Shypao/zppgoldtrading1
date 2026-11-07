@@ -17,6 +17,14 @@ async function loadDashboardReports() {
     dailyMetalPurityBreakdownMarkup,
     purchaseTotalsByPurity,
     purchaseSellerGroups,
+    sellerAction(key,action) {
+      let html='',opened='';
+      const oldReceipt=openPurchaseReceipt,oldEdit=openInventoryEdit;
+      globalThis.document={getElementById:()=>null,createElement:()=>({innerHTML:'',addEventListener(){},querySelector:()=>({focus(){}})}),body:{appendChild:element=>{html=element.innerHTML;}}};
+      openPurchaseReceipt=id=>{opened='receipt:'+id;};openInventoryEdit=id=>{opened='edit:'+id;};
+      try {openPurchaseSellerAction({dataset:{purchaseSellerKey:key},focus(){}},action);return {html,opened};}
+      finally {openPurchaseReceipt=oldReceipt;openInventoryEdit=oldEdit;}
+    },
     openSellerMetal(key, metal) {
       let html='';
       globalThis.document={getElementById:()=>null,createElement:()=>({innerHTML:'',addEventListener(){},querySelector:()=>({focus(){}})}),body:{appendChild:element=>{html=element.innerHTML;}}};
@@ -317,6 +325,8 @@ test('Purchase dashboard groups matching sellers by date and exposes their metal
   assert.match(gold,/8K/);assert.match(gold,/24K/);assert.doesNotMatch(gold,/925|22K|10K/);
   assert.match(gold,/data-purchase-receipt="buy-a"/);assert.match(gold,/data-purchase-receipt="buy-b"/);
   assert.doesNotMatch(gold,/data-purchase-receipt="buy-c"/);
+  assert.match(gold,/openPurchaseItemReceipt\(this.dataset.purchaseItemId\)/);
+  assert.match(gold,/data-purchase-item-id="a"/);
   const silver=api.openSellerMetal(groups[0].key,'Silver');assert.match(silver,/925/);assert.doesNotMatch(silver,/24K|8K/);
   assert.equal(JSON.stringify(stock),before,'grouping and detail views must not mutate purchases');
 });
@@ -326,4 +336,24 @@ test('unnamed sellers remain separate across transactions but group items from t
   const base={date:'2026-11-07',customerName:'',metal:'Gold',karat:'18K',netWeight:1,payout:100};
   const groups=api.purchaseSellerGroups([{...base,id:'a',batchId:'buy-a'},{...base,id:'b',batchId:'buy-a'},{...base,id:'c',batchId:'buy-c'},{...base,id:'d'}]);
   assert.equal(groups.length,3);assert.equal(groups[0].items.length,2);assert.equal(groups[0].seller,'Walk-in');
+});
+
+
+test('seller rows retain Print receipt and Edit with correct single and multiple targets',async()=>{
+  const api=await loadDashboardReports();
+  const base={date:'2026-11-07',customerName:'Seller',metal:'Gold',karat:'18K',itemType:'Scrap',netWeight:1,payout:100,status:'Available'};
+  const a={...base,id:'a',batchId:'buy-a'},b={...base,id:'b',batchId:'buy-a'},c={...base,id:'c',batchId:'buy-c'};
+  api.setState(testState([a],'purchases'));
+  let key=api.purchaseSellerGroups([a])[0].key;
+  assert.match(api.renderReports(),/openPurchaseSellerAction\(this,'receipt'\)[^>]*>Print receipt/);
+  assert.match(api.renderReports(),/openPurchaseSellerAction\(this,'edit'\)[^>]*>Edit/);
+  assert.equal(api.sellerAction(key,'receipt').opened,'receipt:buy-a');
+  assert.equal(api.sellerAction(key,'edit').opened,'edit:a');
+  api.setState(testState([a,b,c],'purchases'));
+  const receipts=api.sellerAction(key,'receipt');
+  assert.equal(receipts.opened,'');assert.match(receipts.html,/Choose receipt to print/);
+  assert.equal((receipts.html.match(/data-purchase-action-id="buy-a"/g)||[]).length,1);
+  assert.match(receipts.html,/data-purchase-action-id="buy-c"/);
+  const edits=api.sellerAction(key,'edit');assert.match(edits.html,/Choose item to edit/);
+  for(const id of ['a','b','c'])assert.ok(edits.html.includes('data-purchase-action-id="'+id+'"'));
 });

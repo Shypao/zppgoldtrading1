@@ -2085,7 +2085,8 @@ function cleanupThermalPrintState(){
   document.body.classList.remove('printing-thermal-receipt');
   document.getElementById('thermal_print_page_style')?.remove();
 }
-function closePurchaseReceipt(){ cleanupThermalPrintState(); document.getElementById('purchase_receipt_modal')?.remove(); }
+let purchaseReceiptScope=null;
+function closePurchaseReceipt(){ cleanupThermalPrintState(); document.getElementById('purchase_receipt_modal')?.remove();purchaseReceiptScope=null; }
 function setReceiptPaperSize(value){
   const receipt=document.getElementById('receipt_preview_paper');
   receipt?.classList.toggle('paper-80',String(value)==='80');
@@ -2163,10 +2164,20 @@ function printThermalTestReceipt(){
   sendDirectThermalReceipt([{id:'TEST-ONLY',date:todayStr(),customerName:'Printer test - no transaction',metal:'Gold',karat:'24K',itemType:'TEST ONLY',netWeight:1,rate:1000,payout:1000,paymentMethod:'TEST ONLY'}],width);
 }
 
-function openPurchaseReceipt(batchId){
-  const items=db.stock.filter(item=>(item.batchId||item.id)===batchId);
+function purchaseReceiptRecords(batchId,itemIds=null){
+  const ids=Array.isArray(itemIds)?new Set(itemIds):null;
+  return db.stock.filter(item=>(item.batchId||item.id)===batchId&&(!ids||ids.has(item.id)));
+}
+function openPurchaseItemReceipt(itemId){
+  const item=db.stock.find(record=>record.id===itemId);
+  if(!item){toast('Receipt record not found');return;}
+  openPurchaseReceipt(item.batchId||item.id,[item.id]);
+}
+function openPurchaseReceipt(batchId,itemIds=null){
+  const items=purchaseReceiptRecords(batchId,itemIds);
   if(!items.length){ toast('Receipt record not found'); return; }
   closePurchaseReceipt();
+  purchaseReceiptScope={batchId,itemIds:items.map(item=>item.id)};
   let savedPaperWidth='58';try{savedPaperWidth=localStorage.getItem('thermalReceiptPaperWidth')==='80'?'80':'58';}catch{}
   const modal=document.createElement('div'); modal.id='purchase_receipt_modal'; modal.className='modal-backdrop';
   modal.innerHTML=`<div class="receipt-preview-modal" role="dialog" aria-modal="true" aria-labelledby="receipt_preview_title">
@@ -2223,7 +2234,7 @@ function openThermalReceiptPrintPage(items,paperWidth){
   finally{try{sessionStorage.removeItem(key);}catch{}}
 }
 function printPurchaseReceipt(batchId,method=null){
-  const items=db.stock.filter(item=>(item.batchId||item.id)===batchId);
+  const items=purchaseReceiptRecords(batchId,purchaseReceiptScope?.batchId===batchId?purchaseReceiptScope.itemIds:null);
   if(!items.length){ toast('Receipt record not found'); return; }
   const paperWidth=Number(val('receipt_paper_size'))===80?80:58;
   const selectedMethod=method||val('receipt_print_method')||receiptPrintMethod();
@@ -4894,7 +4905,24 @@ function purchaseSellerRow(group){
   return `<tr data-dashboard-search="${dashboardSearchValue(group.date,fmtDate(group.date),group.seller,...group.items.flatMap(item=>[item.metal,item.karat,item.itemType,item.status,item.staff,item.batchId]))}"><td data-label="Date">${fmtDate(group.date)}</td><td data-label="Seller"><strong>${esc(group.seller)}</strong></td><td data-label="Items"><div class="purchase-seller-metals">${purchaseSellerMetals(group).map(metal=>{
     const items=group.items.filter(item=>item.metal===metal);
     return `<button type="button" class="purchase-seller-metal" data-purchase-seller-key="${esc(group.key)}" data-purchase-metal="${esc(metal)}" onclick="openPurchaseSellerMetal(this)" aria-label="View ${esc(metal)} items from ${esc(group.seller)} on ${esc(fmtDate(group.date))}"><strong>${esc(metal)}</strong><span class="purchase-metal-count">${items.length}</span></button>`;
-  }).join('')}</div></td><td data-label="Net weight" class="num">${fmtWeight(group.weight)}</td><td data-label="Payout" class="num">${fmtMoney(group.payout)}</td><td data-label="Status">${statuses.length===1?statusPill(statuses[0]):'<span class="hint">Multiple statuses</span>'}</td><td data-label="Details"><span class="hint">${group.items.length} item${group.items.length===1?'':'s'} · ${receipts.size} receipt${receipts.size===1?'':'s'}</span></td></tr>`;
+  }).join('')}</div></td><td data-label="Net weight" class="num">${fmtWeight(group.weight)}</td><td data-label="Payout" class="num">${fmtMoney(group.payout)}</td><td data-label="Status">${statuses.length===1?statusPill(statuses[0]):'<span class="hint">Multiple statuses</span>'}</td><td data-label="Details"><div class="purchase-details"><span class="hint">${group.items.length} item${group.items.length===1?'':'s'} · ${receipts.size} receipt${receipts.size===1?'':'s'}</span><div class="form-actions"><button type="button" class="btn secondary small" data-purchase-seller-key="${esc(group.key)}" onclick="openPurchaseSellerAction(this,'receipt')">Print receipt</button>${isAdmin()?`<button type="button" class="btn secondary small" data-purchase-seller-key="${esc(group.key)}" onclick="openPurchaseSellerAction(this,'edit')">Edit</button>`:''}</div></div></td></tr>`;
+}
+function openPurchaseSellerAction(button,action){
+  if(action!=='receipt'&&action!=='edit')return;
+  if(action==='edit'&&!adminEditGuard())return;
+  const items=db.stock.filter(item=>isPurchaseRecord(item)&&purchaseHistoryDateMatch(item)&&purchaseSellerKey(item)===button.dataset.purchaseSellerKey);
+  if(!items.length){toast('These purchases are no longer available in this date range');return;}
+  if(action==='edit'&&items.length===1){openInventoryEdit(items[0].id);return;}
+  const receipts=new Map();
+  items.forEach(item=>{const id=item.batchId||item.id;if(!receipts.has(id))receipts.set(id,[]);receipts.get(id).push(item);});
+  if(action==='receipt'&&receipts.size===1){openPurchaseReceipt([...receipts.keys()][0],items.map(item=>item.id));return;}
+  closePurchaseSellerItems();purchaseSellerReturnFocus=button;
+  const modal=document.createElement('div');modal.id='purchase_seller_items_modal';modal.className='modal-backdrop';
+  const rows=action==='receipt'?[...receipts.entries()].map(([id,records])=>({id,records})):items.map(item=>({id:item.id,records:[item]}));
+  modal.innerHTML=`<div class="inventory-move-modal purchase-seller-items-modal" role="dialog" aria-modal="true" aria-labelledby="purchase_seller_items_title"><div class="summary-modal-head"><div><p class="eyebrow">${esc(items[0].customerName||'Walk-in')} · ${esc(fmtDate(items[0].date))}</p><h2 id="purchase_seller_items_title">${action==='receipt'?'Choose receipt to print':'Choose item to edit'}</h2></div><button class="modal-close" type="button" onclick="closePurchaseSellerItems()" aria-label="Close">×</button></div>${tableOrEmpty(rows,row=>`<tr><td>${action==='receipt'?esc(row.id):`${esc(row.records[0].metal)} ${esc(gradeLabel(row.records[0].metal,row.records[0].karat))} · ${esc(row.records[0].itemType)}`}</td><td>${row.records.length}</td><td class="num">${fmtWeight(row.records.reduce((sum,item)=>sum+Number(item.netWeight||0),0))}</td><td class="num">${fmtMoney(row.records.reduce((sum,item)=>sum+Number(item.payout||0),0))}</td><td><button type="button" class="btn secondary small" data-purchase-action-id="${esc(row.id)}" data-purchase-item-ids="${esc(JSON.stringify(row.records.map(item=>item.id)))}" onclick="${action==='receipt'?'openPurchaseReceipt(this.dataset.purchaseActionId,JSON.parse(this.dataset.purchaseItemIds))':'openInventoryEdit(this.dataset.purchaseActionId)'}">${action==='receipt'?'Print receipt':'Edit'}</button></td></tr>`,[action==='receipt'?'Receipt':'Item','Items','Net weight','Payout','Action'])}</div>`;
+  modal.addEventListener('click',event=>{if(event.target===modal)closePurchaseSellerItems();});
+  modal.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();closePurchaseSellerItems();}});
+  document.body.appendChild(modal);modal.querySelector('.modal-close')?.focus();
 }
 let purchaseSellerReturnFocus=null;
 function closePurchaseSellerItems(){
@@ -4908,7 +4936,7 @@ function openPurchaseSellerMetal(button){
   closePurchaseSellerItems();purchaseSellerReturnFocus=button;
   const first=items[0],weight=items.reduce((sum,item)=>sum+Number(item.netWeight||0),0),payout=items.reduce((sum,item)=>sum+Number(item.payout||0),0);
   const modal=document.createElement('div');modal.id='purchase_seller_items_modal';modal.className='modal-backdrop';
-  modal.innerHTML=`<div class="inventory-move-modal purchase-seller-items-modal" role="dialog" aria-modal="true" aria-labelledby="purchase_seller_items_title"><div class="summary-modal-head"><div><p class="eyebrow">${esc(fmtDate(first.date))} · ${items.length} item${items.length===1?'':'s'}</p><h2 id="purchase_seller_items_title">${esc(first.customerName||'Walk-in')} · ${esc(metal)}</h2></div><button class="modal-close" type="button" onclick="closePurchaseSellerItems()" aria-label="Close">×</button></div><div class="move-confirmation-summary"><div><span>Total weight</span><strong>${fmtWeight(weight)}</strong></div><div><span>Total payout</span><strong>${fmtMoney(payout)}</strong></div></div>${tableOrEmpty(items,item=>`<tr><td><strong>${esc(gradeLabel(item.metal,item.karat))}</strong> · ${esc(item.itemType)}</td><td class="num">${fmtWeight(item.netWeight)}</td><td class="num">${fmtMoney(item.payout)}</td><td>${statusPill(item.status)}</td><td>${esc(item.staff||'No staff recorded')}</td><td><div class="form-actions"><button class="btn secondary small" type="button" data-purchase-receipt="${esc(item.batchId||item.id)}" onclick="openPurchaseReceipt(this.dataset.purchaseReceipt)">Receipt</button>${adminEditButton('Inventory',item.id)}</div></td></tr>`,['Karat / purity','Net weight','Payout','Status','Staff','Actions'])}<div class="form-actions"><button class="btn secondary" type="button" onclick="closePurchaseSellerItems()">Close</button></div></div>`;
+  modal.innerHTML=`<div class="inventory-move-modal purchase-seller-items-modal" role="dialog" aria-modal="true" aria-labelledby="purchase_seller_items_title"><div class="summary-modal-head"><div><p class="eyebrow">${esc(fmtDate(first.date))} · ${items.length} item${items.length===1?'':'s'}</p><h2 id="purchase_seller_items_title">${esc(first.customerName||'Walk-in')} · ${esc(metal)}</h2></div><button class="modal-close" type="button" onclick="closePurchaseSellerItems()" aria-label="Close">×</button></div><div class="move-confirmation-summary"><div><span>Total weight</span><strong>${fmtWeight(weight)}</strong></div><div><span>Total payout</span><strong>${fmtMoney(payout)}</strong></div></div>${tableOrEmpty(items,item=>`<tr><td><strong>${esc(gradeLabel(item.metal,item.karat))}</strong> · ${esc(item.itemType)}</td><td class="num">${fmtWeight(item.netWeight)}</td><td class="num">${fmtMoney(item.payout)}</td><td>${statusPill(item.status)}</td><td>${esc(item.staff||'No staff recorded')}</td><td><div class="form-actions"><button class="btn secondary small" type="button" data-purchase-receipt="${esc(item.batchId||item.id)}" data-purchase-item-id="${esc(item.id)}" onclick="openPurchaseItemReceipt(this.dataset.purchaseItemId)">Receipt</button>${adminEditButton('Inventory',item.id)}</div></td></tr>`,['Karat / purity','Net weight','Payout','Status','Staff','Actions'])}<div class="form-actions"><button class="btn secondary" type="button" onclick="closePurchaseSellerItems()">Close</button></div></div>`;
   modal.addEventListener('click',event=>{if(event.target===modal)closePurchaseSellerItems();});
   modal.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();closePurchaseSellerItems();}});
   document.body.appendChild(modal);modal.querySelector('.modal-close')?.focus();

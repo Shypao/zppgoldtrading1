@@ -20,7 +20,7 @@ async function harness({android=true,method='browser',saved='browser'}={}){
     db:{stock:items},val:id=>values[id]||'',roundMoney:value=>Math.round(value*100)/100,fmtDate:value=>value,todayStr:()=> '2026-11-07',
     gradeLabel:(_metal,karat)=>karat,esc:value=>String(value),toast:value=>calls.push(value),
   });
-  vm.runInContext(code+'\nglobalThis.api={purchaseReceiptMarkup,purchaseReceiptEscPos,thermalReceiptText,setReceiptPrintMethod,receiptPrintMethod,printPurchaseReceipt,openPurchaseReceipt,printThermalTestReceipt};',context);
+  vm.runInContext(code+'\nglobalThis.api={purchaseReceiptRecords,openPurchaseItemReceipt,closePurchaseReceipt,purchaseReceiptMarkup,purchaseReceiptEscPos,thermalReceiptText,setReceiptPrintMethod,receiptPrintMethod,printPurchaseReceipt,openPurchaseReceipt,printThermalTestReceipt};',context);
   return {api:context.api,context,calls,items,appended,storage};
 }
 
@@ -88,4 +88,27 @@ test('both receipt paths use the signed-in staff name and provide a handwritten 
   delete h.items[0].staff;
   assert.match(h.api.purchaseReceiptMarkup(h.items),/Not recorded/);
   assert.match(h.api.purchaseReceiptEscPos(h.items,58),/Staff name: Not recorded/);
+});
+
+
+test('item receipts and both print paths stay scoped to exact IDs despite matching seller names',async()=>{
+  const h=await harness({method:'rawbt'});
+  h.items[0].customerName='Same Seller';h.items[1].customerName='Same Seller';
+  h.items.push({...h.items[0],id:'old-other-transaction',batchId:'buy-old',date:'2026-10-01',karat:'8K',payout:999});
+  h.items.push({...h.items[0],id:'old-shared-batch',date:'2026-10-02',karat:'10K',payout:888});
+  h.api.openPurchaseItemReceipt('stk-test');
+  const preview=h.appended.at(-1).innerHTML;
+  assert.match(preview,/Gold 22K/);assert.doesNotMatch(preview,/Gold 21K|Gold 8K|Gold 10K/);
+  h.api.printPurchaseReceipt('buy-test');
+  let bytes=Buffer.from(h.context.window.location.href.split(',')[1].split('#')[0],'base64').toString('binary');
+  assert.match(bytes,/315,427/);assert.doesNotMatch(bytes,/329,217|13,790|Gold 21K|Gold 10K/);
+  let browserPayload;
+  h.context.window.open=()=>{browserPayload=JSON.parse(h.storage.get('zp_thermal_receipt_print'));return {};};
+  h.api.printPurchaseReceipt('buy-test','browser');
+  assert.match(browserPayload.html,/Gold 22K/);assert.doesNotMatch(browserPayload.html,/Gold 21K|Gold 8K|Gold 10K/);
+  h.api.openPurchaseItemReceipt('stk-2');h.api.printPurchaseReceipt('buy-test');
+  bytes=Buffer.from(h.context.window.location.href.split(',')[1].split('#')[0],'base64').toString('binary');
+  assert.match(bytes,/Gold 21K/);assert.doesNotMatch(bytes,/Gold 22K/);
+  h.api.closePurchaseReceipt();
+  assert.equal(h.api.purchaseReceiptRecords('buy-old').length,1);
 });
