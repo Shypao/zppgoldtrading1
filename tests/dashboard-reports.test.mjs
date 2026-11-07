@@ -309,7 +309,10 @@ test('Purchase dashboard groups matching sellers by date and exposes their metal
   assert.equal((html.match(/data-dashboard-search=/g)||[]).length,3);
   assert.match(html,/Items purchased<\/div><div class="value">5<\/div>/);
   assert.match(html,/data-purchase-metal="Gold"/);assert.match(html,/data-purchase-metal="Silver"/);
-  assert.match(html,/24K, 8K/);assert.match(html,/3 items · 3 receipts/);
+  assert.doesNotMatch(html,/24K, 8K/,'karat lists stay inside the metal detail view');
+  assert.match(html,/<strong>Gold<\/strong><span class="purchase-metal-count">2<\/span>/);
+  assert.match(html,/<strong>Silver<\/strong><span class="purchase-metal-count">1<\/span>/);
+  assert.match(html,/3 items · 3 receipts/);
   const gold=api.openSellerMetal(groups[0].key,'Gold');
   assert.match(gold,/8K/);assert.match(gold,/24K/);assert.doesNotMatch(gold,/925|22K|10K/);
   assert.match(gold,/data-purchase-receipt="buy-a"/);assert.match(gold,/data-purchase-receipt="buy-b"/);
