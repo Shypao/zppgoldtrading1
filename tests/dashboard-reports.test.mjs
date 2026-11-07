@@ -323,10 +323,8 @@ test('Purchase dashboard groups matching sellers by date and exposes their metal
   assert.match(html,/3 items · 3 receipts/);
   const gold=api.openSellerMetal(groups[0].key,'Gold');
   assert.match(gold,/8K/);assert.match(gold,/24K/);assert.doesNotMatch(gold,/925|22K|10K/);
-  assert.match(gold,/data-purchase-receipt="buy-a"/);assert.match(gold,/data-purchase-receipt="buy-b"/);
-  assert.doesNotMatch(gold,/data-purchase-receipt="buy-c"/);
-  assert.match(gold,/openPurchaseItemReceipt\(this.dataset.purchaseItemId\)/);
-  assert.match(gold,/data-purchase-item-id="a"/);
+  assert.doesNotMatch(gold,/openPurchaseReceipt|openPurchaseItemReceipt|openInventoryEdit|data-purchase-receipt/,'metal view is breakdown only');
+  assert.match(gold,/>Karat \/ purity<\/th>/);
   const silver=api.openSellerMetal(groups[0].key,'Silver');assert.match(silver,/925/);assert.doesNotMatch(silver,/24K|8K/);
   assert.equal(JSON.stringify(stock),before,'grouping and detail views must not mutate purchases');
 });
