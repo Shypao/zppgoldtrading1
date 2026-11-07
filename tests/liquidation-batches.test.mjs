@@ -2304,3 +2304,23 @@ test('inventory cost card shows open refining costs separately with metal filter
   api.applyInventorySelection([],{metal:'Platinum'});
   assert.match(api.renderInventory(),/In Refining: <strong>PHP 0<\/strong>/);
 });
+
+
+test('For Refining subtotal includes queued singles and pools before any batch is opened',async()=>{
+  const api=await loadInventoryApi();const state=stateFixture();
+  state.stock=[
+    {id:'queued',date:'2026-09-17',metal:'Gold',karat:'18K',status:'For Refining',currentWeight:1,cost:1000},
+    {id:'pooled-a',date:'2026-09-17',metal:'Gold',karat:'14K',status:'For Refining',inventoryPoolId:'POOL-Q',currentWeight:2,cost:2000},
+    {id:'pooled-b',date:'2026-09-17',metal:'Gold',karat:'14K',status:'For Refining',inventoryPoolId:'POOL-Q',currentWeight:3,cost:3000},
+    {id:'available',date:'2026-09-17',metal:'Gold',karat:'24K',status:'Available',currentWeight:1,cost:9000},
+    {id:'held',date:'2026-09-17',metal:'Gold',karat:'18K',status:'On Hold',currentWeight:1,cost:8000}
+  ];
+  state.inventoryPools=[{id:'POOL-Q',itemIds:['pooled-a','pooled-b'],inventoryStatus:'For Refining',originalWeight:5,originalCost:5000}];
+  state.refiningBatches=[];api.setState(state);
+  assert.match(api.renderInventory(),/In Refining: <strong>PHP 6,000<\/strong>/);
+  state.stock[0].refiningBatchId='R-Q';state.refiningBatches=[{id:'R-Q',date:'2026-09-17',metal:'Gold',status:'Open',itemIds:['queued']}];
+  api.setState(state);
+  assert.match(api.renderInventory(),/In Refining: <strong>PHP 6,000<\/strong>/,'queued input entering a batch must be counted once');
+  api.setPoolClassification('POOL-Q','Available');
+  assert.match(api.renderInventory(),/In Refining: <strong>PHP 1,000<\/strong>/);
+});
