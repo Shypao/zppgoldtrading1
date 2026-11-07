@@ -343,7 +343,7 @@ test('seller rows retain Print receipt and Edit with correct single and multiple
   const a={...base,id:'a',batchId:'buy-a'},b={...base,id:'b',batchId:'buy-a'},c={...base,id:'c',batchId:'buy-c'};
   api.setState(testState([a],'purchases'));
   let key=api.purchaseSellerGroups([a])[0].key;
-  assert.match(api.renderReports(),/openPurchaseSellerAction\(this,'receipt'\)[^>]*>Print receipt/);
+  assert.match(api.renderReports(),/openPurchaseSellerAction\(this,'receipt'\)[^>]*>Receipt/);
   assert.match(api.renderReports(),/openPurchaseSellerAction\(this,'edit'\)[^>]*>Edit/);
   assert.equal(api.sellerAction(key,'receipt').opened,'receipt:buy-a');
   assert.equal(api.sellerAction(key,'edit').opened,'edit:a');
