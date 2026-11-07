@@ -18,11 +18,11 @@ async function loadDashboardReports() {
     purchaseTotalsByPurity,
     purchaseSellerGroups,
     sellerAction(key,action) {
-      let html='',opened='';
+      let html='',opened='',receiptItemIds=[];
       const oldReceipt=openPurchaseReceipt,oldEdit=openInventoryEdit;
       globalThis.document={getElementById:()=>null,createElement:()=>({innerHTML:'',addEventListener(){},querySelector:()=>({focus(){}})}),body:{appendChild:element=>{html=element.innerHTML;}}};
-      openPurchaseReceipt=id=>{opened='receipt:'+id;};openInventoryEdit=id=>{opened='edit:'+id;};
-      try {openPurchaseSellerAction({dataset:{purchaseSellerKey:key},focus(){}},action);return {html,opened};}
+      openPurchaseReceipt=(id,ids=[])=>{opened='receipt:'+id;receiptItemIds=ids;};openInventoryEdit=id=>{opened='edit:'+id;};
+      try {openPurchaseSellerAction({dataset:{purchaseSellerKey:key},focus(){}},action);return {html,opened,receiptItemIds};}
       finally {openPurchaseReceipt=oldReceipt;openInventoryEdit=oldEdit;}
     },
     openSellerMetal(key, metal) {
@@ -349,9 +349,8 @@ test('seller rows retain Print receipt and Edit with correct single and multiple
   assert.equal(api.sellerAction(key,'edit').opened,'edit:a');
   api.setState(testState([a,b,c],'purchases'));
   const receipts=api.sellerAction(key,'receipt');
-  assert.equal(receipts.opened,'');assert.match(receipts.html,/Choose receipt to print/);
-  assert.equal((receipts.html.match(/data-purchase-action-id="buy-a"/g)||[]).length,1);
-  assert.match(receipts.html,/data-purchase-action-id="buy-c"/);
+  assert.equal(receipts.opened,'receipt:buy-a');assert.equal(receipts.html,'');
+  assert.deepEqual(Array.from(receipts.receiptItemIds),['a','b','c']);
   const edits=api.sellerAction(key,'edit');assert.match(edits.html,/Choose item to edit/);
   for(const id of ['a','b','c'])assert.ok(edits.html.includes('data-purchase-action-id="'+id+'"'));
 });

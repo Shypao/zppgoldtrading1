@@ -20,7 +20,7 @@ async function harness({android=true,method='browser',saved='browser'}={}){
     db:{stock:items},val:id=>values[id]||'',roundMoney:value=>Math.round(value*100)/100,fmtDate:value=>value,todayStr:()=> '2026-11-07',
     gradeLabel:(_metal,karat)=>karat,esc:value=>String(value),toast:value=>calls.push(value),
   });
-  vm.runInContext(code+'\nglobalThis.api={purchaseReceiptRecords,openPurchaseItemReceipt,closePurchaseReceipt,purchaseReceiptMarkup,purchaseReceiptEscPos,thermalReceiptText,setReceiptPrintMethod,receiptPrintMethod,printPurchaseReceipt,openPurchaseReceipt,printThermalTestReceipt};',context);
+  vm.runInContext(code+'\nglobalThis.api={openPurchaseReceipt,purchaseReceiptRecords,openPurchaseItemReceipt,closePurchaseReceipt,purchaseReceiptMarkup,purchaseReceiptEscPos,thermalReceiptText,setReceiptPrintMethod,receiptPrintMethod,printPurchaseReceipt,openPurchaseReceipt,printThermalTestReceipt};',context);
   return {api:context.api,context,calls,items,appended,storage};
 }
 
@@ -111,4 +111,22 @@ test('item receipts and both print paths stay scoped to exact IDs despite matchi
   assert.match(bytes,/Gold 21K/);assert.doesNotMatch(bytes,/Gold 22K/);
   h.api.closePurchaseReceipt();
   assert.equal(h.api.purchaseReceiptRecords('buy-old').length,1);
+});
+
+
+test('full seller receipt includes every selected transaction and metal but excludes same-name old purchases',async()=>{
+  const h=await harness({method:'rawbt'});
+  h.items[0].customerName='Same Seller';h.items[1].customerName='Same Seller';
+  h.items.push({...h.items[0],id:'silver-new',batchId:'buy-silver',metal:'Silver',karat:'925',payout:500});
+  h.items.push({...h.items[0],id:'old',batchId:'buy-old',date:'2026-10-01',metal:'Platinum',karat:'999',payout:99999});
+  const ids=['stk-test','stk-2','silver-new'];
+  h.api.openPurchaseReceipt('buy-test',ids);
+  const preview=h.appended.at(-1).innerHTML;
+  assert.match(preview,/Gold 22K/);assert.match(preview,/Gold 21K/);assert.match(preview,/Silver 925/);
+  assert.doesNotMatch(preview,/Platinum|buy-old/);assert.match(preview,/buy-test, buy-silver/);
+  assert.match(preview,/329,717/);
+  h.api.printPurchaseReceipt('buy-test');
+  const bytes=Buffer.from(h.context.window.location.href.split(',')[1].split('#')[0],'base64').toString('binary');
+  assert.match(bytes,/Gold 22K/);assert.match(bytes,/Gold 21K/);assert.match(bytes,/Silver 925/);
+  assert.match(bytes,/329,717/);assert.doesNotMatch(bytes,/Platinum|99,999/);
 });

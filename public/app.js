@@ -2670,9 +2670,10 @@ function receiptStaffName(first) {
     const signedIn = typeof currentUser !== 'undefined' ? (currentUser?.displayName || currentUser?.username || '') : '';
     return signedIn || first?.staff || 'Not recorded';
 }
+function purchaseReceiptTransactionNumber(items) { return [...new Set(items.map(item => item.batchId || item.id))].join(', '); }
 function purchaseReceiptMarkup(items) {
     const first = items[0], total = roundMoney(items.reduce((sum, item) => sum + Number(item.payout), 0));
-    const transactionNumber = first.batchId || first.id;
+    const transactionNumber = purchaseReceiptTransactionNumber(items);
     const itemLines = items.map(item => `<tr class="receipt-item"><td class="receipt-description"><span class="receipt-item-title">${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))}</span><small class="receipt-item-detail">${esc(item.itemType)}</small><small class="receipt-item-rate">Rate: PHP ${receiptMoneyNumber(item.rate)}/g</small></td><td class="receipt-weight">${receiptWeightNumber(item.netWeight)}g</td><td class="receipt-amount">${receiptMoneyNumber(item.payout)}</td></tr>`).join('');
     return `<header class="receipt-header"><div class="receipt-shop">ZP GOLD &amp; SILVER</div><div class="receipt-address">Barcelona St, Zone II<br>Zamboanga City</div></header><div class="receipt-rule"></div>
     <div class="receipt-meta"><span>Date:</span><strong>${esc(fmtDate(first.date))}</strong><span>Customer:</span><strong>${esc(first.customerName || 'Walk-in')}</strong><span>Transaction No.:</span><strong>${esc(transactionNumber)}</strong><span>Staff name:</span><strong>${esc(receiptStaffName(first))}</strong></div><div class="receipt-rule"></div>
@@ -2761,7 +2762,7 @@ function purchaseReceiptEscPos(items, paperWidth = 58) {
     line(rule);
     wrap('Date: ' + fmtDate(first.date));
     wrap('Customer: ' + (first.customerName || 'Walk-in'));
-    wrap('Transaction No.: ' + (first.batchId || first.id));
+    wrap('Transaction No.: ' + purchaseReceiptTransactionNumber(items));
     wrap('Staff name: ' + receiptStaffName(first));
     line(rule);
     bytes += ESC + 'E\x01';
@@ -2817,7 +2818,7 @@ function printThermalTestReceipt() {
 }
 function purchaseReceiptRecords(batchId, itemIds = null) {
     const ids = Array.isArray(itemIds) ? new Set(itemIds) : null;
-    return db.stock.filter(item => (item.batchId || item.id) === batchId && (!ids || ids.has(item.id)));
+    return db.stock.filter(item => ids ? ids.has(item.id) : (item.batchId || item.id) === batchId);
 }
 function openPurchaseItemReceipt(itemId) {
     const item = db.stock.find(record => record.id === itemId);
@@ -6822,11 +6823,8 @@ function openPurchaseSellerAction(button, action) {
         openInventoryEdit(items[0].id);
         return;
     }
-    const receipts = new Map();
-    items.forEach(item => { const id = item.batchId || item.id; if (!receipts.has(id))
-        receipts.set(id, []); receipts.get(id).push(item); });
-    if (action === 'receipt' && receipts.size === 1) {
-        openPurchaseReceipt([...receipts.keys()][0], items.map(item => item.id));
+    if (action === 'receipt') {
+        openPurchaseReceipt(items[0].batchId || items[0].id, items.map(item => item.id));
         return;
     }
     closePurchaseSellerItems();
@@ -6834,7 +6832,7 @@ function openPurchaseSellerAction(button, action) {
     const modal = document.createElement('div');
     modal.id = 'purchase_seller_items_modal';
     modal.className = 'modal-backdrop';
-    const rows = action === 'receipt' ? [...receipts.entries()].map(([id, records]) => ({ id, records })) : items.map(item => ({ id: item.id, records: [item] }));
+    const rows = items.map(item => ({ id: item.id, records: [item] }));
     modal.innerHTML = `<div class="inventory-move-modal purchase-seller-items-modal" role="dialog" aria-modal="true" aria-labelledby="purchase_seller_items_title"><div class="summary-modal-head"><div><p class="eyebrow">${esc(items[0].customerName || 'Walk-in')} · ${esc(fmtDate(items[0].date))}</p><h2 id="purchase_seller_items_title">${action === 'receipt' ? 'Choose receipt to print' : 'Choose item to edit'}</h2></div><button class="modal-close" type="button" onclick="closePurchaseSellerItems()" aria-label="Close">×</button></div>${tableOrEmpty(rows, row => `<tr><td>${action === 'receipt' ? esc(row.id) : `${esc(row.records[0].metal)} ${esc(gradeLabel(row.records[0].metal, row.records[0].karat))} · ${esc(row.records[0].itemType)}`}</td><td>${row.records.length}</td><td class="num">${fmtWeight(row.records.reduce((sum, item) => sum + Number(item.netWeight || 0), 0))}</td><td class="num">${fmtMoney(row.records.reduce((sum, item) => sum + Number(item.payout || 0), 0))}</td><td><button type="button" class="btn secondary small" data-purchase-action-id="${esc(row.id)}" data-purchase-item-ids="${esc(JSON.stringify(row.records.map(item => item.id)))}" onclick="${action === 'receipt' ? 'openPurchaseReceipt(this.dataset.purchaseActionId,JSON.parse(this.dataset.purchaseItemIds))' : 'openInventoryEdit(this.dataset.purchaseActionId)'}">${action === 'receipt' ? 'Print receipt' : 'Edit'}</button></td></tr>`, [action === 'receipt' ? 'Receipt' : 'Item', 'Items', 'Net weight', 'Payout', 'Action'])}</div>`;
     modal.addEventListener('click', event => { if (event.target === modal)
         closePurchaseSellerItems(); });
