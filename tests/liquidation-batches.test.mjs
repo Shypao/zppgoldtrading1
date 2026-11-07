@@ -33,7 +33,7 @@ async function loadInventoryApi() {
     applyInventorySelection(actions, filter = {}) {
       const originalRender = render, originalQuery = document.querySelectorAll, originalGet = document.getElementById;
       let renders = 0;
-      const controls = Object.fromEntries(['inventory_move_selected','inventory_pool_selected','inventory_merge_pools','inventory_clear_selected','inventory_selected_pool_count','inventory_liq_count'].map(id => [id, { disabled: false, textContent: '' }]));
+      const controls = Object.fromEntries(['inventory_apply_category','inventory_move_selected','inventory_pool_selected','inventory_merge_pools','inventory_clear_selected','inventory_selected_pool_count','inventory_liq_count'].map(id => [id, { disabled: false, textContent: '' }]));
       const inputs = db.stock.filter(item => !item.inventoryPoolId).map(item => ({ dataset: { inventoryMoveId: item.id }, checked: false }));
       const pools = db.inventoryPools.map(pool => ({ dataset: { inventoryPoolId: pool.id }, checked: false }));
       document.querySelectorAll = selector => selector === '[data-inventory-move-id]' ? inputs : selector === '[data-inventory-pool-id]' ? pools : [];
@@ -49,6 +49,21 @@ async function loadInventoryApi() {
         });
         return JSON.parse(JSON.stringify({ items: [...inventoryMoveSelection], pools: [...inventoryPoolRowSelection], inputs, poolInputs: pools, controls, renders }));
       } finally { render = originalRender; document.querySelectorAll = originalQuery; document.getElementById = originalGet; }
+    },
+    async applyCategory(status, saved = true) {
+      const originalSave=saveDB, originalRender=render, originalToast=toast, originalGet=document.getElementById, originalQuery=document.querySelectorAll;
+      const originalConfirm=globalThis.confirm;
+      saveDB=async()=>saved;render=()=>'';toast=()=>{};globalThis.confirm=()=>true;
+      document.getElementById=id=>id==='inventory_bulk_status'?{value:status}:null;
+      document.querySelectorAll=()=>[];
+      try { await categorizeCheckedInventory(); return JSON.parse(JSON.stringify({stock:db.stock,pools:db.inventoryPools,selected:[...inventoryPoolRowSelection]})); }
+      finally {saveDB=originalSave;render=originalRender;toast=originalToast;document.getElementById=originalGet;document.querySelectorAll=originalQuery;globalThis.confirm=originalConfirm;}
+    },
+    async returnEntirePool(id, saved = true) {
+      const originalSave=saveDB, originalRender=render, originalToast=toast, originalClose=closeAdminEditModal, originalConfirm=globalThis.confirm;
+      saveDB=async()=>saved;render=()=>'';toast=()=>{};closeAdminEditModal=()=>{};globalThis.confirm=()=>true;editingInventoryPoolId=id;
+      try {await returnSelectedPoolItemsToInventory(true);return JSON.parse(JSON.stringify({stock:db.stock,pools:db.inventoryPools}));}
+      finally {saveDB=originalSave;render=originalRender;toast=originalToast;closeAdminEditModal=originalClose;globalThis.confirm=originalConfirm;}
     },
     renderLiquidation,
     async markPaymentPaid(id, saved = true) {
@@ -1265,6 +1280,7 @@ test('inventory displays a pool as one available row with combined weight and co
   assert.match(editModal, /data-pool-return-item-id="pool-a"/);
   assert.match(editModal, /data-pool-return-item-id="pool-b"/);
   assert.match(editModal, /Return selected to Inventory/);
+  assert.match(editModal, /returnSelectedPoolItemsToInventory\(true\)[^>]*>Return entire pool to Inventory/);
 
   const liquidationModal = api.openPoolLiquidation('POOL-0003');
   assert.match(liquidationModal, /Liquidation destination/);
@@ -1786,7 +1802,7 @@ test('same-purity pool counts as one liquidation item and preserves source alloc
   assert.match(breakdown, /8\.00 g/);
   const html = api.openPoolEdit('POOL-CUSTOM');
   assert.match(html, /<h3>Pool item<\/h3>/);
-  assert.match(html, /<details><summary>Original records/);
+  assert.match(html, /<details><summary>Choose items to return · Original records/);
 });
 
 test('weight dropdown separates karats and quantity breakdown filters to the selected karat', async () => {
@@ -2222,4 +2238,44 @@ test('featured buying range still displays its saved remarks', async () => {
   assert.match(html, /Clean items only/);
   assert.doesNotMatch(html, /openFeaturedRemarksEditor/);
   assert.match(html, />Unpin</);
+});
+
+
+test('Apply category updates checked pools and singles together and rolls back a failed save', async () => {
+  const api=await loadInventoryApi();
+  const state=stateFixture();
+  state.stock=[
+    {id:'single',date:'2026-09-17',metal:'Gold',karat:'24K',status:'Available',currentWeight:1,cost:1000},
+    {id:'member',date:'2026-09-17',metal:'Silver',karat:'925',status:'Available',inventoryPoolId:'POOL-A',currentWeight:2,cost:2000}
+  ];
+  state.inventoryPools=[{id:'POOL-A',itemIds:['member'],originalWeight:2,originalCost:2000}];
+  api.setState(state);
+  api.applyInventorySelection([{kind:'all'}]);
+  let result=await api.applyCategory('For Refining',false);
+  assert.ok(result.stock.every(item=>item.status==='Available'));
+  assert.deepEqual(Array.from(result.selected),['POOL-A']);
+  result=await api.applyCategory('For Refining');
+  assert.ok(result.stock.every(item=>item.status==='For Refining'));
+  assert.equal(result.pools[0].inventoryStatus,'For Refining');
+  assert.deepEqual(Array.from(result.selected),[]);
+  const poolSelection=api.applyInventorySelection([{kind:'pool',id:'POOL-A',checked:true}]);
+  assert.equal(poolSelection.controls.inventory_apply_category.disabled,false);
+  assert.doesNotMatch(api.renderInventory(), /id="inventory_apply_category"[^>]*disabled/);
+  result=await api.applyCategory('On Hold');
+  assert.equal(result.pools[0].onHold,true);
+  assert.equal(result.stock.find(item=>item.id==='member').status,'On Hold');
+  assert.equal(result.stock.find(item=>item.id==='single').status,'For Refining');
+});
+
+test('visible return-entire-pool action preserves weights and costs and rolls back failed saves', async () => {
+  const api=await loadInventoryApi();const state=stateFixture();
+  state.stock=[{id:'member',metal:'Silver',karat:'800',status:'On Hold',inventoryPoolId:'POOL-A',netWeight:20,currentWeight:16,payout:1500,cost:1318.56}];
+  state.inventoryPools=[{id:'POOL-A',itemIds:['member'],originalWeight:20,originalCost:1500,onHold:true}];
+  api.setState(state);
+  let result=await api.returnEntirePool('POOL-A',false);
+  assert.equal(result.pools.length,1);assert.equal(result.stock[0].inventoryPoolId,'POOL-A');
+  result=await api.returnEntirePool('POOL-A');
+  assert.equal(result.pools.length,0);assert.equal(result.stock[0].inventoryPoolId,undefined);
+  assert.equal(result.stock[0].status,'Available');assert.equal(result.stock[0].currentWeight,16);
+  assert.equal(result.stock[0].cost,1318.56);assert.equal(result.stock[0].netWeight,20);assert.equal(result.stock[0].payout,1500);
 });

@@ -2968,6 +2968,9 @@ function syncInventoryMoveCheckboxes() {
     const count = document.getElementById('inventory_liq_count');
     const selected = selectedInventoryForCategory();
     document.querySelectorAll('[data-inventory-selection-required]').forEach(button => { button.disabled = !selected.length; });
+    const categoryButton = document.getElementById('inventory_apply_category');
+    if (categoryButton)
+        categoryButton.disabled = !selected.length && !selectedExistingPoolsForPooling().length;
     const moveButton = document.getElementById('inventory_move_selected');
     if (moveButton)
         moveButton.disabled = !inventoryPoolRowSelection.size && (!selected.length || selected.some(record => !movableInventory(record)));
@@ -3042,22 +3045,32 @@ function clearInventorySelection() { inventoryMoveSelection.clear(); inventoryPo
 async function categorizeCheckedInventory() {
     if (!adminEditGuard())
         return;
-    const selected = selectedInventoryForCategory(), status = val('inventory_bulk_status');
-    if (!selected.length) {
-        toast('Select at least one inventory record');
+    syncVisibleInventorySelections();
+    const selected = selectedInventoryForCategory(), pools = selectedExistingPoolsForPooling(), status = val('inventory_bulk_status');
+    const count = selected.length + pools.length;
+    if (!count) {
+        toast('Select at least one inventory record or pool');
         return;
     }
     if (!['Available', 'For Refining', 'On Hold'].includes(status)) {
         toast('Choose a valid category');
         return;
     }
-    if (!confirm(`Change ${selected.length} selected inventory ${selected.length === 1 ? 'record' : 'records'} to “${status}”?`))
+    if (!confirm(`Change ${count} selected inventory ${count === 1 ? 'item' : 'items'} to “${status}”?`))
         return;
+    const beforeState = JSON.parse(JSON.stringify(db));
     selected.forEach(item => { item.status = status; });
+    pools.forEach(pool => setInventoryPoolClassification(pool, status));
+    if (!await saveDB()) {
+        db = beforeState;
+        render();
+        toast('The selected inventory category was not updated');
+        return;
+    }
     inventoryMoveSelection.clear();
-    await saveDB();
+    inventoryPoolRowSelection.clear();
     render();
-    toast(`${selected.length} inventory ${selected.length === 1 ? 'record' : 'records'} changed to ${status}`);
+    toast(`${count} inventory ${count === 1 ? 'item' : 'items'} changed to ${status}`);
 }
 function closeInventoryMoveConfirmation() {
     document.getElementById('inventory_move_confirmation')?.remove();
@@ -4346,7 +4359,7 @@ function renderInventory() {
 
   <section class="block" id="inventory_stock_list">
     <div class="inventory-stock-head"><div><h2 class="block-title">Stock records</h2><p class="form-note">${inventorySearch ? `${rows.length} matching record${rows.length === 1 ? '' : 's'}` : activeFilterLabels.length ? `Showing: ${activeFilterLabels.map(esc).join(' · ')}` : 'Showing all records'} across ${inventoryDateLabel()}.</p></div><div class="inventory-stock-tools"><div class="field inventory-stock-search"><label for="inventory_stock_search">Search stock records</label><input id="inventory_stock_search" type="search" autocomplete="off" value="${esc(inventorySearch)}" placeholder="Customer, date, metal, karat, or status" oninput="updateInventorySearch(this.value)"></div><div class="field inventory-stock-sort"><label for="inventory_stock_sort">Transaction date</label><select id="inventory_stock_sort" onchange="updateInventorySort(this.value)"><option value="newest" ${inventorySort === 'newest' ? 'selected' : ''}>Newest to oldest</option><option value="oldest" ${inventorySort === 'oldest' ? 'selected' : ''}>Oldest to newest</option></select></div><button class="btn secondary small" onclick="openInventoryFilterModal()">Change filters</button></div></div>
-    ${isAdmin() ? `<div class="inventory-action-panel"><div class="inventory-action-status"><strong>${percentagePool.length} eligible ${inventorySelectedDate === 'All' ? 'across all dates' : 'on this date'}</strong><span><span id="inventory_liq_count">${selectedMoveCount}</span> inventory item${selectedMoveCount === 1 ? '' : 's'} selected<span id="inventory_selected_pool_count">${selectedPoolCount ? ` · ${selectedPoolCount} pool${selectedPoolCount === 1 ? '' : 's'} selected` : ''}</span>${percentagePool.length ? '' : ' · change the filters'}</span>${selectedGradeCounts.size ? `<div class="inventory-selection-chips">${Array.from(selectedGradeCounts.entries()).map(([grade, count]) => `<span>${esc(grade)} · ${count}</span>`).join('')}</div>` : ''}</div><div class="inventory-action-buttons"><div class="inventory-selection-actions" role="group" aria-label="Select inventory"><button class="btn secondary small" onclick="selectAllVisibleInventory()">Select all shown</button><button class="btn secondary small" onclick="selectAllLowKaratGold()">Select low-karat Gold</button><button class="btn secondary small" id="inventory_clear_selected" onclick="clearInventorySelection()" ${selectedMoveCount || selectedPoolCount ? '' : 'disabled'}>Clear</button></div><div class="inventory-bulk-category" role="group" aria-label="Change category"><select id="inventory_bulk_status" aria-label="Category for selected inventory" onchange="inventoryBulkStatus=this.value">${['Available', 'For Refining', 'On Hold'].map(status => `<option ${inventoryBulkStatus === status ? 'selected' : ''}>${status}</option>`).join('')}</select><button class="btn secondary small" data-inventory-selection-required onclick="categorizeCheckedInventory()" ${selectedMoveCount ? '' : 'disabled'}>Apply category</button></div><div class="inventory-operation-actions" role="group" aria-label="Inventory actions"><button class="btn small" id="inventory_pool_selected" onclick="openManualInventoryPoolModal()" ${canPoolSelected ? '' : 'disabled'}>Pool selected</button><button class="btn secondary small" id="inventory_move_selected" onclick="moveCheckedInventoryToLiquidation()" ${canMoveSelected ? '' : 'disabled'}>Move selected to liquidation</button><button class="btn secondary small" onclick="openCombineLiquidationDateSelection()" ${hasMovableStock ? '' : 'disabled'}>Combine dates</button><button class="btn secondary small" data-inventory-selection-required onclick="prepareInventoryForRefining()" ${selectedMoveCount ? '' : 'disabled'}>Refine selected</button><button class="btn secondary small" id="inventory_merge_pools" onclick="openInventoryPoolMergeModal()" ${canMergeSelectedPools ? '' : 'disabled'}>Merge selected pools</button></div></div></div>` : ''}
+    ${isAdmin() ? `<div class="inventory-action-panel"><div class="inventory-action-status"><strong>${percentagePool.length} eligible ${inventorySelectedDate === 'All' ? 'across all dates' : 'on this date'}</strong><span><span id="inventory_liq_count">${selectedMoveCount}</span> inventory item${selectedMoveCount === 1 ? '' : 's'} selected<span id="inventory_selected_pool_count">${selectedPoolCount ? ` · ${selectedPoolCount} pool${selectedPoolCount === 1 ? '' : 's'} selected` : ''}</span>${percentagePool.length ? '' : ' · change the filters'}</span>${selectedGradeCounts.size ? `<div class="inventory-selection-chips">${Array.from(selectedGradeCounts.entries()).map(([grade, count]) => `<span>${esc(grade)} · ${count}</span>`).join('')}</div>` : ''}</div><div class="inventory-action-buttons"><div class="inventory-selection-actions" role="group" aria-label="Select inventory"><button class="btn secondary small" onclick="selectAllVisibleInventory()">Select all shown</button><button class="btn secondary small" onclick="selectAllLowKaratGold()">Select low-karat Gold</button><button class="btn secondary small" id="inventory_clear_selected" onclick="clearInventorySelection()" ${selectedMoveCount || selectedPoolCount ? '' : 'disabled'}>Clear</button></div><div class="inventory-bulk-category" role="group" aria-label="Change category"><select id="inventory_bulk_status" aria-label="Category for selected inventory" onchange="inventoryBulkStatus=this.value">${['Available', 'For Refining', 'On Hold'].map(status => `<option ${inventoryBulkStatus === status ? 'selected' : ''}>${status}</option>`).join('')}</select><button class="btn secondary small" id="inventory_apply_category" onclick="categorizeCheckedInventory()" ${selectedMoveCount || selectedPoolCount ? '' : 'disabled'}>Apply category</button></div><div class="inventory-operation-actions" role="group" aria-label="Inventory actions"><button class="btn small" id="inventory_pool_selected" onclick="openManualInventoryPoolModal()" ${canPoolSelected ? '' : 'disabled'}>Pool selected</button><button class="btn secondary small" id="inventory_move_selected" onclick="moveCheckedInventoryToLiquidation()" ${canMoveSelected ? '' : 'disabled'}>Move selected to liquidation</button><button class="btn secondary small" onclick="openCombineLiquidationDateSelection()" ${hasMovableStock ? '' : 'disabled'}>Combine dates</button><button class="btn secondary small" data-inventory-selection-required onclick="prepareInventoryForRefining()" ${selectedMoveCount ? '' : 'disabled'}>Refine selected</button><button class="btn secondary small" id="inventory_merge_pools" onclick="openInventoryPoolMergeModal()" ${canMergeSelectedPools ? '' : 'disabled'}>Merge selected pools</button></div></div></div>` : ''}
     ${tableOrEmpty(rows, s => `<tr>${isAdmin() ? `<td>${s.isInventoryPool ? `<input type="checkbox" data-inventory-pool-id="${s.inventoryPoolId}" aria-label="Select pooled inventory to merge or add inventory" onchange="toggleInventoryPoolSelection('${s.inventoryPoolId}',this.checked)" ${inventoryPoolRowSelection.has(s.inventoryPoolId) ? 'checked' : ''}>` : `<input type="checkbox" data-inventory-move-id="${s.id}" aria-label="Select ${esc(s.metal)} ${esc(s.karat)} from ${esc(s.customerName)}" onchange="toggleInventoryForLiquidation('${s.id}',this.checked)" ${inventoryMoveSelection.has(s.id) ? 'checked' : ''} ${categorizableInventory(s) ? '' : 'disabled'}>`}</td>` : ''}<td>${fmtDate(s.date)}</td><td>${s.isInventoryPool ? '' : esc(s.customerName)}</td><td><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)}</td>
       <td>${esc(s.itemType)}</td><td class="num">${fmtWeight(s.currentWeight)}</td><td class="num">${fmtMoney(s.cost)}</td><td>${statusPill(s.status)}${s.isInventoryPool ? `<br><span class="form-note">${esc(s.inventoryPoolId)}</span>` : ''}</td><td>${s.isInventoryPool ? esc(s.remarks || '') : esc(s.remarks || '—')}</td>${isAdmin() ? `<td><div class="form-actions">${s.isInventoryPool ? `<button class="btn small" onclick="openPoolLiquidationModal('${s.inventoryPoolId}')">Liquidate</button><button class="btn secondary small" onclick="openInventoryPoolEdit('${s.inventoryPoolId}')">Edit</button>` : `${movableInventory(s) ? `<button class="btn secondary small" onclick="liquidateInventoryItem('${s.id}')">Liquidate</button>` : ''}${adminEditButton('Inventory', s.id)}`}</div></td>` : ''}</tr>`, [...(isAdmin() ? ['Select'] : []), 'Date', 'Customer', 'Metal / karat', 'Type', 'Current weight', 'Cost', 'Status', 'Remarks', ...(isAdmin() ? ['Actions'] : [])], `No stock matches this filter ${inventorySelectedDate === 'All' ? 'across all purchase dates' : `on ${fmtDate(selectedDay.date)}`}.`)}
   </section>
@@ -4383,7 +4396,7 @@ function openInventoryPoolEdit(id) {
     <div class="field"><label>Item type</label><select id="edit_pool_type"><option ${itemType === 'Jewelry' ? 'selected' : ''}>Jewelry</option><option ${itemType === 'Scrap' ? 'selected' : ''}>Scrap</option>${itemType === 'Mixed' ? '<option selected>Mixed</option>' : ''}</select></div>
     <div class="field span-2"><label>Remarks</label><textarea id="edit_pool_remarks">${esc(pool.notes || '')}</textarea></div>
   </div><div class="form-actions" style="justify-content:flex-start;margin-top:10px;"><button type="button" class="btn secondary small" onclick="openInventoryPoolSplitModal('${esc(pool.id)}')">Split pool</button><span class="form-note">Separate part of the pooled balance into a new pool.</span></div><p class="form-note">Changes apply to the pooled balance while every original inventory record remains traceable.</p>
-  <section style="margin-top:20px;padding-top:16px;border-top:2px solid var(--line);">${composition.metal !== 'Mixed' && composition.karat !== 'Mixed' ? `<h3>Pool item</h3><div class="move-confirmation-summary"><div><span>Item</span><strong>${esc(composition.metal)} ${esc(gradeLabel(composition.metal, composition.karat))}</strong></div><div><span>Items</span><strong>1</strong></div><div><span>Weight</span><strong>${fmtWeight(snapshot.weight)}</strong></div><div><span>Cost</span><strong>${fmtMoney(snapshot.cost)}</strong></div></div>` : ''}<details><summary>Original records · ${snapshot.items.length}</summary><h3>Pool items</h3><p class="form-note">Select records to remove from this pool and return as individual Available inventory. If every record is selected, the empty pool will be deleted.</p><div class="table-wrap"><table><thead><tr><th>Select</th><th>Item</th><th>Customer</th><th class="num-head">Remaining weight</th><th class="num-head">Remaining cost</th></tr></thead><tbody>${snapshot.items.map(item => `<tr><td><input type="checkbox" data-pool-return-item-id="${esc(item.id)}" aria-label="Return ${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))} from pool"></td><td><strong>${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))}</strong><br><span class="form-note">${esc(item.itemType)}</span></td><td>${esc(item.customerName || '—')}</td><td class="num">${fmtWeight(item.currentWeight)}</td><td class="num">${fmtMoney(item.cost)}</td></tr>`).join('')}</tbody></table></div><div class="form-actions"><button class="btn secondary" type="button" onclick="returnSelectedPoolItemsToInventory()">Return selected to Inventory</button></div></details></section>`, 'saveInventoryPoolEdit');
+  <section style="margin-top:20px;padding-top:16px;border-top:2px solid var(--line);">${composition.metal !== 'Mixed' && composition.karat !== 'Mixed' ? `<h3>Pool item</h3><div class="move-confirmation-summary"><div><span>Item</span><strong>${esc(composition.metal)} ${esc(gradeLabel(composition.metal, composition.karat))}</strong></div><div><span>Items</span><strong>1</strong></div><div><span>Weight</span><strong>${fmtWeight(snapshot.weight)}</strong></div><div><span>Cost</span><strong>${fmtMoney(snapshot.cost)}</strong></div></div>` : ''}<div class="form-actions" style="justify-content:flex-start;"><button class="btn secondary" type="button" onclick="returnSelectedPoolItemsToInventory(true)">Return entire pool to Inventory</button></div><p class="form-note">Unpool the remaining stock as individual Available inventory records. Current weights and costs are preserved.</p><details><summary>Choose items to return · Original records · ${snapshot.items.length}</summary><h3>Pool items</h3><p class="form-note">Select records to remove from this pool and return as individual Available inventory. If every record is selected, the empty pool will be deleted.</p><div class="table-wrap"><table><thead><tr><th>Select</th><th>Item</th><th>Customer</th><th class="num-head">Remaining weight</th><th class="num-head">Remaining cost</th></tr></thead><tbody>${snapshot.items.map(item => `<tr><td><input type="checkbox" data-pool-return-item-id="${esc(item.id)}" aria-label="Return ${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))} from pool"></td><td><strong>${esc(item.metal)} ${esc(gradeLabel(item.metal, item.karat))}</strong><br><span class="form-note">${esc(item.itemType)}</span></td><td>${esc(item.customerName || '—')}</td><td class="num">${fmtWeight(item.currentWeight)}</td><td class="num">${fmtMoney(item.cost)}</td></tr>`).join('')}</tbody></table></div><div class="form-actions"><button class="btn secondary" type="button" onclick="returnSelectedPoolItemsToInventory()">Return selected to Inventory</button></div></details></section>`, 'saveInventoryPoolEdit');
 }
 function togglePoolEditCustomPurity() {
     const custom = val('edit_pool_karat') === '__custom__';
@@ -4440,17 +4453,19 @@ function detachInventoryPoolItems(pool, itemIds) {
     syncInventoryPool(pool);
     return true;
 }
-async function returnSelectedPoolItemsToInventory() {
+async function returnSelectedPoolItemsToInventory(entirePool = false) {
     if (!adminEditGuard())
         return;
     const pool = db.inventoryPools.find(item => item.id === editingInventoryPoolId);
     if (!pool)
         return;
-    const ids = Array.from(document.querySelectorAll?.('[data-pool-return-item-id]:checked') || []).map(input => input.dataset.poolReturnItemId).filter(Boolean);
+    const ids = entirePool ? [...(pool.itemIds || [])] : Array.from(document.querySelectorAll?.('[data-pool-return-item-id]:checked') || []).map(input => input.dataset.poolReturnItemId).filter(Boolean);
     if (!ids.length) {
         toast('Select at least one pool item to return');
         return;
     }
+    if (entirePool && !confirm('Return the entire pool to individual Available inventory records? Current weights and costs will stay unchanged.'))
+        return;
     const beforeState = JSON.parse(JSON.stringify(db));
     if (!detachInventoryPoolItems(pool, ids)) {
         toast('The selected pool items could not be returned');
