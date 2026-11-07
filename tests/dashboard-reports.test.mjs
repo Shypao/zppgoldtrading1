@@ -16,6 +16,13 @@ async function loadDashboardReports() {
     todayPurchaseMetalSummary,
     dailyMetalPurityBreakdownMarkup,
     purchaseTotalsByPurity,
+    purchaseSellerGroups,
+    openSellerMetal(key, metal) {
+      let html='';
+      globalThis.document={getElementById:()=>null,createElement:()=>({innerHTML:'',addEventListener(){},querySelector:()=>({focus(){}})}),body:{appendChild:element=>{html=element.innerHTML;}}};
+      openPurchaseSellerMetal({dataset:{purchaseSellerKey:key,purchaseMetal:metal},focus(){}});
+      return html;
+    },
     setInventoryView(date, metal = 'All') {
       inventoryWeekOffset = 0;
       inventorySelectedDate = date;
@@ -281,4 +288,39 @@ test('stock records table can be dragged horizontally on phone widths', async ()
 
   assert.match(source, /#inventory_stock_list \.table-wrap\{overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y\}/);
   assert.match(source, /#inventory_stock_list table\{min-width:960px\}/);
+});
+
+
+test('Purchase dashboard groups matching sellers by date and exposes their metals without merging receipts',async()=>{
+  const api=await loadDashboardReports();
+  const base={date:'2026-11-07',itemType:'Scrap',status:'Available',currentWeight:1,netWeight:1,payout:100,staff:'Staff'};
+  const stock=[
+    {...base,id:'a',batchId:'buy-a',customerName:'Dalia Felix',metal:'Gold',karat:'8K'},
+    {...base,id:'b',batchId:'buy-b',customerName:' dalia  felix ',metal:'Gold',karat:'24K',netWeight:2,payout:200},
+    {...base,id:'c',batchId:'buy-c',customerName:'Dalia Felix',metal:'Silver',karat:'925',netWeight:3,payout:300},
+    {...base,id:'d',batchId:'buy-d',customerName:'Mad',metal:'Gold',karat:'10K'},
+    {...base,id:'e',batchId:'buy-e',customerName:'Dalia Felix',metal:'Gold',karat:'22K',date:'2026-11-06'}
+  ];
+  const before=JSON.stringify(stock);api.setState(testState(stock,'purchases'));
+  const groups=api.purchaseSellerGroups(stock);
+  assert.equal(groups.length,3);assert.equal(groups[0].items.length,3);
+  assert.equal(groups[0].weight,6);assert.equal(groups[0].payout,600);
+  const html=api.renderReports();
+  assert.equal((html.match(/data-dashboard-search=/g)||[]).length,3);
+  assert.match(html,/Items purchased<\/div><div class="value">5<\/div>/);
+  assert.match(html,/data-purchase-metal="Gold"/);assert.match(html,/data-purchase-metal="Silver"/);
+  assert.match(html,/24K, 8K/);assert.match(html,/3 items · 3 receipts/);
+  const gold=api.openSellerMetal(groups[0].key,'Gold');
+  assert.match(gold,/8K/);assert.match(gold,/24K/);assert.doesNotMatch(gold,/925|22K|10K/);
+  assert.match(gold,/data-purchase-receipt="buy-a"/);assert.match(gold,/data-purchase-receipt="buy-b"/);
+  assert.doesNotMatch(gold,/data-purchase-receipt="buy-c"/);
+  const silver=api.openSellerMetal(groups[0].key,'Silver');assert.match(silver,/925/);assert.doesNotMatch(silver,/24K|8K/);
+  assert.equal(JSON.stringify(stock),before,'grouping and detail views must not mutate purchases');
+});
+
+test('unnamed sellers remain separate across transactions but group items from the same receipt',async()=>{
+  const api=await loadDashboardReports();
+  const base={date:'2026-11-07',customerName:'',metal:'Gold',karat:'18K',netWeight:1,payout:100};
+  const groups=api.purchaseSellerGroups([{...base,id:'a',batchId:'buy-a'},{...base,id:'b',batchId:'buy-a'},{...base,id:'c',batchId:'buy-c'},{...base,id:'d'}]);
+  assert.equal(groups.length,3);assert.equal(groups[0].items.length,2);assert.equal(groups[0].seller,'Walk-in');
 });

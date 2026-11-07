@@ -807,6 +807,11 @@
   .daily-metal-purity-breakdown h3,.daily-metal-transactions-heading{font-family:'Fraunces',serif;font-size:17px;margin:0 0 9px}
   .daily-metal-transactions-heading{margin-top:20px}
   .customer-history-search{margin-top:18px;margin-bottom:12px}
+  .purchase-seller-metals{display:grid;gap:8px;min-width:0;}
+  .purchase-seller-metal{display:grid;gap:4px;width:100%;padding:10px;text-align:left;font:inherit;color:var(--ink);background:var(--paper-2);border:1px solid var(--line);cursor:pointer;overflow-wrap:anywhere;}
+  .purchase-seller-metal strong{color:var(--brass-deep);}.purchase-seller-metal span{font-size:12px;line-height:1.4;}.purchase-seller-metal small{color:var(--ink-soft);font-size:11px;}
+  .purchase-seller-metal:hover{border-color:var(--brass-deep);}.purchase-seller-metal:focus-visible{outline:3px solid var(--brass-deep);outline-offset:2px;}
+  .purchase-seller-items-modal .table-wrap{margin-top:16px;}.purchase-seller-items-modal table{min-width:620px;}
   .purchase-history-filter-card{width:min(100%,1080px);margin:16px 0 10px;padding:14px 16px;border:1px solid var(--line);background:var(--paper-2)}
   .purchase-history-filter-top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px}
   .purchase-history-filter-top>div:first-child{display:flex;flex-direction:column;gap:3px}
@@ -1184,6 +1189,6 @@
   </main>
 </div>
 
-<script src="./app.js?v=20261108-for-refining-subtotal"></script>
+<script src="./app.js?v=20261108-seller-purchases"></script>
 </body>
 </html>

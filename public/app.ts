@@ -4872,33 +4872,73 @@ function renderLiquidationHistory(){
   </section>`;
 }
 
+function purchaseSellerKey(item){
+  const name=String(item.customerName||'').trim().replace(/\s+/g,' ').toLocaleLowerCase('en-PH');
+  // Unnamed sellers from separate transactions must never be merged together.
+  return JSON.stringify([item.date,name?'seller':'transaction',name||item.batchId||item.id]);
+}
+function purchaseSellerGroups(purchases){
+  const groups=new Map();
+  purchases.forEach(item=>{
+    const key=purchaseSellerKey(item);
+    if(!groups.has(key))groups.set(key,{key,date:item.date,seller:String(item.customerName||'').trim()||'Walk-in',items:[],weight:0,payout:0});
+    const group=groups.get(key);group.items.push(item);group.weight+=Number(item.netWeight||0);group.payout+=Number(item.payout||0);
+  });
+  return [...groups.values()];
+}
+function purchaseSellerMetals(group){
+  return [...new Set(group.items.map(item=>item.metal))].sort((a,b)=>['Gold','Silver','Platinum'].indexOf(a)-['Gold','Silver','Platinum'].indexOf(b));
+}
+function purchaseSellerRow(group){
+  const statuses=[...new Set(group.items.map(item=>item.status))],receipts=new Set(group.items.map(item=>item.batchId||item.id));
+  return `<tr data-dashboard-search="${dashboardSearchValue(group.date,fmtDate(group.date),group.seller,...group.items.flatMap(item=>[item.metal,item.karat,item.itemType,item.status,item.staff,item.batchId]))}"><td data-label="Date">${fmtDate(group.date)}</td><td data-label="Seller"><strong>${esc(group.seller)}</strong></td><td data-label="Items"><div class="purchase-seller-metals">${purchaseSellerMetals(group).map(metal=>{
+    const items=group.items.filter(item=>item.metal===metal),grades=[...new Set(items.map(item=>item.karat))].sort((a,b)=>gradeSortIndex(metal,a)-gradeSortIndex(metal,b)||String(a).localeCompare(String(b)));
+    return `<button type="button" class="purchase-seller-metal" data-purchase-seller-key="${esc(group.key)}" data-purchase-metal="${esc(metal)}" onclick="openPurchaseSellerMetal(this)" aria-label="View ${esc(metal)} items from ${esc(group.seller)} on ${esc(fmtDate(group.date))}"><strong>${esc(metal)}</strong><span>${grades.map(grade=>esc(gradeLabel(metal,grade))).join(', ')}</span><small>${items.length} item${items.length===1?'':'s'} · ${fmtWeight(items.reduce((sum,item)=>sum+Number(item.netWeight||0),0))}</small></button>`;
+  }).join('')}</div></td><td data-label="Net weight" class="num">${fmtWeight(group.weight)}</td><td data-label="Payout" class="num">${fmtMoney(group.payout)}</td><td data-label="Status">${statuses.length===1?statusPill(statuses[0]):'<span class="hint">Multiple statuses</span>'}</td><td data-label="Details"><span class="hint">${group.items.length} item${group.items.length===1?'':'s'} · ${receipts.size} receipt${receipts.size===1?'':'s'}</span></td></tr>`;
+}
+let purchaseSellerReturnFocus=null;
+function closePurchaseSellerItems(){
+  document.getElementById('purchase_seller_items_modal')?.remove();
+  purchaseSellerReturnFocus?.focus();purchaseSellerReturnFocus=null;
+}
+function openPurchaseSellerMetal(button){
+  const key=button.dataset.purchaseSellerKey,metal=button.dataset.purchaseMetal;
+  const items=db.stock.filter(item=>isPurchaseRecord(item)&&purchaseHistoryDateMatch(item)&&purchaseSellerKey(item)===key&&item.metal===metal);
+  if(!items.length){toast('These purchase items are no longer available in this date range');return;}
+  closePurchaseSellerItems();purchaseSellerReturnFocus=button;
+  const first=items[0],weight=items.reduce((sum,item)=>sum+Number(item.netWeight||0),0),payout=items.reduce((sum,item)=>sum+Number(item.payout||0),0);
+  const modal=document.createElement('div');modal.id='purchase_seller_items_modal';modal.className='modal-backdrop';
+  modal.innerHTML=`<div class="inventory-move-modal purchase-seller-items-modal" role="dialog" aria-modal="true" aria-labelledby="purchase_seller_items_title"><div class="summary-modal-head"><div><p class="eyebrow">${esc(fmtDate(first.date))} · ${items.length} item${items.length===1?'':'s'}</p><h2 id="purchase_seller_items_title">${esc(first.customerName||'Walk-in')} · ${esc(metal)}</h2></div><button class="modal-close" type="button" onclick="closePurchaseSellerItems()" aria-label="Close">×</button></div><div class="move-confirmation-summary"><div><span>Total weight</span><strong>${fmtWeight(weight)}</strong></div><div><span>Total payout</span><strong>${fmtMoney(payout)}</strong></div></div>${tableOrEmpty(items,item=>`<tr><td><strong>${esc(gradeLabel(item.metal,item.karat))}</strong> · ${esc(item.itemType)}</td><td class="num">${fmtWeight(item.netWeight)}</td><td class="num">${fmtMoney(item.payout)}</td><td>${statusPill(item.status)}</td><td>${esc(item.staff||'No staff recorded')}</td><td><div class="form-actions"><button class="btn secondary small" type="button" data-purchase-receipt="${esc(item.batchId||item.id)}" onclick="openPurchaseReceipt(this.dataset.purchaseReceipt)">Receipt</button>${adminEditButton('Inventory',item.id)}</div></td></tr>`,['Karat / purity','Net weight','Payout','Status','Staff','Actions'])}<div class="form-actions"><button class="btn secondary" type="button" onclick="closePurchaseSellerItems()">Close</button></div></div>`;
+  modal.addEventListener('click',event=>{if(event.target===modal)closePurchaseSellerItems();});
+  modal.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();closePurchaseSellerItems();}});
+  document.body.appendChild(modal);modal.querySelector('.modal-close')?.focus();
+}
+
 function renderReports(){
   const allPurchases=db.stock.filter(isPurchaseRecord);
   const allReadyStock=db.stock.filter(s=>!s.inventoryPoolId&&!s.refiningBatchId&&(s.status==='Available'||s.status==='For Refining')&&s.currentWeight>0);
   const readyStock=allReadyStock.filter(readinessDateMatch).slice().sort((a,b)=>b.date.localeCompare(a.date));
   const renderPurchaseReport=()=>{
     const purchases=allPurchases.filter(purchaseHistoryDateMatch).slice().sort((a,b)=>b.date.localeCompare(a.date));
+    const sellerGroups=purchaseSellerGroups(purchases);
     const purchaseWeight=purchases.reduce((sum,item)=>sum+Number(item.netWeight||0),0);
     const purchasePayout=purchases.reduce((sum,item)=>sum+Number(item.payout||0),0);
     return `<div id="dashboard_report_content" class="dashboard-report-content">
   <section class="block recent-purchases purchase-history">
-    <div class="batch-head"><div><h2 class="block-title">Purchase</h2><p class="form-note">All recorded purchases are kept here in one view.</p></div><div class="form-actions"><button class="btn secondary small" onclick="openCustomerHistoryModal()">View customer history</button><button class="btn small" onclick="exportPurchases()">Download purchase CSV</button></div></div>
+    <div class="batch-head"><div><h2 class="block-title">Purchase</h2><p class="form-note">Items are grouped by seller and purchase date. Choose a metal to view its items.</p></div><div class="form-actions"><button class="btn secondary small" onclick="openCustomerHistoryModal()">View customer history</button><button class="btn small" onclick="exportPurchases()">Download purchase CSV</button></div></div>
     <div class="purchase-history-filter-card">
       <div class="purchase-history-filter-top"><div><strong>Purchase date</strong><span>Choose a date range or use a quick option.</span></div><div class="purchase-history-presets"><button class="btn secondary small" onclick="setPurchaseHistoryDatePreset('today')">Today</button><button class="btn secondary small" onclick="setPurchaseHistoryDatePreset('month')">This month</button><button class="btn secondary small" onclick="setPurchaseHistoryDatePreset('all')" ${purchaseHistoryFrom||purchaseHistoryTo?'':'disabled'}>Clear dates</button></div></div>
       <div class="purchase-history-date-row"><div class="field"><label for="purchase_history_from">From</label><input id="purchase_history_from" type="date" value="${esc(purchaseHistoryFrom)}"></div><div class="field"><label for="purchase_history_to">To</label><input id="purchase_history_to" type="date" value="${esc(purchaseHistoryTo)}"></div><button class="btn" onclick="applyPurchaseHistoryDates()">Apply dates</button></div>
       <div class="purchase-history-active-range"><span>Showing:</span><strong>${esc(purchaseHistoryFilterLabel())}</strong></div>
     </div>
-    ${dashboardReportSearch('Search seller, metal, purity, status, or staff',purchases.length)}
+    ${dashboardReportSearch('Search seller, metal, purity, status, or staff',sellerGroups.length)}
     <div class="stat-row" style="margin:16px 0;">
       <div class="stat"><div class="label">Items purchased</div><div class="value">${purchases.length}</div></div>
       <div class="stat"><div class="label">Total net weight</div><div class="value">${fmtWeight(purchaseWeight)}</div></div>
       <div class="stat"><div class="label">Total payout</div><div class="value">${fmtMoney(purchasePayout)}</div></div>
     </div>
-    ${tableOrEmpty(purchases,
-      s=>`<tr data-dashboard-search="${dashboardSearchValue(s.date,fmtDate(s.date),s.customerName,s.metal,s.karat,s.itemType,s.status,s.staff,s.batchId)}"><td data-label="Date">${fmtDate(s.date)}</td><td data-label="Seller">${esc(s.customerName)}</td><td data-label="Item"><span class="metal-tag ${s.metal.toLowerCase()}">${s.metal}</span> ${esc(s.karat)} · ${esc(s.itemType)}</td>
-      <td data-label="Net weight" class="num">${fmtWeight(s.netWeight)}</td><td data-label="Payout" class="num">${fmtMoney(s.payout)}</td><td data-label="Status">${statusPill(s.status)}</td>
-      <td data-label="Details"><div class="purchase-details"><span class="hint">${esc(s.staff||'No staff recorded')}</span><div class="form-actions"><button class="btn secondary small" onclick="openPurchaseReceipt('${s.batchId||s.id}')">Receipt</button>${adminEditButton('Inventory',s.id)}</div></div></td></tr>`,
-      ['Date','Seller','Item','Net weight','Payout','Status','Details'], 'No purchases recorded yet.')}
+    ${tableOrEmpty(sellerGroups,purchaseSellerRow,
+      ['Date','Seller','Items','Net weight','Payout','Status','Details'], 'No purchases recorded yet.')}
   </section></div>`;
   };
   const renderReadinessReport=()=>`<div id="dashboard_report_content" class="dashboard-report-content"><section class="block">
