@@ -2279,3 +2279,28 @@ test('visible return-entire-pool action preserves weights and costs and rolls ba
   assert.equal(result.stock[0].status,'Available');assert.equal(result.stock[0].currentWeight,16);
   assert.equal(result.stock[0].cost,1318.56);assert.equal(result.stock[0].netWeight,20);assert.equal(result.stock[0].payout,1500);
 });
+
+
+test('inventory cost card shows open refining costs separately with metal filtering and no pool duplication',async()=>{
+  const api=await loadInventoryApi();const state=stateFixture();
+  state.stock=[
+    {id:'available',date:'2026-09-17',metal:'Gold',karat:'24K',status:'Available',currentWeight:1,cost:9000},
+    {id:'gold-input',date:'2026-09-17',metal:'Gold',karat:'18K',status:'For Refining',refiningBatchId:'R-G',inventoryPoolId:'POOL-G',currentWeight:2,cost:44000},
+    {id:'silver-input',date:'2026-09-17',metal:'Silver',karat:'925',status:'For Refining',refiningBatchId:'R-S',currentWeight:3,cost:3000},
+    {id:'completed-input',date:'2026-09-17',metal:'Gold',karat:'18K',status:'Refined',currentWeight:0,cost:0}
+  ];
+  state.inventoryPools=[{id:'POOL-G',itemIds:['gold-input'],originalWeight:2,originalCost:44000}];
+  state.refiningBatches=[
+    {id:'R-G',status:'Open',itemIds:['gold-input'],inputCost:40000},
+    {id:'R-S',status:'Open',itemIds:['silver-input'],inputCost:3000},
+    {id:'R-C',status:'Completed',itemIds:['completed-input'],inputCost:99999}
+  ];
+  api.setState(state);
+  let html=api.renderInventory();
+  assert.match(html,/Total inventory cost<\/div><div class="value">PHP 9,000<\/div>/);
+  assert.match(html,/In Refining: <strong>PHP 47,000<\/strong>/);
+  api.applyInventorySelection([],{metal:'Gold'});
+  html=api.renderInventory();assert.match(html,/In Refining: <strong>PHP 44,000<\/strong>/);
+  api.applyInventorySelection([],{metal:'Platinum'});
+  assert.match(api.renderInventory(),/In Refining: <strong>PHP 0<\/strong>/);
+});

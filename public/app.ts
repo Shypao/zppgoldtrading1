@@ -3332,6 +3332,8 @@ function renderInventory(){
     : breakdown.map(entry=>`<tr><td><span class="metal-tag ${entry.metal.toLowerCase()}">${entry.metal}</span></td><td>${esc(gradeLabel(entry.metal,entry.karat))}</td><td class="num">${entry.count}</td><td class="num">${fmtWeight(entry.weight)}</td><td class="num">${fmtMoney(entry.cost)}</td></tr>`).join('');
   const breakdownWeight=breakdownSource.reduce((sum,item)=>sum+Number(item.currentWeight),0);
   const breakdownCost=breakdownSource.reduce((sum,item)=>sum+Number(item.cost),0);
+  const inRefiningIds=new Set(db.refiningBatches.filter(batch=>batch.status==='Open').flatMap(batch=>batch.itemIds||[]));
+  const inRefiningCost=db.stock.filter(item=>inRefiningIds.has(item.id)&&(invFilter.metal==='All'||item.metal===invFilter.metal)).reduce((sum,item)=>sum+Number(item.cost||0),0);
   const lowKaratGold=currentStock.filter(lowKaratGoldInventory);
   const lowKaratEligible=lowKaratGold.filter(categorizableInventory);
   const lowKaratWeight=lowKaratGold.reduce((sum,item)=>sum+Number(item.currentWeight),0);
@@ -3345,7 +3347,7 @@ function renderInventory(){
     <div class="stat-row inventory-overview-stats">
       <div class="stat"><div class="label">Current items</div><div class="value">${breakdownSource.length}</div><div class="sub">active records across all dates</div></div>
       <div class="stat"><div class="label">Total weight</div><div class="value">${fmtWeight(breakdownWeight)}</div><div class="sub">remaining current stock</div></div>
-      <div class="stat"><div class="label">Total inventory cost</div><div class="value">${fmtMoney(breakdownCost)}</div><div class="sub">combined carrying cost</div></div>
+      <div class="stat"><div class="label">Total inventory cost</div><div class="value">${fmtMoney(breakdownCost)}</div><div class="sub">combined carrying cost</div><div class="sub inventory-refining-subtotal" title="Current cost of inputs in open refining batches">In Refining: <strong>${fmtMoney(inRefiningCost)}</strong></div></div>
       <div class="stat"><div class="label">Karat / purity groups</div><div class="value">${breakdown.length}</div><div class="sub">shown in the breakdown below</div></div>
     </div>
     ${(invFilter.metal==='All'||invFilter.metal==='Gold')&&isAdmin()?`<div class="low-karat-card"><div><span class="low-karat-label">Quick refining selection</span><strong>Low-karat Gold</strong><small>Below 18K · ${lowKaratGold.length} item${lowKaratGold.length===1?'':'s'} · ${fmtWeight(lowKaratWeight)} across all dates</small></div><button class="btn" onclick="selectAllLowKaratGold()" ${lowKaratEligible.length?'':'disabled'}>Select all for refining (${lowKaratEligible.length})</button></div>`:''}
