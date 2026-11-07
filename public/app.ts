@@ -2086,6 +2086,78 @@ function setReceiptPaperSize(value){
   receipt?.classList.toggle('paper-80',String(value)==='80');
   try{localStorage.setItem('thermalReceiptPaperWidth',String(value)==='80'?'80':'58');}catch{}
 }
+function androidThermalPrinting(){ return typeof navigator!=='undefined'&&/Android/i.test(navigator.userAgent||''); }
+function receiptPrintMethod(){
+  if(!androidThermalPrinting())return 'browser';
+  try{return localStorage.getItem('thermalReceiptPrintMethod')==='rawbt'?'rawbt':'browser';}catch{return 'browser';}
+}
+function setReceiptPrintMethod(value){
+  const method=androidThermalPrinting()&&value==='rawbt'?'rawbt':'browser';
+  try{localStorage.setItem('thermalReceiptPrintMethod',method);}catch{}
+  document.getElementById('receipt_direct_help')?.classList.toggle('is-hidden',method!=='rawbt');
+}
+// RawBT receives raw bytes, not HTML/PDF pages. Only our own ESC/POS commands
+// may enter the stream; receipt fields cannot inject control codes or line feeds.
+function thermalReceiptText(value){
+  return String(value??'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[^\x20-\x7e]/g,' ').replace(/\s+/g,' ').trim();
+}
+function thermalReceiptLines(value,columns){
+  const text=thermalReceiptText(value),lines=[];
+  let remaining=text;
+  while(remaining.length>columns){
+    const space=remaining.lastIndexOf(' ',columns),end=space>0?space:columns;
+    lines.push(remaining.slice(0,end));remaining=remaining.slice(end).trimStart();
+  }
+  if(remaining)lines.push(remaining);
+  return lines.length?lines:[''];
+}
+function purchaseReceiptEscPos(items,paperWidth=58){
+  if(!items.length)return '';
+  const columns=paperWidth===80?48:32,first=items[0],rule='-'.repeat(columns);
+  const total=roundMoney(items.reduce((sum,item)=>sum+Number(item.payout),0));
+  const ESC='\x1b',GS='\x1d';
+  // Font A, normal size, standard line spacing. No fixed page length, cash-drawer
+  // command or cutter command: portable printers may have neither peripheral.
+  let bytes=ESC+'@'+ESC+'M\x00'+GS+'!\x00'+ESC+'2';
+  const line=text=>{bytes+=text+'\n';};
+  const wrap=text=>thermalReceiptLines(text,columns).forEach(line);
+  const pair=(label,value)=>{
+    const left=thermalReceiptText(label),right=thermalReceiptText(value);
+    if(left.length+right.length+1<=columns)line(left+' '.repeat(columns-left.length-right.length)+right);
+    else{wrap(left);thermalReceiptLines(right,columns).forEach(part=>line(part.padStart(columns)));}
+  };
+  bytes+=ESC+'a\x01'+ESC+'E\x01'+GS+'!\x10';line('ZP GOLD & SILVER');
+  bytes+=GS+'!\x00'+ESC+'E\x00';line('Barcelona St, Zone II');line('Zamboanga City');bytes+=ESC+'a\x00';
+  line(rule);wrap('Date: '+fmtDate(first.date));wrap('Customer: '+(first.customerName||'Walk-in'));
+  wrap('Transaction No.: '+(first.batchId||first.id));if(first.staff)wrap('Staff: '+first.staff);
+  line(rule);bytes+=ESC+'E\x01';pair('ITEM','WT / AMT');bytes+=ESC+'E\x00';
+  items.forEach(item=>{
+    bytes+=ESC+'E\x01';wrap(item.metal+' '+gradeLabel(item.metal,item.karat));
+    pair(receiptWeightNumber(item.netWeight)+' g','PHP '+receiptMoneyNumber(item.payout));bytes+=ESC+'E\x00';
+    if(item.itemType)wrap(item.itemType);wrap('Rate: PHP '+receiptMoneyNumber(item.rate)+'/g');line(rule);
+  });
+  bytes+=ESC+'E\x01';pair('TOTAL','PHP '+receiptMoneyNumber(total));bytes+=ESC+'E\x00';
+  pair('PAID','PHP '+receiptMoneyNumber(total));pair('METHOD',first.paymentMethod||'-');line(rule);
+  bytes+=ESC+'a\x01';line('Thank you!');wrap('"Because gold is honest money it is disliked by dishonest men."');
+  // Two extra lines to tear the receipt; never feed an entire browser page.
+  bytes+='\n\n'+ESC+'a\x00';
+  return bytes;
+}
+function sendDirectThermalReceipt(items,paperWidth){
+  if(!androidThermalPrinting()){toast('Direct thermal printing needs Android and RawBT. Use Browser print on this device.');return;}
+  try{
+    const data=btoa(purchaseReceiptEscPos(items,paperWidth));
+    // Official RawBT intent format. Printing is a deliberate user click; no
+    // automatic browser fallback/retry because the bridge gives no delivery ACK.
+    window.location.href='intent:base64,'+data+'#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;';
+    toast('Sent to RawBT. If nothing prints, check RawBT and the printer before retrying, or use Browser print.');
+  }catch{toast('Could not open RawBT. Check that it is installed, or use Browser print.');}
+}
+function printThermalTestReceipt(){
+  const width=Number(val('receipt_paper_size'))===80?80:58;
+  sendDirectThermalReceipt([{id:'TEST-ONLY',date:todayStr(),customerName:'Printer test - no transaction',metal:'Gold',karat:'24K',itemType:'TEST ONLY',netWeight:1,rate:1000,payout:1000,paymentMethod:'TEST ONLY'}],width);
+}
+
 function openPurchaseReceipt(batchId){
   const items=db.stock.filter(item=>(item.batchId||item.id)===batchId);
   if(!items.length){ toast('Receipt record not found'); return; }
@@ -2096,7 +2168,8 @@ function openPurchaseReceipt(batchId){
     <div class="summary-modal-head"><div><div class="eyebrow">Thermal receipt preview</div><h2 id="receipt_preview_title">Buying receipt</h2></div><button class="modal-close" onclick="closePurchaseReceipt()" aria-label="Close">×</button></div>
     <div class="receipt-preview-stage"><div class="thermal-receipt ${savedPaperWidth==='80'?'paper-80':''}" id="receipt_preview_paper">${purchaseReceiptMarkup(items)}</div></div>
     <div class="receipt-preview-controls"><div class="field"><label for="receipt_paper_size">Thermal paper width</label><select id="receipt_paper_size" onchange="setReceiptPaperSize(this.value)"><option value="58" ${savedPaperWidth==='58'?'selected':''}>58 mm</option><option value="80" ${savedPaperWidth==='80'?'selected':''}>80 mm</option></select><span class="form-note">Choose the same paper width in the printer settings.</span></div>
-    <div class="form-actions"><button class="btn secondary" onclick="closePurchaseReceipt()">Close</button><button class="btn" onclick="printPurchaseReceipt('${batchId}')">Print receipt</button></div></div>
+    ${androidThermalPrinting()?`<div class="field"><label for="receipt_print_method">Print method on this device</label><select id="receipt_print_method" onchange="setReceiptPrintMethod(this.value)"><option value="browser" ${receiptPrintMethod()==='browser'?'selected':''}>Browser print</option><option value="rawbt" ${receiptPrintMethod()==='rawbt'?'selected':''}>Direct thermal (RawBT app)</option></select></div><div id="receipt_direct_help" class="form-note ${receiptPrintMethod()==='rawbt'?'':'is-hidden'}"><p>Set up RawBT once: select your printer connection and matching 58/80 mm paper. Turn off its preview for direct printing. The selected RawBT printer receives this receipt.</p><p><a href="https://play.google.com/store/apps/details?id=ru.a402d.rawbtprinter" target="_blank" rel="noopener noreferrer">Get RawBT from Google Play</a> · <button type="button" class="btn secondary small" onclick="printThermalTestReceipt()">Test printer</button></p><p>If nothing prints, check RawBT before retrying. Use Browser print below as a fallback.</p></div>`:''}
+    <div class="form-actions"><button class="btn secondary" onclick="closePurchaseReceipt()">Close</button>${androidThermalPrinting()?`<button class="btn secondary" onclick="printPurchaseReceipt('${batchId}','browser')">Browser print</button>`:''}<button class="btn" onclick="printPurchaseReceipt('${batchId}')">Print receipt</button></div></div>
   </div>`;
   modal.addEventListener('click',event=>{if(event.target===modal)closePurchaseReceipt();});
   document.body.appendChild(modal);
@@ -2143,10 +2216,12 @@ function openThermalReceiptPrintPage(items,paperWidth){
   }catch{toast('Receipt printing needs browser session storage. Open this site in Chrome and try again.');}
   finally{try{sessionStorage.removeItem(key);}catch{}}
 }
-function printPurchaseReceipt(batchId){
+function printPurchaseReceipt(batchId,method=null){
   const items=db.stock.filter(item=>(item.batchId||item.id)===batchId);
   if(!items.length){ toast('Receipt record not found'); return; }
   const paperWidth=Number(val('receipt_paper_size'))===80?80:58;
+  const selectedMethod=method||val('receipt_print_method')||receiptPrintMethod();
+  if(selectedMethod==='rawbt'&&androidThermalPrinting())return sendDirectThermalReceipt(items,paperWidth);
   return openThermalReceiptPrintPage(items,paperWidth);
 }
 
