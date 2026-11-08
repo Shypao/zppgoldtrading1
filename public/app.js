@@ -1927,11 +1927,11 @@ function filteredCashflowTransactions() {
     return (cashflowDetailSnapshot().transactions || []).filter(transaction => cashflowMatches([
         cashflowTime(transaction.recordedAt), transaction.customerName, transaction.paymentMethod, transaction.payout,
         fmtMoney(transaction.payout), transaction.itemCount, ...(transaction.items || []),
-        String(transaction.paymentMethod).toLowerCase() === 'cash' ? 'cash deduction' : 'no cash effect'
+        transaction.reverted ? 'reverted cancellation' : String(transaction.paymentMethod).toLowerCase() === 'cash' ? 'cash deduction' : 'no cash effect'
     ]));
 }
 function filteredCashflowAdjustments() {
-    const labels = { set: 'Set balance', add: 'Cash added', deduct: 'Cash deducted', reset: 'IN / OUT reset' };
+    const labels = { set: 'Set balance', add: 'Cash added', deduct: 'Cash deducted', reset: 'IN / OUT reset', revert: 'Purchase reverted' };
     const query = cashflowAdjustmentSearch.trim().toLowerCase();
     return (cashflowDetailSnapshot().adjustments || []).filter(adjustment => !query || [
         cashflowTime(adjustment.createdAt), labels[adjustment.operation], adjustment.operation, adjustment.note,
@@ -1957,6 +1957,72 @@ function updateCashflowAdjustmentSearch(value) {
         input.setSelectionRange?.(input.value.length, input.value.length);
     } });
 }
+let pendingCashflowPurchaseCancellation = null;
+let cashflowPurchaseCancellationBusy = false;
+function closeCashflowPurchaseCancellation() {
+    if (cashflowPurchaseCancellationBusy)
+        return;
+    document.getElementById('cashflow_purchase_cancel_modal')?.remove();
+    pendingCashflowPurchaseCancellation = null;
+}
+function openCashflowPurchaseCancellation(transactionId) {
+    if (!adminEditGuard() || cashflowPurchaseCancellationBusy)
+        return;
+    const snapshot = cashflowDetailSnapshot(), transaction = (snapshot.transactions || []).find(item => item.id === transactionId);
+    if (!transaction || transaction.reverted) {
+        toast('This transaction is no longer available to revert');
+        return;
+    }
+    closeCashflowPurchaseCancellation();
+    pendingCashflowPurchaseCancellation = { transactionId, date: snapshot.date || cashflowHistoryDate || cashflowDate, revision: db._revision };
+    const modal = document.createElement('div');
+    modal.id = 'cashflow_purchase_cancel_modal';
+    modal.className = 'modal-backdrop';
+    modal.innerHTML = `<div class="inventory-move-modal" role="dialog" aria-modal="true" aria-labelledby="cashflow_purchase_cancel_title"><div class="summary-modal-head"><div><p class="eyebrow">Cancel recorded buying transaction</p><h2 id="cashflow_purchase_cancel_title">Revert purchase?</h2></div><button class="modal-close" type="button" onclick="closeCashflowPurchaseCancellation()" aria-label="Close">×</button></div><p>This cancels the whole transaction and removes its items from inventory. Its Cash payment is returned to the current cashflow day; non-cash payments do not change cash on hand.</p><div class="move-confirmation-summary"><div><span>Seller</span><strong>${esc(transaction.customerName)}</strong></div><div><span>Purchase date</span><strong>${fmtDate(pendingCashflowPurchaseCancellation.date)}</strong></div><div><span>Items</span><strong>${transaction.itemCount}</strong></div><div><span>Total purchase</span><strong>${fmtMoney(transaction.payout)}</strong></div></div><p class="form-note">${esc(transaction.items.join(' · '))}</p><p class="form-note">Items already linked to pools, liquidation, refining, or splits must be returned first. The cancellation and cash reversal remain in history.</p><div class="field"><label for="cashflow_purchase_cancel_reason">Reason for cancellation</label><textarea id="cashflow_purchase_cancel_reason" maxlength="500" placeholder="Example: Seller was not paid; purchase cancelled"></textarea></div><div class="form-actions"><button class="btn secondary" type="button" onclick="closeCashflowPurchaseCancellation()">Keep purchase</button><button id="cashflow_purchase_cancel_submit" class="btn danger" type="button" onclick="submitCashflowPurchaseCancellation()">Confirm revert purchase</button></div></div>`;
+    modal.addEventListener('click', event => { if (event.target === modal)
+        closeCashflowPurchaseCancellation(); });
+    document.body.appendChild(modal);
+    modal.querySelector('textarea')?.focus();
+}
+async function submitCashflowPurchaseCancellation() {
+    if (!adminEditGuard() || cashflowPurchaseCancellationBusy || !pendingCashflowPurchaseCancellation)
+        return;
+    const pending = { ...pendingCashflowPurchaseCancellation }, reason = val('cashflow_purchase_cancel_reason').trim();
+    if (!reason) {
+        toast('Enter a reason for cancelling this purchase');
+        return;
+    }
+    cashflowPurchaseCancellationBusy = true;
+    const button = document.getElementById('cashflow_purchase_cancel_submit');
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Reverting…';
+    }
+    try {
+        const response = await fetch('/api/cashflow/cancel-purchase', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...pending, reason }) });
+        const result = await response.json().catch(() => null);
+        if (!response.ok)
+            throw new Error(result?.error || 'Purchase was not reverted');
+        db = result.state;
+        ensureShape();
+        cashflowPurchaseCancellationBusy = false;
+        closeCashflowPurchaseCancellation();
+        render();
+        await syncCashflow();
+        await changeCashflowHistoryDate(pending.date);
+        toast(`Purchase reverted; ${fmtMoney(result.cashReturned)} cash returned`);
+    }
+    catch (error) {
+        toast(error.message || 'Purchase was not reverted');
+    }
+    finally {
+        cashflowPurchaseCancellationBusy = false;
+        if (button) {
+            button.disabled = false;
+            button.textContent = 'Confirm revert purchase';
+        }
+    }
+}
 function cashflowDetailRows() {
     const snapshot = cashflowDetailSnapshot();
     const transactions = filteredCashflowTransactions();
@@ -1968,7 +2034,7 @@ function cashflowDetailRows() {
     const prepared = snapshot.transactions.map(transaction => {
         const isCash = String(transaction.paymentMethod).toLowerCase() === 'cash';
         const recordedAt = Date.parse(transaction.recordedAt || '');
-        const afterLatestSet = isCash && snapshot.configured && Number.isFinite(recordedAt) && Number.isFinite(setAt) && recordedAt > setAt;
+        const afterLatestSet = !transaction.reverted && isCash && snapshot.configured && Number.isFinite(recordedAt) && Number.isFinite(setAt) && recordedAt > setAt;
         const balanceAfter = afterLatestSet ? running : null;
         if (afterLatestSet)
             running = roundMoney(running + Number(transaction.payout));
@@ -1977,18 +2043,18 @@ function cashflowDetailRows() {
     const pages = Math.max(1, Math.ceil(prepared.length / CASHFLOW_PAGE_SIZE));
     cashflowPurchasePage = Math.min(Math.max(cashflowPurchasePage, 1), pages);
     const start = (cashflowPurchasePage - 1) * CASHFLOW_PAGE_SIZE;
-    const rows = prepared.slice(start, start + CASHFLOW_PAGE_SIZE).map(({ transaction, isCash, afterLatestSet, balanceAfter }) => `<tr><td>${esc(cashflowTime(transaction.recordedAt))}</td><td><strong>${esc(transaction.customerName)}</strong><br><span class="hint">${esc(transaction.items.join(' · '))} · ${transaction.itemCount} item${transaction.itemCount === 1 ? '' : 's'}</span></td><td>${esc(transaction.paymentMethod)}</td><td class="num">${fmtMoney(transaction.payout)}</td><td class="num ${isCash ? 'cashflow-out' : 'cashflow-no-effect'}">${isCash ? `−${fmtMoney(transaction.payout)}` : 'No cash effect'}</td><td class="num">${afterLatestSet ? fmtMoney(balanceAfter) : (isCash && snapshot.configured ? 'Included in latest set' : '—')}</td></tr>`).join('');
+    const rows = prepared.slice(start, start + CASHFLOW_PAGE_SIZE).map(({ transaction, isCash, afterLatestSet, balanceAfter }) => `<tr><td>${esc(cashflowTime(transaction.recordedAt))}</td><td><strong>${esc(transaction.customerName)}</strong><br><span class="hint">${esc(transaction.items.join(' · '))} · ${transaction.itemCount} item${transaction.itemCount === 1 ? '' : 's'}</span>${transaction.reverted ? '<br><span class="hint">Reverted · cancellation recorded</span>' : isAdmin() ? `<div class="form-actions"><button type="button" class="btn secondary small" data-cashflow-revert-id="${esc(transaction.id)}" onclick="openCashflowPurchaseCancellation(this.dataset.cashflowRevertId)">Revert purchase</button></div>` : ''}</td><td>${esc(transaction.paymentMethod)}</td><td class="num">${fmtMoney(transaction.payout)}</td><td class="num ${isCash ? 'cashflow-out' : 'cashflow-no-effect'}">${transaction.reverted ? 'Reversal recorded' : isCash ? `−${fmtMoney(transaction.payout)}` : 'No cash effect'}</td><td class="num">${transaction.reverted ? '—' : afterLatestSet ? fmtMoney(balanceAfter) : (isCash && snapshot.configured ? 'Included in latest set' : '—')}</td></tr>`).join('');
     return `<div class="table-wrap cashflow-ledger"><table><thead><tr><th>Time</th><th>Buying transaction</th><th>Payment</th><th class="num-head">Purchased</th><th class="num-head">Cash movement</th><th class="num-head">Cash remaining</th></tr></thead><tbody>${rows}</tbody></table></div>${cashflowPagination('purchases', prepared.length, cashflowPurchasePage)}`;
 }
 function cashflowAdjustmentRows() {
     const adjustments = filteredCashflowAdjustments();
     if (!adjustments.length)
         return `<div class="empty-note">${cashflowAdjustmentSearch ? 'No Admin cash adjustments match your search.' : `No cash adjustments recorded on ${fmtDate(cashflowHistoryDate || cashflowDateStr())}.`}</div>`;
-    const labels = { set: 'Set balance', add: 'Cash added', deduct: 'Cash deducted', reset: 'IN / OUT reset' };
+    const labels = { set: 'Set balance', add: 'Cash added', deduct: 'Cash deducted', reset: 'IN / OUT reset', revert: 'Purchase reverted' };
     const pages = Math.max(1, Math.ceil(adjustments.length / CASHFLOW_PAGE_SIZE));
     cashflowAdjustmentPage = Math.min(Math.max(cashflowAdjustmentPage, 1), pages);
     const start = (cashflowAdjustmentPage - 1) * CASHFLOW_PAGE_SIZE;
-    const rows = adjustments.slice(start, start + CASHFLOW_PAGE_SIZE).map(adjustment => `<tr><td>${esc(cashflowTime(adjustment.createdAt))}</td><td><span class="pill ${adjustment.operation === 'deduct' ? 'cashflow-deduct-pill' : adjustment.operation === 'add' ? 'cashflow-add-pill' : ''}">${esc(labels[adjustment.operation] || adjustment.operation)}</span></td><td>${esc(adjustment.note || '—')}</td><td>${esc(adjustment.createdBy || 'Admin')}</td><td class="num ${adjustment.operation === 'deduct' ? 'cashflow-out' : adjustment.operation === 'add' ? 'cashflow-in' : ''}">${adjustment.operation === 'add' ? '+' : adjustment.operation === 'deduct' ? '−' : ''}${fmtMoney(adjustment.amount)}</td><td class="num">${fmtMoney(adjustment.balanceAfter)}</td></tr>`).join('');
+    const rows = adjustments.slice(start, start + CASHFLOW_PAGE_SIZE).map(adjustment => `<tr><td>${esc(cashflowTime(adjustment.createdAt))}</td><td><span class="pill ${adjustment.operation === 'deduct' ? 'cashflow-deduct-pill' : (adjustment.operation === 'add' || adjustment.operation === 'revert') ? 'cashflow-add-pill' : ''}">${esc(labels[adjustment.operation] || adjustment.operation)}</span></td><td>${esc(adjustment.note || '—')}</td><td>${esc(adjustment.createdBy || 'Admin')}</td><td class="num ${adjustment.operation === 'deduct' ? 'cashflow-out' : (adjustment.operation === 'add' || adjustment.operation === 'revert') ? 'cashflow-in' : ''}">${(adjustment.operation === 'add' || adjustment.operation === 'revert') ? '+' : adjustment.operation === 'deduct' ? '−' : ''}${fmtMoney(adjustment.amount)}</td><td class="num">${fmtMoney(adjustment.balanceAfter)}</td></tr>`).join('');
     return `<div class="table-wrap cashflow-adjustment-ledger"><table><thead><tr><th>Time</th><th>Action</th><th>Notes</th><th>Admin</th><th class="num-head">Amount</th><th class="num-head">Balance after</th></tr></thead><tbody>${rows}</tbody></table></div>${cashflowPagination('adjustments', adjustments.length, cashflowAdjustmentPage)}`;
 }
 function renderCashflowDetailsContent() {
@@ -2009,7 +2075,7 @@ function renderCashflowDetailsContent() {
     <div class="stat"><div class="label">Cash paid</div><div class="value">${fmtMoney(snapshot.cashPurchases || 0)}</div></div>
     <div class="stat"><div class="label">Non-cash</div><div class="value">${fmtMoney(snapshot.nonCashPurchases || 0)}</div></div>
   </div>
-  <div class="cashflow-modal-flow"><span>Daily physical cash movement</span><div><strong class="cashflow-in">IN ${fmtMoney(snapshot.cashIn || 0)}</strong><strong class="cashflow-out">OUT ${fmtMoney(snapshot.cashOut || 0)}</strong></div><small>IN is Admin-added cash. OUT is Cash buying payouts plus manual deductions.</small></div>
+  <div class="cashflow-modal-flow"><span>Daily physical cash movement</span><div><strong class="cashflow-in">IN ${fmtMoney(snapshot.cashIn || 0)}</strong><strong class="cashflow-out">OUT ${fmtMoney(snapshot.cashOut || 0)}</strong></div><small>IN is Admin-added cash plus purchase reversals. OUT is Cash buying payouts plus manual deductions.</small></div>
   ${snapshot.configured ? `<div class="cashflow-set-note"><strong>Cash-on-hand formula:</strong> ${fmtMoney(snapshot.balanceBase)} latest balance − ${fmtMoney(snapshot.cashPurchasesAfterSetting || 0)} Cash purchases after ${esc(cashflowTime(snapshot.setAt))} = ${fmtMoney(snapshot.cashOnHand)}. Purchases marked “Included in latest set” are not deducted again.</div>` : '<div class="cashflow-set-note"><strong>Cash on hand is not set.</strong> An administrator must enter the current physical cash before a running balance can be shown.</div>'}
   <div class="cashflow-search"><div class="field"><label for="cashflow_search">Search buying transactions</label><input id="cashflow_search" type="search" autocomplete="off" value="${esc(cashflowSearch)}" placeholder="Seller, item, payment, amount, or time" oninput="updateCashflowSearch(this.value)"></div>${cashflowSearch ? '<button class="btn secondary small" onclick="updateCashflowSearch(\'\')">Clear</button>' : ''}</div>
   <h3 class="cashflow-ledger-title">Buying transactions</h3>${cashflowDetailRows()}

@@ -25,6 +25,10 @@ async function loadInventoryApi() {
     cashflowCardMarkup,
     toggleCashflowCard,
     cashflowDetailSnapshot,
+    cashflowDetailRows,
+    cashflowAdjustmentRows,
+    setCashflowRole(role) { currentUser={role,displayName:'Test staff'}; },
+
     ensureShape,
     renderBuying,
     renderCustomers,
@@ -2325,4 +2329,19 @@ test('In Refining subtotal is zero without open batches even with queued singles
   assert.match(api.renderInventory(),/In Refining: <strong>PHP 1,000<\/strong>/);
   state.refiningBatches[0].status='Completed';api.setState(state);
   assert.match(api.renderInventory(),/In Refining: <strong>PHP 0<\/strong>/);
+});
+
+
+test('cashflow offers admin cancellation and keeps reverted transactions as non-actionable history',async()=>{
+  const api=await loadInventoryApi();api.setState(stateFixture());
+  const snapshot={date:'2026-11-08',configured:true,cashOnHand:9500,setAt:'2026-11-07T20:00:00Z',transactions:[{id:'buy-a',recordedAt:'2026-11-08T10:00:00Z',customerName:'Seller',paymentMethod:'Cash',payout:500,itemCount:1,items:['Gold 18K']}],adjustments:[]};
+  api.setCashflow(snapshot);api.setCashflowHistory(snapshot,snapshot.date);
+  assert.match(api.cashflowDetailRows(),/Revert purchase/);
+  api.setCashflowRole('staff');assert.doesNotMatch(api.cashflowDetailRows(),/Revert purchase/);
+  api.setCashflowRole('admin');snapshot.transactions[0].reverted=true;
+  snapshot.adjustments=[{id:'cancel-a',operation:'revert',amount:500,balanceAfter:10000,note:'Cancelled buy-a',createdAt:'2026-11-08T14:00:00Z',createdBy:'Admin'}];
+  assert.doesNotMatch(api.cashflowDetailRows(),/Revert purchase/);
+  assert.match(api.cashflowDetailRows(),/Reverted · cancellation recorded/);
+  assert.match(api.cashflowAdjustmentRows(),/Purchase reverted/);
+  assert.match(api.cashflowAdjustmentRows(),/\+PHP 500/);
 });

@@ -52,14 +52,14 @@ interface CashflowMovementBaseline {
 }
 interface CashflowAdjustment {
   id: string;
-  operation: 'set' | 'add' | 'deduct' | 'reset';
+  operation: 'set' | 'add' | 'deduct' | 'reset' | 'revert';
   amount: number;
   balanceAfter: number;
   note: string;
   createdAt: string;
   createdBy: string;
 }
-interface CashflowSettings { days: Record<string, CashflowDaySetting> }
+interface CashflowSettings { days: Record<string, CashflowDaySetting>; _storedValue?: string }
 type UserRole = 'admin' | 'staff';
 interface AuthUser { id: string; username: string; displayName: string; role: UserRole }
 
@@ -468,17 +468,98 @@ export function ledgerDeltaStatements(state: LedgerState, rows: LedgerStoredRow[
 
 async function loadCashflowSettings(): Promise<CashflowSettings> {
   const row = await dbGet<{ value: string }>("SELECT value FROM settings WHERE key = 'cashflow'");
-  if (!row) return { days: {} };
+  if (!row) return { days: {}, _storedValue: '' };
   try {
     const parsed = JSON.parse(row.value) as Partial<CashflowSettings>;
-    return { days: parsed.days && typeof parsed.days === 'object' ? parsed.days : {} };
+    return { days: parsed.days && typeof parsed.days === 'object' ? parsed.days : {}, _storedValue: row.value };
   } catch {
-    return { days: {} };
+    return { days: {}, _storedValue: row.value };
   }
 }
 
 async function persistCashflowSettings(settings: CashflowSettings): Promise<void> {
-  await dbRun("INSERT INTO settings (key, value) VALUES ('cashflow', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [JSON.stringify(settings)]);
+  const serialized=JSON.stringify({days:settings.days});
+  await dbBatch([
+    {sql:"INSERT INTO settings (key,value) SELECT 'cashflow_write_guard',NULL WHERE COALESCE((SELECT value FROM settings WHERE key='cashflow'),'') != ?",args:[settings._storedValue??'']},
+    {sql:"INSERT INTO settings (key,value) VALUES ('cashflow',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",args:[serialized]}
+  ]);
+  settings._storedValue=serialized;
+}
+
+interface PurchaseCancellation {
+  id: string; transactionId: string; purchaseDate: string; cashflowDate: string;
+  cashReturned: number; payout: number; items: LedgerRecord[]; reason: string;
+  createdAt: string; createdBy: string;
+}
+async function loadPurchaseCancellations(): Promise<PurchaseCancellation[]> {
+  const rows=await dbAll<{value:string}>("SELECT value FROM settings WHERE key GLOB 'purchase_cancel:*'");
+  return rows.map(row=>JSON.parse(row.value) as PurchaseCancellation);
+}
+export function cashflowRecordsWithCancellations(records: LedgerRecord[], cancellations: PurchaseCancellation[]): LedgerRecord[] {
+  const all=new Map(records.map(record=>[record.id,record]));
+  for(const cancellation of cancellations)for(const item of cancellation.items){
+    all.set(item.id,{...item,purchaseCancelled:true,cancelledAt:cancellation.createdAt,cancelledBy:cancellation.createdBy});
+  }
+  return [...all.values()];
+}
+async function loadCashflowState(): Promise<LedgerState> {
+  const state=await loadState();
+  return {...state,stock:cashflowRecordsWithCancellations(state.stock,await loadPurchaseCancellations())};
+}
+export function preparePurchaseCancellation(
+  state: LedgerState, settings: CashflowSettings, transactionId: string, purchaseDate: string,
+  reason: string, user: AuthUser, now = new Date(), priorCancellations: PurchaseCancellation[] = []
+): {state: LedgerState; settings: CashflowSettings; cancellation: PurchaseCancellation} {
+  if(user.role!=='admin')throw new Error('Administrator access required');
+  if(!validDateKey(purchaseDate)||!transactionId)throw new Error('Choose a valid buying transaction');
+  if(!reason.trim()||reason.length>500)throw new Error('Enter a cancellation reason (up to 500 characters)');
+  const items=state.stock.filter(item=>String(item.batchId??item.id)===transactionId&&cashflowRecordDateKey(item)===purchaseDate&&!item.sourceRefiningBatchId&&!item.inventorySplitFromId);
+  if(!items.length)throw new Error('This purchase was already cancelled or no longer exists');
+  const ids=new Set(items.map(item=>item.id));
+  const linked=items.some(item=>item.inventoryPoolId||item.liquidationBatchId||item.refiningBatchId||!['Available','For Refining','On Hold'].includes(String(item.status))||Number(item.currentWeight)<=0)||
+    state.inventoryPools.some(pool=>(pool.itemIds as string[]||[]).some(id=>ids.has(id)))||
+    [...state.liquidationBatches,...state.liquidations].some(record=>(record.lines as LedgerRecord[]||[]).some(line=>ids.has(String(line.itemId))))||
+    state.refiningBatches.some(record=>(record.itemIds as string[]||[]).some(id=>ids.has(id))||ids.has(String(record.outputItemId)))||
+    state.retailSales.some(record=>ids.has(String(record.itemId)))||
+    state.stock.some(record=>ids.has(String(record.inventorySplitFromId)));
+  if(linked)throw new Error('Return linked pool, liquidation, refining or split items before cancelling this purchase');
+  const round=(value:number)=>Math.round(value*100)/100;
+  if(items.some(item=>!Number.isFinite(Number(item.payout))||Number(item.payout)<0))throw new Error('Purchase has an invalid payout');
+  const refund=round(items.filter(item=>String(item.paymentMethod).toLowerCase()==='cash').reduce((sum,item)=>sum+Number(item.payout),0));
+  const date=manilaCashflowDateKey(now),createdAt=now.toISOString();
+  const cancellation:PurchaseCancellation={id:`purchase_cancel:${purchaseDate}:${transactionId}`,transactionId,purchaseDate,cashflowDate:date,cashReturned:refund,payout:round(items.reduce((sum,item)=>sum+Number(item.payout),0)),items:JSON.parse(JSON.stringify(items)),reason:reason.trim(),createdAt,createdBy:user.displayName};
+  const nextState=JSON.parse(JSON.stringify(state)) as LedgerState;
+  const nextSettings=JSON.parse(JSON.stringify(settings)) as CashflowSettings;
+  const effectiveRecords=cashflowRecordsWithCancellations(state.stock,priorCancellations);
+  let setting=nextSettings.days[date];
+  if(!setting&&refund>0){
+    const previousDate=Object.keys(nextSettings.days).filter(key=>validDateKey(key)&&key<date).sort().pop();
+    if(!previousDate)throw new Error('Set current cash on hand before reverting a cash purchase');
+    const balance=cashflowCarriedBalance(effectiveRecords,previousDate,date,nextSettings.days[previousDate]);
+    const openingAt=new Date(`${date}T04:00:00+08:00`).toISOString();
+    setting={balanceBase:balance,cashPaidBaseline:0,setAt:openingAt,setBy:'Automatic carry-over',adjustments:[{id:`cash_carry_${date}`,operation:'set',amount:balance,balanceAfter:balance,note:`Opening balance carried forward from ${previousDate}`,createdAt:openingAt,createdBy:'System'}]};
+  }
+  if(setting){
+    const balance=round(cashflowBalanceForSettingRecords(effectiveRecords,date,setting)+refund);
+    const grossCash=effectiveRecords.filter(item=>cashflowRecordDateKey(item)===date&&!item.sourceRefiningBatchId&&!item.inventorySplitFromId&&String(item.paymentMethod).toLowerCase()==='cash').reduce((sum,item)=>sum+Number(item.payout||0),0);
+    nextSettings.days[date]={...setting,balanceBase:balance,cashPaidBaseline:round(grossCash),setAt:createdAt,setBy:user.displayName,
+      adjustments:[...(setting.adjustments||[]),{id:cancellation.id,operation:'revert',amount:refund,balanceAfter:balance,note:`Cancelled ${transactionId}: ${reason.trim()}`,createdAt,createdBy:user.displayName}]};
+  }
+  nextState.stock=nextState.stock.filter(item=>!ids.has(item.id));
+  nextState._revision=Number(state._revision||0)+1;
+  return {state:nextState,settings:nextSettings,cancellation};
+}
+// A failing guard inserts NULL into a NOT NULL column, aborting the entire
+// SQLite/libSQL write batch. A passing guard inserts no row at all.
+export function purchaseCancellationStatements(state:LedgerState, prepared:ReturnType<typeof preparePurchaseCancellation>, cashflowValue:string):SqlStatement[]{
+  const expected=Number(state._revision||0);
+  return [
+    {sql:"INSERT INTO settings (key,value) SELECT 'cashflow_write_guard', NULL WHERE COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key='ledger_revision'),0) != ? OR COALESCE((SELECT value FROM settings WHERE key='cashflow'),'') != ?",args:[expected,cashflowValue]},
+    {sql:'INSERT INTO settings (key,value) VALUES (?,?)',args:[prepared.cancellation.id,JSON.stringify(prepared.cancellation)]},
+    ...prepared.cancellation.items.map(item=>({sql:'DELETE FROM inventory WHERE id = ?',args:[item.id]})),
+    {sql:"INSERT INTO settings (key,value) VALUES ('cashflow',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",args:[JSON.stringify({days:prepared.settings.days})]},
+    {sql:"UPDATE settings SET value = ? WHERE key='ledger_revision'",args:[String(prepared.state._revision)]}
+  ];
 }
 
 function validDateKey(value: string): boolean {
@@ -503,16 +584,17 @@ function cashflowRecordDateKey(record: LedgerRecord): string {
 }
 
 function cashflowPurchases(state: LedgerState, date: string) {
-  const purchases = state.stock.filter(record => !record.sourceRefiningBatchId && !record.inventorySplitFromId && cashflowRecordDateKey(record) === date);
+  const history = state.stock.filter(record => !record.sourceRefiningBatchId && !record.inventorySplitFromId && cashflowRecordDateKey(record) === date);
+  const purchases=history.filter(record=>!record.purchaseCancelled);
   const totalPurchases = purchases.reduce((sum, record) => sum + Number(record.payout ?? 0), 0);
   const cashPurchases = purchases
     .filter(record => String(record.paymentMethod ?? '').toLowerCase() === 'cash')
     .reduce((sum, record) => sum + Number(record.payout ?? 0), 0);
   const grouped = new Map<string, {
     id: string; recordedAt: string; customerName: string; paymentMethod: string;
-    payout: number; itemCount: number; items: string[];
+    payout: number; itemCount: number; items: string[]; reverted: boolean;
   }>();
-  for (const record of purchases) {
+  for (const record of history) {
     const id = String(record.batchId ?? record.id);
     const existing = grouped.get(id) ?? {
       id,
@@ -521,7 +603,8 @@ function cashflowPurchases(state: LedgerState, date: string) {
       paymentMethod: String(record.paymentMethod ?? '') || 'Unspecified',
       payout: 0,
       itemCount: 0,
-      items: []
+      items: [],
+      reverted: Boolean(record.purchaseCancelled)
     };
     existing.payout += Number(record.payout ?? 0);
     existing.itemCount += 1;
@@ -537,6 +620,7 @@ function cashflowPurchases(state: LedgerState, date: string) {
     totalPurchases: Math.round(totalPurchases * 100) / 100,
     cashPurchases: Math.round(cashPurchases * 100) / 100,
     nonCashPurchases: Math.round((totalPurchases - cashPurchases) * 100) / 100,
+    grossCashPurchases: history.filter(record=>String(record.paymentMethod??'').toLowerCase()==='cash').reduce((sum,record)=>sum+Number(record.payout||0),0),
     transactions
   };
 }
@@ -601,7 +685,7 @@ export function cashflowMovementTotals(
   baseline?: CashflowMovementBaseline
 ): CashflowMovementBaseline {
   const round=(value:number)=>Math.round(value*100)/100;
-  const grossCashIn=adjustments.filter(item=>item.operation==='add').reduce((sum,item)=>sum+Number(item.amount??0),0);
+  const grossCashIn=adjustments.filter(item=>(item.operation==='add'||item.operation==='revert')).reduce((sum,item)=>sum+Number(item.amount??0),0);
   const grossManualCashOut=adjustments.filter(item=>item.operation==='deduct').reduce((sum,item)=>sum+Number(item.amount??0),0);
   const grossCashOut=Number(totals.cashPurchases??0)+grossManualCashOut;
   return {
@@ -622,12 +706,12 @@ export function cashflowMovementTotalsForRecords(
   if(latestReset){
     const resetAt=Date.parse(latestReset.createdAt);
     const cashRecords=records.filter(record=>!record.sourceRefiningBatchId&&!record.inventorySplitFromId&&cashflowRecordDateKey(record)===date&&String(record.paymentMethod??'').toLowerCase()==='cash');
-    const movementAdjustments=adjustments.filter(item=>item.operation==='add'||item.operation==='deduct');
+    const movementAdjustments=adjustments.filter(item=>(item.operation==='add'||item.operation==='revert')||item.operation==='deduct');
     const allMovementsAreTimed=cashRecords.every(record=>Number.isFinite(Date.parse(String(record.recordedAt??''))))&&movementAdjustments.every(item=>Number.isFinite(Date.parse(String(item.createdAt??''))));
     if(allMovementsAreTimed){
       const round=(value:number)=>Math.round(value*100)/100;
       const cashPurchases=cashRecords.filter(record=>Date.parse(String(record.recordedAt))>resetAt).reduce((sum,record)=>sum+Number(record.payout??0),0);
-      const cashIn=movementAdjustments.filter(item=>item.operation==='add'&&Date.parse(item.createdAt)>resetAt).reduce((sum,item)=>sum+Number(item.amount??0),0);
+      const cashIn=movementAdjustments.filter(item=>(item.operation==='add'||item.operation==='revert')&&Date.parse(item.createdAt)>resetAt).reduce((sum,item)=>sum+Number(item.amount??0),0);
       const manualCashOut=movementAdjustments.filter(item=>item.operation==='deduct'&&Date.parse(item.createdAt)>resetAt).reduce((sum,item)=>sum+Number(item.amount??0),0);
       return {cashIn:round(cashIn),manualCashOut:round(manualCashOut),cashOut:round(cashPurchases+manualCashOut)};
     }
@@ -637,7 +721,7 @@ export function cashflowMovementTotalsForRecords(
 }
 
 async function cashflowSnapshot(date: string) {
-  const state = await loadState();
+  const state = await loadCashflowState();
   const totals = cashflowPurchases(state, date);
   const settings=await loadCashflowSettings();
   const setting = await carryForwardCashflowSetting(state,date,settings);
@@ -990,6 +1074,20 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
       if (!validDateKey(date)) return sendJson(response, 400, { error: 'Invalid cashflow date' });
       return sendJson(response, 200, await cashflowSnapshot(date));
     }
+    if(request.method==='POST'&&url.pathname==='/api/cashflow/cancel-purchase'){
+      if(user!.role!=='admin')return sendJson(response,403,{error:'Administrator access required'});
+      const body=await readJsonBody(request) as Record<string,unknown>;
+      const state=await loadState();
+      if(body.revision!==state._revision)return sendJson(response,409,{error:'The ledger changed. Refresh and try again.'});
+      const settings=await loadCashflowSettings();
+      let prepared:ReturnType<typeof preparePurchaseCancellation>;
+      try{prepared=preparePurchaseCancellation(state,settings,String(body.transactionId??''),String(body.date??''),String(body.reason??''),user!,new Date(),await loadPurchaseCancellations());}
+      catch(error){return sendJson(response,400,{error:error instanceof Error?error.message:'Cannot cancel purchase'});}
+      try{validateLedgerIntegrity(prepared.state);}catch(error){return sendJson(response,400,{error:error instanceof Error?error.message:'Linked inventory prevents cancellation'});}
+      try{await dbBatch(purchaseCancellationStatements(state,prepared,settings._storedValue??''));}
+      catch{return sendJson(response,409,{error:'The ledger or cashflow changed, or this purchase was already reverted. Refresh before trying again.'});}
+      return sendJson(response,200,{ok:true,state:await publicStateFor(user!),cashReturned:prepared.cancellation.cashReturned});
+    }
     if (request.method === 'PUT' && url.pathname === '/api/cashflow') {
       if (user!.role !== 'admin') return sendJson(response, 403, { error: 'Administrator access required' });
       const body = await readJsonBody(request) as Record<string, unknown>;
@@ -1003,7 +1101,7 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
         return sendJson(response, 400, { error: 'Enter a valid non-negative cash amount' });
       }
       if (note.length > 500) return sendJson(response, 400, { error: 'Cashflow notes must be 500 characters or fewer' });
-      const state = await loadState();
+      const state = await loadCashflowState();
       const totals = cashflowPurchases(state, date);
       const settings = await loadCashflowSettings();
       const previous = await carryForwardCashflowSetting(state,date,settings);
@@ -1012,7 +1110,7 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
       if (operation === 'reset') {
         if (!previous) return sendJson(response, 400, { error: 'Set the cash on hand before resetting IN and OUT' });
         const createdAt=new Date().toISOString();
-        const grossMovements=cashflowMovementTotals(totals,previous.adjustments??[]);
+        const grossMovements=cashflowMovementTotals({cashPurchases:totals.grossCashPurchases},previous.adjustments??[]);
         const adjustment:CashflowAdjustment={
           id:`cash_${randomBytes(8).toString('hex')}`,
           operation:'reset',amount:0,balanceAfter:currentBalance,
@@ -1040,7 +1138,7 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
       };
       settings.days[date] = {
         balanceBase: adjustment.balanceAfter,
-        cashPaidBaseline: totals.cashPurchases,
+        cashPaidBaseline: totals.grossCashPurchases,
         setAt: createdAt,
         setBy: user!.displayName,
         movementBaseline: previous?.movementBaseline,
