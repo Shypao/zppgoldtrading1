@@ -5,6 +5,7 @@
 let db = { rates:[], customers:[], stock:[], inventoryPools:[], liquidationBatches:[], liquidations:[], refiningBatches:[], retailSales:[] };
 let currentTab = 'dashboard';
 let currentUser = null;
+const CENTRAL_CASHFLOW_URL = 'https://centralhub.zpmetals.co/api/cashflow';
 let userAccounts = [];
 let currentCashflow = null;
 let cashflowSyncBusy = false;
@@ -1457,13 +1458,14 @@ function toggleCashflowCard(){
 function cashflowCardMarkup(){
   const cashflowDate=cashflowDateStr();
   const snapshot=currentCashflow?.date===cashflowDate?currentCashflow:null;
+  const centralized=Boolean(snapshot?.centralized);
   const configured=Boolean(snapshot?.configured)&&snapshot?.cashOnHand!==null&&Number.isFinite(Number(snapshot?.cashOnHand));
-  const balance=configured?fmtMoney(snapshot.cashOnHand):'Not set';
+  const balance=centralized?'Central master':configured?fmtMoney(snapshot.cashOnHand):'Not set';
   const updated=snapshot?.setAt?new Date(snapshot.setAt).toLocaleString('en-PH',{dateStyle:'medium',timeStyle:'short'}):'';
   return `<section class="cashflow-card ${configured&&Number(snapshot.cashOnHand)<0?'is-negative':''} ${cashflowCardMinimized?'is-minimized':''}">
     <div class="cashflow-main">
-      <div class="cashflow-balance"><div class="cashflow-title-row"><span class="cashflow-eyebrow">Cash on hand · ${fmtDate(cashflowDate)}</span><button class="cashflow-toggle" onclick="toggleCashflowCard()" aria-expanded="${!cashflowCardMinimized}">${cashflowCardMinimized?'Expand':'Minimize'}</button></div><strong>${balance}</strong>${cashflowCardMinimized?'':`<small>${configured?`Live balance after cash purchases for this cashflow day${updated?` · adjusted ${esc(updated)} by ${esc(snapshot.setBy||'Admin')}`:''}`:'Waiting for an administrator to set the available cash'}</small>`}</div>
-      ${cashflowCardMinimized?'':`<div class="cashflow-actions"><button class="btn secondary" onclick="openCashflowDetails()">View cash flow</button>${isAdmin()?`${configured?'<button class="btn secondary" onclick="openCashflowResetConfirmation()">Reset IN / OUT</button>':''}<button class="btn cashflow-edit" onclick="openCashflowEditor()">${configured?'Edit cash on hand':'Set cash on hand'}</button>`:'<span class="cashflow-readonly">Admin controlled</span>'}</div>`}
+      <div class="cashflow-balance"><div class="cashflow-title-row"><span class="cashflow-eyebrow">${centralized?'Central cashflow master':'Cash on hand'} · ${fmtDate(cashflowDate)}</span><button class="cashflow-toggle" onclick="toggleCashflowCard()" aria-expanded="${!cashflowCardMinimized}">${cashflowCardMinimized?'Expand':'Minimize'}</button></div><strong>${balance}</strong>${cashflowCardMinimized?'':`<small>${centralized?'Synced from Central Hub master cashflow':configured?`Live balance after cash purchases for this cashflow day${updated?` · adjusted ${esc(updated)} by ${esc(snapshot.setBy||'Admin')}`:''}`:'Waiting for an administrator to set the available cash'}</small>`}</div>
+      ${cashflowCardMinimized?'':`<div class="cashflow-actions"><button class="btn secondary" onclick="openCashflowDetails()">View cash flow</button>${centralized?'<span class="cashflow-readonly">Central Hub master</span>':isAdmin()?`${configured?'<button class="btn secondary" onclick="openCashflowResetConfirmation()">Reset IN / OUT</button>':''}<button class="btn cashflow-edit" onclick="openCashflowEditor()">${configured?'Edit cash on hand':'Set cash on hand'}</button>`:'<span class="cashflow-readonly">Admin controlled</span>'}</div>`}
     </div>
     <div class="cashflow-flow-strip"><strong>${new Date(cashflowDate+'T00:00:00').toLocaleDateString('en-PH',{weekday:'short',month:'short',day:'2-digit'})}</strong><span class="cashflow-in">IN ${fmtMoney(snapshot?.cashIn||0)}</span><span class="cashflow-out">OUT ${fmtMoney(snapshot?.cashOut||0)}</span></div>
     ${cashflowCardMinimized?'':`<div class="cashflow-stats">
@@ -1479,7 +1481,7 @@ async function syncCashflow(){
   try{
     const requestedDate=cashflowDateStr();
     const previousDate=currentCashflow?.date||'';
-    const response=await fetch(`/api/cashflow?date=${encodeURIComponent(requestedDate)}`,{cache:'no-store'});
+    const response=await fetch(`${CENTRAL_CASHFLOW_URL}?date=${encodeURIComponent(requestedDate)}`,{cache:'no-store'});
     if(response.status===401){ showLogin(); return; }
     const result=await response.json().catch(()=>null);
     if(!response.ok) throw new Error(result?.error||'Cashflow sync failed');
@@ -1632,7 +1634,7 @@ async function changeCashflowHistoryDate(date){
   const previousDate=cashflowHistoryDate,previousSnapshot=cashflowHistorySnapshot;
   cashflowHistoryDate=date; cashflowPurchasePage=1; cashflowAdjustmentPage=1; cashflowSearch=''; cashflowAdjustmentSearch=''; cashflowHistoryLoading=true; renderCashflowDetailsContent();
   try{
-    const response=await fetch(`/api/cashflow?date=${encodeURIComponent(date)}`,{cache:'no-store'});
+    const response=await fetch(`${CENTRAL_CASHFLOW_URL}?date=${encodeURIComponent(date)}`,{cache:'no-store'});
     if(response.status===401){showLogin();return;}
     const result=await response.json().catch(()=>null);
     if(!response.ok) throw new Error(result?.error||'Could not retrieve cashflow');
@@ -1675,7 +1677,7 @@ function openCashflowAdjustmentDetails(){
   document.body.appendChild(modal); renderCashflowAdjustmentDetailsContent();
 }
 function openCashflowEditor(){
-  if(!isAdmin()) return;
+  if(!isAdmin()||currentCashflow?.centralized) return;
   closeCashflowEditor();
   const current=currentCashflow?.configured?Number(currentCashflow.cashOnHand):NaN;
   const modal=document.createElement('div'); modal.id='cashflow_editor_modal'; modal.className='modal-backdrop';
