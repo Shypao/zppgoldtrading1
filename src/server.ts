@@ -260,6 +260,11 @@ async function initializeDatabase(): Promise<void> {
     {sql:"INSERT INTO settings (key, value) VALUES ('pricing', ?) ON CONFLICT(key) DO NOTHING",args:[JSON.stringify(defaultPricingSettings())]}
   ]);
   try { await dbRun("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]'"); } catch (error) { if (!String(error).includes('duplicate column')) throw error; }
+  const permissionMigration = await dbGet<{ value: string }>("SELECT value FROM settings WHERE key = 'staff_permissions_migrated_v1'");
+  if (!permissionMigration) {
+    await dbRun("UPDATE users SET permissions = ? WHERE role = 'staff' AND (permissions IS NULL OR permissions = '[]')", [JSON.stringify(DEFAULT_STAFF_PERMISSIONS)]);
+    await dbRun("INSERT INTO settings (key, value) VALUES ('staff_permissions_migrated_v1', '1') ON CONFLICT(key) DO NOTHING");
+  }
   await migrateForSellingInventory();
   await ensureDefaultUsers();
 }
