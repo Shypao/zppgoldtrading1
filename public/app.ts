@@ -228,7 +228,7 @@ function isAdmin(){ return currentUser?.role==='admin'; }
 function staffRateEditingUnlocked(){ return db.pricing?.staffRateEditingUnlocked===true; }
 function canEditDailyRates(){ return isAdmin()||staffRateEditingUnlocked(); }
 function canOverrideBuyingRate(){ return isAdmin()||staffRateEditingUnlocked(); }
-function allowedTabs(){ return TABS.filter(tab=>isAdmin()||tab.staff); }
+function allowedTabs(){ return TABS.filter(tab=>isAdmin()||(!tab.permission&&tab.staff)||currentUser?.permissions?.includes(tab.permission)); }
 function showLogin(){
   currentUser=null;
   document.getElementById('appShell')?.classList.add('is-hidden');
@@ -564,15 +564,15 @@ function closeGoldMultiplierEditor(){ document.getElementById('gold_multiplier_m
 
 /* ============================= NAV / BOOT ============================= */
 const TABS = [
-  {id:'dashboard', label:'Dashboard & reports'},
-  {id:'rates', label:'Daily rate setup', staff:true},
-  {id:'buying', label:'Buying transactions', staff:true},
-  {id:'inventory', label:'Inventory', staff:true},
-  {id:'liquidation', label:'Liquidation'},
-  {id:'refining', label:'Refining tracking'},
-  {id:'retail', label:'Limited retail sales'},
-  {id:'customers', label:'Customer management'},
-  {id:'users', label:'User accounts'},
+  {id:'dashboard', label:'Dashboard & reports', permission:'overview.view'},
+  {id:'rates', label:'Daily rate setup', permission:'gold.rates'},
+  {id:'buying', label:'Buying transactions', permission:'gold.buy'},
+  {id:'inventory', label:'Inventory', permission:'gold.stock'},
+  {id:'liquidation', label:'Liquidation', permission:'gold.liquidate'},
+  {id:'refining', label:'Refining tracking', permission:'gold.refine'},
+  {id:'retail', label:'Limited retail sales', permission:'gold.retail'},
+  {id:'customers', label:'Customer management', permission:'gold.customers'},
+  {id:'users', label:'User accounts', permission:'staff.manage'},
 ];
 
 function boot(){

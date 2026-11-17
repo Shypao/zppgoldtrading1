@@ -61,7 +61,8 @@ interface CashflowAdjustment {
 }
 interface CashflowSettings { days: Record<string, CashflowDaySetting>; _storedValue?: string }
 type UserRole = 'admin' | 'staff';
-interface AuthUser { id: string; username: string; displayName: string; role: UserRole }
+const DEFAULT_STAFF_PERMISSIONS = ['overview.view', 'gold.buy', 'gold.stock', 'gold.rates', 'gold.liquidate', 'gold.refine', 'gold.retail', 'gold.customers'];
+interface AuthUser { id: string; username: string; displayName: string; role: UserRole; permissions: string[] }
 
 const PUBLIC_GRADE_META: Record<string, Array<{ key: string; label: string }>> = {
   Gold: ['24K','23K','22K','21K','20K','18K','18K-BUO','17K','16K','14K','12K','10K','9K','8K','5K','98%','73%'].map(key => ({ key, label: key === '18K-BUO' ? '18K-Buo' : key })),
@@ -125,6 +126,7 @@ const schemaStatements = [
     password_hash TEXT NOT NULL,
     salt TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1,
+    permissions TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL
   )`
 ];
@@ -213,14 +215,15 @@ function passwordDigest(password: string, salt: string): string {
   return scryptSync(password, salt, 64).toString('hex');
 }
 
-async function createUser(username: string, displayName: string, role: UserRole, password: string, fixedId?: string): Promise<AuthUser> {
+async function createUser(username: string, displayName: string, role: UserRole, password: string, fixedId?: string, permissions: string[] = DEFAULT_STAFF_PERMISSIONS): Promise<AuthUser> {
   const normalized = username.trim().toLowerCase();
   const salt = randomBytes(16).toString('hex');
   const id = fixedId ?? `usr_${randomBytes(8).toString('hex')}`;
-  await dbRun(`INSERT INTO users (id, username, display_name, role, password_hash, salt, active, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
-  [id, normalized, displayName.trim(), role, passwordDigest(password, salt), salt, new Date().toISOString()]);
-  return { id, username: normalized, displayName: displayName.trim(), role };
+  const safePermissions = role === 'admin' ? [] : [...new Set(permissions.map(String).filter(Boolean))];
+  await dbRun(`INSERT INTO users (id, username, display_name, role, password_hash, salt, active, permissions, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+  [id, normalized, displayName.trim(), role, passwordDigest(password, salt), salt, JSON.stringify(safePermissions), new Date().toISOString()]);
+  return { id, username: normalized, displayName: displayName.trim(), role, permissions: safePermissions };
 }
 
 async function ensureDefaultUsers(): Promise<void> {
@@ -256,6 +259,7 @@ async function initializeDatabase(): Promise<void> {
     {sql:"INSERT INTO settings (key, value) VALUES ('ledger_revision', '0') ON CONFLICT(key) DO NOTHING"},
     {sql:"INSERT INTO settings (key, value) VALUES ('pricing', ?) ON CONFLICT(key) DO NOTHING",args:[JSON.stringify(defaultPricingSettings())]}
   ]);
+  try { await dbRun("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]'"); } catch (error) { if (!String(error).includes('duplicate column')) throw error; }
   await migrateForSellingInventory();
   await ensureDefaultUsers();
 }
@@ -308,10 +312,10 @@ async function sessionUser(request: IncomingMessage): Promise<AuthUser | null> {
   }
   if (!session.userId || !Number.isFinite(session.expiresAt) || session.expiresAt <= Date.now()) return null;
   const account = await dbGet<{
-    username: string; displayName: string; role: UserRole; active: number;
-  }>('SELECT username, display_name AS displayName, role, active FROM users WHERE id = ?', [session.userId]);
+    username: string; displayName: string; role: UserRole; active: number; permissions: string;
+  }>('SELECT username, display_name AS displayName, role, active, permissions FROM users WHERE id = ?', [session.userId]);
   if (!account?.active) return null;
-  return { id: session.userId, username: account.username, displayName: account.displayName, role: account.role };
+  return { id: session.userId, username: account.username, displayName: account.displayName, role: account.role, permissions: JSON.parse(account.permissions || '[]') };
 }
 
 async function publicStateFor(user: AuthUser): Promise<LedgerState> {
@@ -1040,14 +1044,14 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
       const password = String(body.password ?? '');
       const row = await dbGet<{
           id: string; username: string; display_name: string; role: UserRole;
-          password_hash: string; salt: string; active: number;
-        }>(`SELECT id, username, display_name, role, password_hash, salt, active
+          password_hash: string; salt: string; active: number; permissions: string;
+        }>(`SELECT id, username, display_name, role, password_hash, salt, active, permissions
         FROM users WHERE username = ?`, [username]);
       const suppliedHash = row ? passwordDigest(password, row.salt) : passwordDigest(password, 'invalid-login-salt');
       const valid = Boolean(row?.active &&
         timingSafeEqual(Buffer.from(suppliedHash, 'hex'), Buffer.from(row.password_hash, 'hex')));
       if (!valid || !row) return sendJson(response, 401, { error: 'Invalid username or password' });
-      const user: AuthUser = { id: row.id, username: row.username, displayName: row.display_name, role: row.role };
+      const user: AuthUser = { id: row.id, username: row.username, displayName: row.display_name, role: row.role, permissions: JSON.parse(row.permissions || '[]') };
       const token = signSession(user.id, Date.now() + sessionLifetimeMs);
       const secure = isVercel ? '; Secure' : '';
       const state=url.searchParams.get('includeState')==='1'?await publicStateFor(user):undefined;
@@ -1232,9 +1236,9 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
     }
     if (request.method === 'GET' && url.pathname === '/api/users') {
       if (user!.role !== 'admin') return sendJson(response, 403, { error: 'Administrator access required' });
-      const users = await dbAll(`SELECT id, username, display_name AS displayName, role, active, created_at AS createdAt
+          const users = await dbAll<{ id: string; username: string; displayName: string; role: UserRole; active: number; permissions: string; createdAt: string }>(`SELECT id, username, display_name AS displayName, role, active, permissions, created_at AS createdAt
         FROM users ORDER BY role, display_name`);
-      return sendJson(response, 200, { users });
+          return sendJson(response, 200, { users: users.map(user => ({ ...user, permissions: JSON.parse(String(user.permissions || '[]')) })) });
     }
     if (request.method === 'POST' && url.pathname === '/api/users') {
       if (user!.role !== 'admin') return sendJson(response, 403, { error: 'Administrator access required' });
@@ -1242,13 +1246,14 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
       const username = String(body.username ?? '').trim().toLowerCase();
       const displayName = String(body.displayName ?? '').trim();
       const password = String(body.password ?? '');
-      const role = String(body.role ?? 'staff') as UserRole;
+          const role = String(body.role ?? 'staff') as UserRole;
+          const permissions = Array.isArray(body.permissions) ? body.permissions.map(String).filter(Boolean) : DEFAULT_STAFF_PERMISSIONS;
       if (!/^[a-z0-9._-]{3,40}$/.test(username)) return sendJson(response, 400, { error: 'Username must be 3–40 letters, numbers, dots, dashes, or underscores' });
       if (!displayName) return sendJson(response, 400, { error: 'Display name is required' });
       if (password.length < 8) return sendJson(response, 400, { error: 'Password must be at least 8 characters' });
       if (!['admin', 'staff'].includes(role)) return sendJson(response, 400, { error: 'Role must be Admin or Staff' });
       try {
-        const created = await createUser(username, displayName, role, password);
+            const created = await createUser(username, displayName, role, password, undefined, permissions);
         return sendJson(response, 201, { user: created });
       } catch (error) {
         if (String(error).includes('UNIQUE')) return sendJson(response, 409, { error: 'Username already exists' });
@@ -1260,15 +1265,16 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
       if (user!.role !== 'admin') return sendJson(response, 403, { error: 'Administrator access required' });
       const targetId = decodeURIComponent(userEditMatch[1]);
       const target = await dbGet<{
-          id: string; username: string; displayName: string; role: UserRole; active: number; createdAt: string;
+            id: string; username: string; displayName: string; role: UserRole; active: number; permissions: string; createdAt: string;
         }>(`SELECT id, username, display_name AS displayName, role, active, created_at AS createdAt
-        FROM users WHERE id = ?`, [targetId]);
+            , permissions FROM users WHERE id = ?`, [targetId]);
       if (!target) return sendJson(response, 404, { error: 'Account not found' });
       const body = await readJsonBody(request) as Record<string, unknown>;
       const displayName = String(body.displayName ?? '').trim();
       const role = String(body.role ?? '') as UserRole;
       const active = body.active === true ? 1 : body.active === false ? 0 : -1;
       const password = String(body.password ?? '');
+          const permissions = Array.isArray(body.permissions) ? [...new Set(body.permissions.map(String).filter(Boolean))] : JSON.parse(target.permissions || '[]');
       if (!displayName) return sendJson(response, 400, { error: 'Display name is required' });
       if (!['admin', 'staff'].includes(role)) return sendJson(response, 400, { error: 'Role must be Admin or Staff' });
       if (active < 0) return sendJson(response, 400, { error: 'Account status is required' });
@@ -1282,12 +1288,12 @@ export async function requestHandler(request: IncomingMessage, response: ServerR
       }
       if (password) {
         const salt = randomBytes(16).toString('hex');
-        await dbRun('UPDATE users SET display_name = ?, role = ?, active = ?, password_hash = ?, salt = ? WHERE id = ?',
-          [displayName, role, active, passwordDigest(password, salt), salt, targetId]);
+              await dbRun('UPDATE users SET display_name = ?, role = ?, active = ?, permissions = ?, password_hash = ?, salt = ? WHERE id = ?',
+                [displayName, role, active, JSON.stringify(role === 'admin' ? [] : permissions), passwordDigest(password, salt), salt, targetId]);
       } else {
-        await dbRun('UPDATE users SET display_name = ?, role = ?, active = ? WHERE id = ?', [displayName, role, active, targetId]);
+              await dbRun('UPDATE users SET display_name = ?, role = ?, active = ?, permissions = ? WHERE id = ?', [displayName, role, active, JSON.stringify(role === 'admin' ? [] : permissions), targetId]);
       }
-      return sendJson(response, 200, { user: { id: target.id, username: target.username, displayName, role, active: Boolean(active), createdAt: target.createdAt } });
+          return sendJson(response, 200, { user: { id: target.id, username: target.username, displayName, role, active: Boolean(active), permissions: role === 'admin' ? [] : permissions, createdAt: target.createdAt } });
     }
     if (request.method === 'DELETE' && userEditMatch) {
       if (user!.role !== 'admin') return sendJson(response, 403, { error: 'Administrator access required' });
