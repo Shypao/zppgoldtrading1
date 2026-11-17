@@ -634,6 +634,18 @@ function cashflowPurchases(state: LedgerState, date: string) {
   };
 }
 
+export function cashflowSales(state: LedgerState, date: string) {
+  const sales = state.liquidations.filter(record => String(record.date ?? '') === date);
+  const cashSales = sales.filter(record => String(record.paymentStatus ?? '').toLowerCase() === 'paid').reduce((sum, record) => sum + Number(record.proceeds ?? 0), 0);
+  const transactions = sales.map(record => ({
+    id: `sale:${String(record.id)}`, recordType: 'sale', recordedAt: String(record.date ?? ''),
+    customerName: String(record.buyer ?? 'Buyer'), paymentMethod: String(record.paymentStatus ?? 'Pending'),
+    payout: Math.round(Number(record.proceeds ?? 0) * 100) / 100, itemCount: Number(record.itemCount ?? 0),
+    items: [`${String(record.metal ?? 'Inventory')} sale`], saleId: String(record.id)
+  }));
+  return { sales, cashSales: Math.round(cashSales * 100) / 100, transactions };
+}
+
 export function cashPurchasesSinceSetting(records: LedgerRecord[], date: string, setting: CashflowDaySetting): number {
   const cashRecords=records.filter(record=>!record.sourceRefiningBatchId&&!record.inventorySplitFromId&&cashflowRecordDateKey(record)===date&&String(record.paymentMethod??'').toLowerCase()==='cash');
   const setAt=Date.parse(setting.setAt||'');
@@ -732,6 +744,7 @@ export function cashflowMovementTotalsForRecords(
 async function cashflowSnapshot(date: string) {
   const state = await loadCashflowState();
   const totals = cashflowPurchases(state, date);
+  const sales = cashflowSales(state, date);
   const settings=await loadCashflowSettings();
   const setting = await carryForwardCashflowSetting(state,date,settings);
   const adjustments = setting?.adjustments ?? [];
@@ -740,13 +753,13 @@ async function cashflowSnapshot(date: string) {
   const cashOnHand = setting ? cashflowBalanceForSetting(state,date,setting) : null;
   return {
     date,
-    ...totals,
+    ...totals, sales: sales.sales, cashSales: sales.cashSales, transactions: [...totals.transactions, ...sales.transactions],
     configured: Boolean(setting),
     cashOnHand,
-    cashIn: movements.cashIn,
+    cashIn: Math.round((movements.cashIn + sales.cashSales) * 100) / 100,
     cashOut: movements.cashOut,
     manualCashOut: movements.manualCashOut,
-    netCashflow: Math.round((movements.cashIn - movements.cashOut) * 100) / 100,
+    netCashflow: Math.round((movements.cashIn + sales.cashSales - movements.cashOut) * 100) / 100,
     balanceBase: setting?.balanceBase ?? null,
     cashPurchasesAfterSetting,
     setAt: setting?.setAt ?? '',

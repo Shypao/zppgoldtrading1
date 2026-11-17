@@ -2029,24 +2029,25 @@ function cashflowDetailRows() {
     const snapshot = cashflowDetailSnapshot();
     const transactions = filteredCashflowTransactions();
     if (!transactions.length)
-        return `<div class="empty-note">${cashflowSearch ? 'No buying transactions match your search.' : `No buying transactions recorded on ${fmtDate(cashflowHistoryDate || cashflowDateStr())}.`}</div>`;
+        return `<div class="empty-note">${cashflowSearch ? 'No cashflow transactions match your search.' : `No cashflow transactions recorded on ${fmtDate(cashflowHistoryDate || cashflowDateStr())}.`}</div>`;
     const matchingIds = new Set(transactions.map(transaction => transaction.id));
     let running = Number(snapshot.cashOnHand);
     const setAt = Date.parse(snapshot.setAt || '');
     const prepared = snapshot.transactions.map(transaction => {
-        const isCash = String(transaction.paymentMethod).toLowerCase() === 'cash';
+        const isSale = transaction.recordType === 'sale';
+        const isCash = isSale ? String(transaction.paymentMethod).toLowerCase() === 'paid' : String(transaction.paymentMethod).toLowerCase() === 'cash';
         const recordedAt = Date.parse(transaction.recordedAt || '');
         const afterLatestSet = !transaction.reverted && isCash && snapshot.configured && Number.isFinite(recordedAt) && Number.isFinite(setAt) && recordedAt > setAt;
         const balanceAfter = afterLatestSet ? running : null;
         if (afterLatestSet)
-            running = roundMoney(running + Number(transaction.payout));
-        return { transaction, isCash, afterLatestSet, balanceAfter };
+            running = roundMoney(running + (isSale ? -1 : 1) * Number(transaction.payout));
+        return { transaction, isCash, isSale, afterLatestSet, balanceAfter };
     }).filter(entry => matchingIds.has(entry.transaction.id));
     const pages = Math.max(1, Math.ceil(prepared.length / CASHFLOW_PAGE_SIZE));
     cashflowPurchasePage = Math.min(Math.max(cashflowPurchasePage, 1), pages);
     const start = (cashflowPurchasePage - 1) * CASHFLOW_PAGE_SIZE;
-    const rows = prepared.slice(start, start + CASHFLOW_PAGE_SIZE).map(({ transaction, isCash, afterLatestSet, balanceAfter }) => `<tr><td>${esc(cashflowTime(transaction.recordedAt))}</td><td><strong>${esc(transaction.customerName)}</strong><br><span class="hint">${esc(transaction.items.join(' · '))} · ${transaction.itemCount} item${transaction.itemCount === 1 ? '' : 's'}</span>${transaction.reverted ? '<br><span class="hint">Reverted · cancellation recorded</span>' : isAdmin() ? `<div class="form-actions"><button type="button" class="btn secondary small" data-cashflow-revert-id="${esc(transaction.id)}" onclick="openCashflowPurchaseCancellation(this.dataset.cashflowRevertId)">Revert purchase</button></div>` : ''}</td><td>${esc(transaction.paymentMethod)}</td><td class="num">${fmtMoney(transaction.payout)}</td><td class="num ${isCash ? 'cashflow-out' : 'cashflow-no-effect'}">${transaction.reverted ? 'Reversal recorded' : isCash ? `−${fmtMoney(transaction.payout)}` : 'No cash effect'}</td><td class="num">${transaction.reverted ? '—' : afterLatestSet ? fmtMoney(balanceAfter) : (isCash && snapshot.configured ? 'Included in latest set' : '—')}</td></tr>`).join('');
-    return `<div class="table-wrap cashflow-ledger"><table><thead><tr><th>Time</th><th>Buying transaction</th><th>Payment</th><th class="num-head">Purchased</th><th class="num-head">Cash movement</th><th class="num-head">Cash remaining</th></tr></thead><tbody>${rows}</tbody></table></div>${cashflowPagination('purchases', prepared.length, cashflowPurchasePage)}`;
+    const rows = prepared.slice(start, start + CASHFLOW_PAGE_SIZE).map(({ transaction, isCash, isSale, afterLatestSet, balanceAfter }) => `<tr><td>${esc(cashflowTime(transaction.recordedAt))}</td><td><strong>${esc(isSale ? 'Sale: ' : '')}${esc(transaction.customerName)}</strong><br><span class="hint">${esc((transaction.items || []).join(' · '))} · ${transaction.itemCount} item${transaction.itemCount === 1 ? '' : 's'}</span>${transaction.reverted ? '<br><span class="hint">Reverted · cancellation recorded</span>' : !isSale && isAdmin() ? `<div class="form-actions"><button type="button" class="btn secondary small" data-cashflow-revert-id="${esc(transaction.id)}" onclick="openCashflowPurchaseCancellation(this.dataset.cashflowRevertId)">Revert purchase</button></div>` : ''}</td><td>${esc(transaction.paymentMethod)}</td><td class="num">${fmtMoney(transaction.payout)}</td><td class="num ${isSale && isCash ? 'cashflow-in' : isCash ? 'cashflow-out' : 'cashflow-no-effect'}">${transaction.reverted ? 'Reversal recorded' : isSale && isCash ? `+${fmtMoney(transaction.payout)}` : isCash ? `−${fmtMoney(transaction.payout)}` : 'No cash effect'}</td><td class="num">${transaction.reverted ? '—' : afterLatestSet ? fmtMoney(balanceAfter) : (isCash && snapshot.configured ? 'Included in latest set' : '—')}</td></tr>`).join('');
+    return `<div class="table-wrap cashflow-ledger"><table><thead><tr><th>Time</th><th>Cashflow transaction</th><th>Payment</th><th class="num-head">Amount</th><th class="num-head">Cash movement</th><th class="num-head">Cash remaining</th></tr></thead><tbody>${rows}</tbody></table></div>${cashflowPagination('purchases', prepared.length, cashflowPurchasePage)}`;
 }
 function cashflowAdjustmentRows() {
     const adjustments = filteredCashflowAdjustments();
